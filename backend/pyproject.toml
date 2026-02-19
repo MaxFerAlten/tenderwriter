@@ -1,0 +1,75 @@
+[project]
+name = "tenderwriter-backend"
+version = "0.1.0"
+description = "Open-source Tender Proposal Software with HybridRAG — Backend"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    # --- Web Framework ---
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+
+    # --- Database ---
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pgvector>=0.3.6",
+
+    # --- RAG / AI ---
+    "llama-index-core>=0.12.0",
+    "llama-index-embeddings-huggingface>=0.4.0",
+    "sentence-transformers>=3.3.0",
+    "rank-bm25>=0.2.2",
+    "qdrant-client>=1.12.0",
+    "neo4j>=5.26.0",
+    "httpx>=0.28.0",
+
+    # --- Document Processing ---
+    "unstructured[pdf,docx]>=0.16.0",
+    "python-docx>=1.1.0",
+    "pymupdf>=1.25.0",
+
+    # --- Export ---
+    "weasyprint>=63.0",
+    "jinja2>=3.1.4",
+
+    # --- Task Queue ---
+    "celery[redis]>=5.4.0",
+
+    # --- Storage ---
+    "minio>=7.2.12",
+
+    # --- Utils ---
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

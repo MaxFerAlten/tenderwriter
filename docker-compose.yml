@@ -1,0 +1,165 @@
+version: "3.9"
+
+services:
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: tw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tenderwriter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_pg_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tenderwriter}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tenderwriter}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Qdrant (Vector Database) ---
+  qdrant:
+    image: qdrant/qdrant:v1.13.0
+    container_name: tw-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: [ "CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/6333'" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Neo4j Community (Knowledge Graph) ---
+  neo4j:
+    image: neo4j:5-community
+    container_name: tw-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme_neo4j_password}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474" # Browser UI
+      - "7687:7687" # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-changeme_neo4j_password} 'RETURN 1'" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # --- Ollama (Local LLM) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tw-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment the following for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    # --- MinIO (Object Storage) ---
+  minio:
+    image: minio/minio:latest
+    container_name: tw-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-changeme_minio_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001" # Console UI
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis (Task Queue backend) ---
+  redis:
+    image: redis:7-alpine
+    container_name: tw-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Backend (FastAPI) ---
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tw-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tenderwriter}:${POSTGRES_PASSWORD:-changeme_pg_password}@postgres:5432/${POSTGRES_DB:-tenderwriter}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-changeme_neo4j_password}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-changeme_minio_password}
+      REDIS_URL: redis://redis:6379/0
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme_app_secret_key}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./backend/app:/app/app # Hot reload in development
+
+  # --- Frontend (React + Vite) ---
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tw-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src # Hot reload in development
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  neo4j_data:
+  ollama_data:
+  minio_data:
+  redis_data:

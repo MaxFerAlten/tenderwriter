@@ -1,0 +1,40 @@
+Metadata-Version: 2.4
+Name: tenderwriter-backend
+Version: 0.1.0
+Summary: Open-source Tender Proposal Software with HybridRAG — Backend
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.32.0
+Requires-Dist: python-multipart>=0.0.12
+Requires-Dist: sqlalchemy[asyncio]>=2.0.35
+Requires-Dist: asyncpg>=0.30.0
+Requires-Dist: alembic>=1.14.0
+Requires-Dist: pgvector>=0.3.6
+Requires-Dist: llama-index-core>=0.12.0
+Requires-Dist: llama-index-embeddings-huggingface>=0.4.0
+Requires-Dist: sentence-transformers>=3.3.0
+Requires-Dist: rank-bm25>=0.2.2
+Requires-Dist: qdrant-client>=1.12.0
+Requires-Dist: neo4j>=5.26.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: unstructured[docx,pdf]>=0.16.0
+Requires-Dist: python-docx>=1.1.0
+Requires-Dist: pymupdf>=1.25.0
+Requires-Dist: weasyprint>=63.0
+Requires-Dist: jinja2>=3.1.4
+Requires-Dist: celery[redis]>=5.4.0
+Requires-Dist: minio>=7.2.12
+Requires-Dist: pydantic>=2.10.0
+Requires-Dist: pydantic-settings>=2.6.0
+Requires-Dist: python-jose[cryptography]>=3.3.0
+Requires-Dist: passlib[bcrypt]>=1.7.4
+Requires-Dist: structlog>=24.4.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24.0; extra == "dev"
+Requires-Dist: pytest-cov>=6.0.0; extra == "dev"
+Requires-Dist: httpx>=0.28.0; extra == "dev"
+Requires-Dist: ruff>=0.8.0; extra == "dev"
+Requires-Dist: mypy>=1.13.0; extra == "dev"
