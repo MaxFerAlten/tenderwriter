@@ -61,6 +61,10 @@ npm install
 npm run dev
 ```
 
+## Local Startup Checklist
+
+For a step-by-step local startup and troubleshooting guide, see [LOCAL_CHECKLIST.md](LOCAL_CHECKLIST.md).
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the full system architecture and HybridRAG pipeline design.
