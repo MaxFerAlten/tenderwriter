@@ -1,70 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
     Plus,
     Search,
     Star,
     Copy,
-    Edit3,
+    Trash2,
     Filter,
+    AlertCircle,
+    Loader2,
+    Check,
+    X,
 } from 'lucide-react';
-
-const DEMO_BLOCKS = [
-    {
-        id: 1,
-        title: 'Company Overview — Standard',
-        content: 'Founded in 2005, our firm has grown to become a leading provider of engineering and consulting services, with a proven track record across infrastructure, environmental, and technology sectors. We employ over 200 professionals across 5 regional offices.',
-        category: 'Boilerplate',
-        tags: ['company', 'overview', 'about-us'],
-        usage_count: 24,
-        quality_rating: 4.5,
-    },
-    {
-        id: 2,
-        title: 'Bridge Engineering — Team CVs',
-        content: 'Our bridge engineering team is led by Dr. Sarah Chen, PE, SE, who has 22 years of experience in structural analysis, seismic retrofit design, and load rating analysis. She has directed over 40 bridge projects valued at $500M+.',
-        category: 'Team & Personnel',
-        tags: ['team', 'bridge', 'cv', 'engineering'],
-        usage_count: 18,
-        quality_rating: 4.8,
-    },
-    {
-        id: 3,
-        title: 'Quality Assurance Program',
-        content: 'Our ISO 9001:2015 certified Quality Management System ensures consistent delivery of high-quality services. We implement a three-tier QA/QC review process with independent verification at each project milestone.',
-        category: 'Quality & Compliance',
-        tags: ['quality', 'iso-9001', 'compliance'],
-        usage_count: 31,
-        quality_rating: 4.2,
-    },
-    {
-        id: 4,
-        title: 'Environmental Sustainability Approach',
-        content: 'We integrate sustainable practices throughout our project lifecycle. Our environmental management approach includes carbon footprint analysis, LEED compliance support, and innovative green infrastructure solutions that minimize environmental impact.',
-        category: 'Technical Approach',
-        tags: ['sustainability', 'environment', 'leed', 'green'],
-        usage_count: 12,
-        quality_rating: 3.9,
-    },
-    {
-        id: 5,
-        title: 'Safety Record & OSHA Compliance',
-        content: 'We maintain an exemplary safety record with an EMR of 0.72 and zero lost-time incidents over the past 3 years. All field personnel hold OSHA 30-hour certifications, and we conduct weekly toolbox talks on every active project.',
-        category: 'Quality & Compliance',
-        tags: ['safety', 'osha', 'compliance', 'ehs'],
-        usage_count: 22,
-        quality_rating: 4.6,
-    },
-    {
-        id: 6,
-        title: 'IT Infrastructure Modernization Experience',
-        content: 'Our IT consulting division has successfully delivered 60+ enterprise modernization projects, including cloud migration, legacy system integration, and cybersecurity enhancement programs for government and Fortune 500 clients.',
-        category: 'Past Performance',
-        tags: ['it', 'technology', 'modernization', 'cloud'],
-        usage_count: 8,
-        quality_rating: 4.1,
-    },
-];
+import { contentApi, type ContentBlock, type ContentBlockCreate } from '../api/client';
 
 const CATEGORIES = [
     'All',
@@ -94,19 +42,101 @@ function StarRating({ rating }: { rating: number }) {
 }
 
 export default function ContentLibrary() {
+    const [blocks, setBlocks] = useState<ContentBlock[]>([]);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [showNewBlock, setShowNewBlock] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [copiedId, setCopiedId] = useState<number | null>(null);
+    const [deletingId, setDeletingId] = useState<number | null>(null);
 
-    const filtered = DEMO_BLOCKS.filter((block) => {
-        const matchesCategory = selectedCategory === 'All' || block.category === selectedCategory;
-        const matchesSearch =
-            !searchQuery ||
-            block.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            block.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            block.tags.some((t) => t.includes(searchQuery.toLowerCase()));
-        return matchesCategory && matchesSearch;
-    });
+    // New block form state
+    const [formTitle, setFormTitle] = useState('');
+    const [formContent, setFormContent] = useState('');
+    const [formCategory, setFormCategory] = useState('');
+    const [formTags, setFormTags] = useState('');
+
+    const loadBlocks = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const params: Record<string, string> = { limit: '50' };
+            if (searchQuery) params.search = searchQuery;
+            if (selectedCategory !== 'All') params.category = selectedCategory;
+            const data = await contentApi.list(params);
+            setBlocks(data.items);
+            setTotal(data.total);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to load content blocks');
+        } finally {
+            setLoading(false);
+        }
+    }, [searchQuery, selectedCategory]);
+
+    useEffect(() => {
+        loadBlocks();
+    }, [loadBlocks]);
+
+    const handleCreate = async () => {
+        if (!formTitle.trim() || !formContent.trim()) return;
+        try {
+            setCreating(true);
+            const data: ContentBlockCreate = {
+                title: formTitle,
+                content: formContent,
+            };
+            if (formCategory) data.category = formCategory;
+            if (formTags.trim()) {
+                data.tags = formTags.split(',').map((t) => t.trim()).filter(Boolean);
+            }
+            await contentApi.create(data);
+            // Reset form
+            setFormTitle('');
+            setFormContent('');
+            setFormCategory('');
+            setFormTags('');
+            setShowNewBlock(false);
+            await loadBlocks();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to create content block');
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const handleCopy = (block: ContentBlock) => {
+        navigator.clipboard.writeText(block.content).then(() => {
+            setCopiedId(block.id);
+            setTimeout(() => setCopiedId(null), 2000);
+        });
+    };
+
+    const handleDelete = async (blockId: number) => {
+        try {
+            setDeletingId(blockId);
+            await contentApi.delete(blockId);
+            await loadBlocks();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to delete block');
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
+    // Debounced search
+    const [searchTimer, setSearchTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+    const handleSearchChange = (value: string) => {
+        setSearchQuery(value);
+        if (searchTimer) clearTimeout(searchTimer);
+        setSearchTimer(
+            setTimeout(() => {
+                // loadBlocks will fire via useEffect dep on searchQuery
+            }, 300)
+        );
+    };
 
     return (
         <div className="animate-in">
@@ -115,6 +145,7 @@ export default function ContentLibrary() {
                     <h1 className="page-title">Content Library</h1>
                     <p className="page-subtitle">
                         Reusable content blocks for rapid proposal assembly
+                        {!loading && <> — {total} blocks</>}
                     </p>
                 </div>
                 <button className="btn btn-primary" onClick={() => setShowNewBlock(!showNewBlock)}>
@@ -123,6 +154,17 @@ export default function ContentLibrary() {
                 </button>
             </div>
 
+            {/* Error */}
+            {error && (
+                <div className="card" style={{ borderColor: '#ef4444', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#ef4444' }}>
+                    <AlertCircle size={18} />
+                    <span>{error}</span>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setError(null)} style={{ marginLeft: 'auto' }}>
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
             {/* Search */}
             <div className="search-container">
                 <Search size={18} className="search-icon" />
@@ -130,7 +172,7 @@ export default function ContentLibrary() {
                     className="search-input"
                     placeholder="Search content blocks by title, content, or tags..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => handleSearchChange(e.target.value)}
                 />
             </div>
 
@@ -158,17 +200,32 @@ export default function ContentLibrary() {
                 >
                     <h3 style={{ marginBottom: '1rem' }}>New Content Block</h3>
                     <div className="form-group">
-                        <label className="form-label">Title</label>
-                        <input className="form-input" placeholder="e.g., Bridge Engineering Experience" />
+                        <label className="form-label">Title *</label>
+                        <input
+                            className="form-input"
+                            placeholder="e.g., Bridge Engineering Experience"
+                            value={formTitle}
+                            onChange={(e) => setFormTitle(e.target.value)}
+                        />
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Content</label>
-                        <textarea className="form-textarea" placeholder="Write reusable content..." style={{ minHeight: 120 }} />
+                        <label className="form-label">Content *</label>
+                        <textarea
+                            className="form-textarea"
+                            placeholder="Write reusable content..."
+                            style={{ minHeight: 120 }}
+                            value={formContent}
+                            onChange={(e) => setFormContent(e.target.value)}
+                        />
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                         <div className="form-group">
                             <label className="form-label">Category</label>
-                            <select className="form-select">
+                            <select
+                                className="form-select"
+                                value={formCategory}
+                                onChange={(e) => setFormCategory(e.target.value)}
+                            >
                                 <option value="">Select...</option>
                                 {CATEGORIES.filter((c) => c !== 'All').map((cat) => (
                                     <option key={cat}>{cat}</option>
@@ -177,64 +234,104 @@ export default function ContentLibrary() {
                         </div>
                         <div className="form-group">
                             <label className="form-label">Tags (comma-separated)</label>
-                            <input className="form-input" placeholder="bridge, engineering, cv" />
+                            <input
+                                className="form-input"
+                                placeholder="bridge, engineering, cv"
+                                value={formTags}
+                                onChange={(e) => setFormTags(e.target.value)}
+                            />
                         </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
-                        <button className="btn btn-primary"><Plus size={16} /> Create</button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleCreate}
+                            disabled={creating || !formTitle.trim() || !formContent.trim()}
+                        >
+                            {creating ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+                            {creating ? 'Creating...' : 'Create'}
+                        </button>
                         <button className="btn btn-ghost" onClick={() => setShowNewBlock(false)}>Cancel</button>
                     </div>
                 </motion.div>
             )}
 
+            {/* Loading */}
+            {loading && (
+                <div className="loading-spinner" style={{ padding: '3rem 0' }}>
+                    <div className="spinner" />
+                    <p style={{ color: 'var(--text-muted)', marginTop: '0.75rem' }}>Loading content blocks...</p>
+                </div>
+            )}
+
             {/* Content Grid */}
-            <div className="content-grid">
-                {filtered.map((block, i) => (
-                    <motion.div
-                        key={block.id}
-                        className="content-card"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.05 }}
-                    >
-                        <div className="card-header">
-                            <div>
-                                <div className="card-title">{block.title}</div>
+            {!loading && (
+                <div className="content-grid">
+                    {blocks.map((block, i) => (
+                        <motion.div
+                            key={block.id}
+                            className="content-card"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.05 }}
+                        >
+                            <div className="card-header">
+                                <div>
+                                    <div className="card-title">{block.title}</div>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        {block.category || 'Uncategorized'}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                    <button
+                                        className="btn btn-ghost btn-icon btn-sm"
+                                        title="Copy to clipboard"
+                                        onClick={() => handleCopy(block)}
+                                    >
+                                        {copiedId === block.id ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                                    </button>
+                                    <button
+                                        className="btn btn-ghost btn-icon btn-sm"
+                                        title="Delete"
+                                        onClick={() => handleDelete(block.id)}
+                                        disabled={deletingId === block.id}
+                                    >
+                                        {deletingId === block.id ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                                {block.content.length > 180 ? block.content.slice(0, 180) + '...' : block.content}
+                            </p>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <StarRating rating={block.quality_rating} />
                                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                    {block.category}
+                                    Used {block.usage_count}×
                                 </span>
                             </div>
-                            <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                <button className="btn btn-ghost btn-icon btn-sm" title="Copy"><Copy size={14} /></button>
-                                <button className="btn btn-ghost btn-icon btn-sm" title="Edit"><Edit3 size={14} /></button>
-                            </div>
-                        </div>
 
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
-                            {block.content.slice(0, 180)}...
-                        </p>
+                            {block.tags && block.tags.length > 0 && (
+                                <div className="content-card-tags">
+                                    {block.tags.map((tag) => (
+                                        <span key={tag} className="tag">{tag}</span>
+                                    ))}
+                                </div>
+                            )}
+                        </motion.div>
+                    ))}
+                </div>
+            )}
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <StarRating rating={block.quality_rating} />
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                Used {block.usage_count}×
-                            </span>
-                        </div>
-
-                        <div className="content-card-tags">
-                            {block.tags.map((tag) => (
-                                <span key={tag} className="tag">{tag}</span>
-                            ))}
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
-
-            {filtered.length === 0 && (
+            {!loading && blocks.length === 0 && (
                 <div className="empty-state">
                     <Filter size={48} />
-                    <h3>No matching content blocks</h3>
-                    <p>Try adjusting your search or category filter</p>
+                    <h3>No content blocks found</h3>
+                    <p>{searchQuery || selectedCategory !== 'All'
+                        ? 'Try adjusting your search or category filter'
+                        : 'Create your first content block to get started'}
+                    </p>
                 </div>
             )}
         </div>

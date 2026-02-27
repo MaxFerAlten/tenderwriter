@@ -7,41 +7,16 @@ import {
     FileText,
     Database,
     Network,
+    AlertCircle,
 } from 'lucide-react';
+import { ragApi, type RAGResponse } from '../api/client';
 
-interface SearchResult {
+interface DisplayResult {
     text: string;
     score: number;
     sources: string[];
-    metadata: Record<string, string>;
+    metadata: Record<string, unknown>;
 }
-
-const DEMO_RESULTS: SearchResult[] = [
-    {
-        text: 'Successfully completed the Route 42 Highway Bridge Rehabilitation project for PennDOT in 2024. The $12.5M project involved full deck replacement, seismic retrofitting, and bearing replacement on a 6-span steel girder bridge, delivered 2 weeks ahead of schedule with zero safety incidents.',
-        score: 0.94,
-        sources: ['dense', 'sparse', 'graph'],
-        metadata: { source: 'Past Proposals', doc: 'PennDOT_Bridge_Proposal_2024.pdf' },
-    },
-    {
-        text: 'Team Member: Dr. Sarah Chen, PE, SE — 22 years structural engineering experience. Certifications: PE (PA, NJ, NY), SE (PA), PMP. Led 40+ bridge projects valued at $500M+. Expertise: seismic retrofit design, load rating analysis, accelerated bridge construction.',
-        score: 0.89,
-        sources: ['graph', 'dense'],
-        metadata: { source: 'Knowledge Graph', entity: 'TeamMember' },
-    },
-    {
-        text: 'Our accelerated bridge construction methodology reduces traffic disruption by 60%. We utilize prefabricated bridge elements and systems (PBES) along with ultra-high performance concrete (UHPC) to minimize construction timelines while maintaining structural integrity.',
-        score: 0.82,
-        sources: ['dense', 'sparse'],
-        metadata: { source: 'Content Library', category: 'Technical Approach' },
-    },
-    {
-        text: 'Project: I-95 Viaduct Rehabilitation — Client: NJDOT — Year: 2023 — Value: $28M — Category: Bridge Rehabilitation. Team delivered comprehensive structural rehabilitation including post-tensioning repairs, joint replacements, and Advanced Protective Coating systems.',
-        score: 0.78,
-        sources: ['graph'],
-        metadata: { source: 'Knowledge Graph', entity: 'Project' },
-    },
-];
 
 function SourceBadge({ source }: { source: string }) {
     const config: Record<string, { icon: typeof FileText; label: string; color: string }> = {
@@ -71,29 +46,59 @@ function SourceBadge({ source }: { source: string }) {
 
 export default function RAGSearch() {
     const [query, setQuery] = useState('');
-    const [results, setResults] = useState<SearchResult[]>([]);
+    const [results, setResults] = useState<DisplayResult[]>([]);
     const [answer, setAnswer] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const handleSearch = () => {
+    const handleSearch = async () => {
         if (!query.trim()) return;
 
         setIsSearching(true);
         setHasSearched(true);
+        setError(null);
+        setResults([]);
+        setAnswer('');
 
-        // Simulate search with demo data
-        setTimeout(() => {
-            setResults(DEMO_RESULTS);
-            setAnswer(
-                'Based on your knowledge base, your team has extensive bridge rehabilitation experience. Key highlights:\n\n' +
-                '• **Route 42 Bridge** (2024, PennDOT) — $12.5M, full deck replacement, delivered early\n' +
-                '• **I-95 Viaduct** (2023, NJDOT) — $28M comprehensive structural rehabilitation\n' +
-                '• **Lead Engineer**: Dr. Sarah Chen, PE, SE with 22 years and 40+ bridge projects\n\n' +
-                'Your team holds PE licenses in PA, NJ, NY and uses accelerated bridge construction methods (PBES, UHPC) that reduce traffic disruption by 60%.'
+        try {
+            const data: RAGResponse = await ragApi.query({
+                query: query,
+                mode: 'qa',
+                temperature: 0.3,
+            });
+
+            setAnswer(data.answer || '');
+            setResults(
+                data.sources.map((s) => ({
+                    text: s.text,
+                    score: s.score,
+                    sources: inferSources(s.metadata),
+                    metadata: s.metadata,
+                }))
             );
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Search failed';
+            setError(msg);
+            // Show a helpful message if the backend is likely offline
+            if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
+                setError('Could not reach the backend. Make sure the API server is running on port 8000.');
+            }
+        } finally {
             setIsSearching(false);
-        }, 1500);
+        }
+    };
+
+    // Infer which retriever contributed based on metadata
+    const inferSources = (metadata: Record<string, unknown>): string[] => {
+        const sources: string[] = [];
+        const src = String(metadata.source || '');
+        if (src.includes('knowledge_graph') || src.includes('graph')) sources.push('graph');
+        if (src.includes('qdrant') || src.includes('vector') || src.includes('dense')) sources.push('dense');
+        if (src.includes('bm25') || src.includes('sparse')) sources.push('sparse');
+        // Default: show dense if we can't determine the source
+        if (sources.length === 0) sources.push('dense');
+        return sources;
     };
 
     return (
@@ -133,7 +138,7 @@ export default function RAGSearch() {
                 <button
                     className="btn btn-primary btn-sm"
                     onClick={handleSearch}
-                    disabled={isSearching}
+                    disabled={isSearching || !query.trim()}
                     style={{
                         position: 'absolute',
                         right: '0.5rem',
@@ -150,6 +155,14 @@ export default function RAGSearch() {
                     )}
                 </button>
             </div>
+
+            {/* Error */}
+            {error && (
+                <div className="card" style={{ borderColor: '#ef4444', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#ef4444' }}>
+                    <AlertCircle size={18} />
+                    <span>{error}</span>
+                </div>
+            )}
 
             {/* Example Queries */}
             {!hasSearched && (
@@ -168,9 +181,7 @@ export default function RAGSearch() {
                             <button
                                 key={example}
                                 className="btn btn-secondary btn-sm"
-                                onClick={() => {
-                                    setQuery(example);
-                                }}
+                                onClick={() => setQuery(example)}
                                 style={{ fontSize: '0.82rem' }}
                             >
                                 {example}
@@ -181,7 +192,7 @@ export default function RAGSearch() {
             )}
 
             {/* Results */}
-            {hasSearched && !isSearching && (
+            {hasSearched && !isSearching && !error && (
                 <div style={{ display: 'grid', gap: '1.5rem' }}>
                     {/* AI Answer */}
                     {answer && (
@@ -196,7 +207,8 @@ export default function RAGSearch() {
                                 <h3 style={{ fontSize: '1rem' }}>AI Answer</h3>
                                 <span className="ai-badge">HybridRAG</span>
                             </div>
-                            <div style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}
+                            <div
+                                style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}
                                 dangerouslySetInnerHTML={{
                                     __html: answer
                                         .replace(/\*\*(.*?)\*\*/g, '<strong style="color: var(--text-primary)">$1</strong>')
@@ -205,52 +217,67 @@ export default function RAGSearch() {
                         </motion.div>
                     )}
 
+                    {/* No answer and no results */}
+                    {!answer && results.length === 0 && (
+                        <div className="empty-state" style={{ padding: '2rem 0' }}>
+                            <SearchIcon size={48} />
+                            <h3>No results found</h3>
+                            <p>Try a different query, or ingest some documents first</p>
+                        </div>
+                    )}
+
                     {/* Source Documents */}
-                    <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                        Retrieved Sources ({results.length})
-                    </h3>
+                    {results.length > 0 && (
+                        <>
+                            <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+                                Retrieved Sources ({results.length})
+                            </h3>
 
-                    {results.map((result, i) => (
-                        <motion.div
-                            key={i}
-                            className="card"
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.08 }}
-                            style={{ padding: '1.25rem' }}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                    {result.sources.map((s) => (
-                                        <SourceBadge key={s} source={s} />
-                                    ))}
-                                </div>
-                                <span style={{
-                                    fontSize: '0.75rem',
-                                    fontWeight: 700,
-                                    color: result.score > 0.85
-                                        ? 'var(--accent-green)'
-                                        : result.score > 0.7
-                                            ? 'var(--accent-amber)'
-                                            : 'var(--text-muted)',
-                                }}>
-                                    {(result.score * 100).toFixed(0)}% match
-                                </span>
-                            </div>
+                            {results.map((result, i) => (
+                                <motion.div
+                                    key={i}
+                                    className="card"
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: i * 0.08 }}
+                                    style={{ padding: '1.25rem' }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                            {result.sources.map((s) => (
+                                                <SourceBadge key={s} source={s} />
+                                            ))}
+                                        </div>
+                                        <span style={{
+                                            fontSize: '0.75rem',
+                                            fontWeight: 700,
+                                            color: result.score > 0.85
+                                                ? 'var(--accent-green)'
+                                                : result.score > 0.7
+                                                    ? 'var(--accent-amber)'
+                                                    : 'var(--text-muted)',
+                                        }}>
+                                            {(result.score * 100).toFixed(0)}% match
+                                        </span>
+                                    </div>
 
-                            <p style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                                {result.text}
-                            </p>
+                                    <p style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                                        {result.text}
+                                    </p>
 
-                            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                {Object.entries(result.metadata).map(([key, value]) => (
-                                    <span key={key}>
-                                        <strong>{key}:</strong> {value}
-                                    </span>
-                                ))}
-                            </div>
-                        </motion.div>
-                    ))}
+                                    {Object.keys(result.metadata).length > 0 && (
+                                        <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                                            {Object.entries(result.metadata).map(([key, value]) => (
+                                                <span key={key}>
+                                                    <strong>{key}:</strong> {String(value)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </motion.div>
+                            ))}
+                        </>
+                    )}
                 </div>
             )}
 
