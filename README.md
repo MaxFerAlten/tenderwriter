@@ -61,6 +61,10 @@ npm install
 npm run dev
 ```
 
+docker exec -it tw-ollama ollama pull llama3:8b
+docker compose up -d --force-recreate ollama
+
+
 ## Local Startup Checklist
 
 For a step-by-step local startup and troubleshooting guide, see [LOCAL_CHECKLIST.md](LOCAL_CHECKLIST.md).
