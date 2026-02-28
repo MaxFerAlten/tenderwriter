@@ -35,8 +35,22 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """Create all tables on startup (dev only — use Alembic in production)."""
+    print("DEBUG: Initializing database...", flush=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Simple migrations for newly added columns if table already existed
+        try:
+            from sqlalchemy import text
+            print("DEBUG: Checking for missing columns in 'users' table...", flush=True)
+            # Add is_active if missing
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+            # Add is_verified if missing
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE"))
+            print("DEBUG: Database schema check completed.", flush=True)
+        except Exception as e:
+            print(f"DEBUG: Migration error (ignoring): {e}", flush=True)
+            pass
 
 
 async def close_db():

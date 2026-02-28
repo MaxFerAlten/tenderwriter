@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, FC } from 'react';
 import { motion } from 'framer-motion';
 import {
     Save,
@@ -8,8 +8,11 @@ import {
     Loader2,
     AlertCircle,
     Server,
+    Shield,
+    Clock,
 } from 'lucide-react';
-import { ragApi } from '../api/client';
+import { ragApi, systemApi } from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
     status: string;
@@ -18,13 +21,21 @@ interface RAGHealth {
     [key: string]: unknown;
 }
 
-const Settings: React.FC = () => {
+const Settings: FC = () => {
+    const { user } = useAuth();
     const [health, setHealth] = useState<RAGHealth | null>(null);
     const [loadingHealth, setLoadingHealth] = useState(true);
     const [healthError, setHealthError] = useState<string | null>(null);
 
-    const [profileName, setProfileName] = useState('');
-    const [profileEmail, setProfileEmail] = useState('');
+    const [profileName, setProfileName] = useState(user?.name || '');
+    const [profileEmail, setProfileEmail] = useState(user?.email || '');
+
+    // Nginx Config State
+    const [readTimeout, setReadTimeout] = useState(300);
+    const [connectTimeout, setConnectTimeout] = useState(300);
+    const [sendTimeout, setSendTimeout] = useState(300);
+    const [isSavingNginx, setIsSavingNginx] = useState(false);
+    const [nginxResult, setNginxResult] = useState<{ success: boolean, message: string } | null>(null);
 
     const checkHealth = async () => {
         try {
@@ -42,6 +53,23 @@ const Settings: React.FC = () => {
     useEffect(() => {
         checkHealth();
     }, []);
+
+    const handleSaveNginx = async () => {
+        setIsSavingNginx(true);
+        setNginxResult(null);
+        try {
+            await systemApi.updateNginx({
+                read_timeout: readTimeout,
+                connect_timeout: connectTimeout,
+                send_timeout: sendTimeout
+            });
+            setNginxResult({ success: true, message: 'Nginx config aggiornata con successo!' });
+        } catch (err) {
+            setNginxResult({ success: false, message: 'Errore durante l\'aggiornamento Nginx.' });
+        } finally {
+            setIsSavingNginx(false);
+        }
+    };
 
     const statusIcon = (ok: boolean) =>
         ok ? <CheckCircle size={16} color="#10b981" /> : <XCircle size={16} color="#ef4444" />;
@@ -165,29 +193,77 @@ const Settings: React.FC = () => {
                                 <h3 style={{ fontWeight: 500, fontSize: '0.9rem' }}>LLM Model</h3>
                                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Select the model used for text generation</p>
                             </div>
-                            <select className="form-select" style={{ maxWidth: 200 }}>
+                            <select className="form-select" style={{ maxWidth: 200 }} defaultValue="Llama 3 (8b)">
                                 <option>Llama 3 (8b)</option>
                                 <option>Mistral 7b</option>
                                 <option>Qwen 2.5</option>
                             </select>
                         </div>
+                    </div>
+                </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
-                            <div>
-                                <h3 style={{ fontWeight: 500, fontSize: '0.9rem' }}>Retrieval Strategy</h3>
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Configure how context is retrieved</p>
+                {/* Admin Only: Infrastructure Settings */}
+                {user?.role === 'admin' && (
+                    <div className="card" style={{ borderColor: 'var(--accent-blue)' }}>
+                        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem', color: 'var(--accent-blue)' }}>
+                            <Shield size={20} />
+                            Infrastruttura (Admin)
+                        </h2>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                            Configurazione avanzata dei componenti di sistema.
+                        </p>
+
+                        <div style={{ display: 'grid', gap: '1.25rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Clock size={16} />
+                                    <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Nginx Proxy Timeouts (secondi)</h3>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.75rem' }}>Read Timeout</label>
+                                        <input type="number" className="form-input" value={readTimeout} onChange={(e) => setReadTimeout(Number(e.target.value))} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.75rem' }}>Connect Timeout</label>
+                                        <input type="number" className="form-input" value={connectTimeout} onChange={(e) => setConnectTimeout(Number(e.target.value))} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ fontSize: '0.75rem' }}>Send Timeout</label>
+                                        <input type="number" className="form-input" value={sendTimeout} onChange={(e) => setSendTimeout(Number(e.target.value))} />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+                                    {nginxResult && (
+                                        <span style={{ fontSize: '0.8rem', color: nginxResult.success ? 'var(--accent-green)' : '#ef4444' }}>
+                                            {nginxResult.message}
+                                        </span>
+                                    )}
+                                    <button
+                                        className="btn btn-primary btn-sm"
+                                        onClick={handleSaveNginx}
+                                        disabled={isSavingNginx}
+                                        style={{ background: 'var(--accent-blue)' }}
+                                    >
+                                        {isSavingNginx ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                        Applica a Caldo
+                                    </button>
+                                </div>
                             </div>
-                            <select className="form-select" style={{ maxWidth: 200 }}>
-                                <option>Hybrid (Dense + Sparse)</option>
-                                <option>Dense Only</option>
-                                <option>Sparse Only</option>
-                            </select>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                <div>
+                                    <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Utenza Tecnica Admin</h3>
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>Abilita o disabilita l'utenza admin/admin</p>
+                                </div>
+                                <label className="switch">
+                                    <input type="checkbox" defaultChecked />
+                                    <span className="slider round"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                        Configuration save endpoint coming soon — these settings are currently read from environment variables.
-                    </p>
-                </div>
+                )}
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
                     <button

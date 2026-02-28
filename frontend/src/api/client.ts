@@ -14,10 +14,13 @@ interface RequestOptions {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, headers = {} } = options;
 
+    const token = localStorage.getItem('token');
+
     const config: RequestInit = {
         method,
         headers: {
             'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...headers,
         },
     };
@@ -40,6 +43,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     return response.json();
 }
 
+// ── Auth ──
+
+export const authApi = {
+    login: (data: Record<string, string>) => request<AuthResponse>('/auth/login', { method: 'POST', body: data }),
+    register: (data: Record<string, string>) => request<any>('/auth/register', { method: 'POST', body: data }),
+    verifyOtp: (data: Record<string, string>) => request<AuthResponse>('/auth/verify-otp', { method: 'POST', body: data }),
+    me: () => request<User>('/auth/me'),
+};
+
 // ── Tenders ──
 
 export const tenderApi = {
@@ -52,6 +64,22 @@ export const tenderApi = {
     update: (id: number, data: Partial<TenderCreate>) =>
         request<Tender>(`/tenders/${id}`, { method: 'PUT', body: data }),
     delete: (id: number) => request(`/tenders/${id}`, { method: 'DELETE' }),
+    uploadDocument: async (id: number, file: File) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE}/tenders/${id}/import`, {
+            method: 'POST',
+            body: formData,
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            // non settiamo il Content-Type qui, fetch lo fa in automatico con il boundary per multipart/form-data
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Upload error' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        return response.json();
+    },
 };
 
 // ── Proposals ──
@@ -93,6 +121,7 @@ export const contentApi = {
 export const ragApi = {
     query: (data: RAGQueryRequest) =>
         request<RAGResponse>('/rag/query', { method: 'POST', body: data }),
+    getHistory: () => request<{ id: number, query: string, response: string, created_at: string }[]>('/rag/history'),
     generateSection: (data: GenerateSectionRequest) =>
         request<RAGResponse>('/rag/generate-section', { method: 'POST', body: data }),
     complianceCheck: (data: ComplianceCheckRequest) =>
@@ -105,7 +134,29 @@ export const ragApi = {
     health: () => request<Record<string, unknown>>('/rag/health'),
 };
 
+// ── System ──
+
+export const systemApi = {
+    getContainers: () => request<any[]>('/system/containers'),
+    getLogs: (containerName: string, tail?: number) => request<{ logs: string }>(`/system/logs/${containerName}${tail ? `?tail=${tail}` : ''}`),
+    getStats: (containerName: string) => request<any>(`/system/stats/${containerName}`),
+    updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
+};
+
 // ── Types ──
+
+export interface User {
+    id: number;
+    email: string;
+    name: string;
+    role: string;
+}
+
+export interface AuthResponse {
+    access_token: string;
+    token_type: string;
+    user: User;
+}
 
 export interface Tender {
     id: number;

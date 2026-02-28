@@ -24,9 +24,44 @@ async def lifespan(app: FastAPI):
         )
 
         # Initialize database connection pool
-        from app.db.database import init_db
+        from app.db.database import init_db, async_session_factory
+        from app.models import User
+        from sqlalchemy import select
+        from app.api.auth import hash_password
+
         await init_db()
         logger.info("Database initialized")
+
+        # Initialize technical admin
+        async with async_session_factory() as session:
+            result = await session.execute(select(User).where(User.email == settings.admin_username))
+            admin_user = result.scalar_one_or_none()
+            
+            if admin_user:
+                if not settings.admin_enabled:
+                    if admin_user.is_active:
+                        admin_user.is_active = False
+                        await session.commit()
+                        logger.info("Admin user disabled by configuration")
+                else:
+                    # Ensure it is active and verified if enabled
+                    if not admin_user.is_active or not admin_user.is_verified:
+                        admin_user.is_active = True
+                        admin_user.is_verified = True
+                        await session.commit()
+                        logger.info("Admin user forced to active/verified status")
+            elif settings.admin_enabled:
+                admin_user = User(
+                    email=settings.admin_username,
+                    name="System Admin",
+                    hashed_password=hash_password(settings.admin_password),
+                    role="admin",
+                    is_active=True,
+                    is_verified=True,
+                )
+                session.add(admin_user)
+                await session.commit()
+                logger.info(f"Admin user '{settings.admin_username}' created successfully")
 
         # Initialize RAG engine components
         from app.rag.engine import HybridRAGEngine
@@ -76,9 +111,10 @@ def create_app() -> FastAPI:
     )
 
     # Register API routers
-    from app.api import tenders, proposals, content_library, rag, auth
+    from app.api import tenders, proposals, content_library, rag, auth, system
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+    app.include_router(system.router, prefix="/api/system", tags=["System Dashboard"])
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])
     app.include_router(

@@ -7,11 +7,16 @@ check compliance, and analyze requirements.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.rag.engine import QueryMode, RAGQuery
+from app.api.auth import get_current_user, UserResponse
+from app.db.database import get_db
+from app.models import SearchHistory
 
 router = APIRouter()
 
@@ -63,9 +68,14 @@ class RAGResponse(BaseModel):
 
 
 @router.post("/query", response_model=RAGResponse)
-async def rag_query(data: RAGQueryRequest, request: Request):
+async def rag_query(
+    data: RAGQueryRequest, 
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Query the HybridRAG engine.
+    Query the HybridRAG engine and save to search history.
 
     Supports modes: search, qa, write_section, exec_summary, analyze_reqs, compliance
     """
@@ -90,8 +100,20 @@ async def rag_query(data: RAGQueryRequest, request: Request):
     if data.stream:
         # Streaming response
         async def stream_generator():
+            full_response = ""
             async for token in engine.query_stream(rag_query):
+                full_response += token
                 yield f"data: {token}\n\n"
+            
+            # Save history when stream completes
+            history = SearchHistory(
+                user_id=current_user.id,
+                query=data.query,
+                response=full_response
+            )
+            db.add(history)
+            await db.commit()
+            
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -100,6 +122,15 @@ async def rag_query(data: RAGQueryRequest, request: Request):
         )
 
     result = await engine.query(rag_query)
+
+    # Save to history
+    history = SearchHistory(
+        user_id=current_user.id,
+        query=data.query,
+        response=result.answer
+    )
+    db.add(history)
+    await db.commit()
 
     return RAGResponse(
         answer=result.answer,
@@ -113,6 +144,30 @@ async def rag_query(data: RAGQueryRequest, request: Request):
         ],
         mode=result.mode.value,
     )
+
+@router.get("/history")
+async def get_search_history(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the search history for the current user."""
+    result = await db.execute(
+        select(SearchHistory)
+        .where(SearchHistory.user_id == current_user.id)
+        .order_by(SearchHistory.created_at.desc())
+        .limit(50)
+    )
+    history = result.scalars().all()
+    
+    return [
+        {
+            "id": h.id,
+            "query": h.query,
+            "response": h.response,
+            "created_at": h.created_at
+        }
+        for h in history
+    ]
 
 
 @router.post("/generate-section", response_model=RAGResponse)

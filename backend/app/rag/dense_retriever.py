@@ -151,9 +151,9 @@ class DenseRetriever:
                     )
             qdrant_filter = models.Filter(must=conditions)
 
-        results = self.client.search(
+        response = self.client.query_points(
             collection_name=full_name,
-            query_vector=query_embedding.tolist(),
+            query=query_embedding.tolist(),
             limit=top_k,
             query_filter=qdrant_filter,
         )
@@ -165,7 +165,7 @@ class DenseRetriever:
                 metadata={k: v for k, v in hit.payload.items() if k != "text"},
                 point_id=str(hit.id),
             )
-            for hit in results
+            for hit in response.points
         ]
 
         logger.debug("Dense search complete", query_len=len(query), results=len(search_results))

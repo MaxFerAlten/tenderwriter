@@ -8,6 +8,8 @@ import {
     CheckCircle,
     AlertCircle,
     Loader2,
+    Upload,
+    Check,
 } from 'lucide-react';
 import { tenderApi, type Tender, type TenderCreate } from '../api/client';
 
@@ -26,10 +28,31 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index }: { tender: Tender; index: number }) {
+function TenderCard({ tender, index, onUpload }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void> }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
+
+    const [uploading, setUploading] = useState(false);
+    const [success, setSuccess] = useState(false);
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            setUploading(true);
+            await onUpload(tender.id, file);
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 3000);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setUploading(false);
+            // Reset input
+            e.target.value = '';
+        }
+    };
 
     return (
         <motion.div
@@ -40,6 +63,21 @@ function TenderCard({ tender, index }: { tender: Tender; index: number }) {
         >
             <div className="tender-card-title">{tender.title}</div>
             <div className="tender-card-client">{tender.client || 'No client'}</div>
+
+            <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+                <label className="btn btn-secondary btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>
+                    {uploading ? <Loader2 size={12} className="spin" /> : success ? <Check size={12} color="#10b981" /> : <Upload size={12} />}
+                    {uploading ? 'Uploading...' : success ? 'Uploaded' : 'Upload PDF'}
+                    <input
+                        type="file"
+                        accept=".pdf,.docx,.txt"
+                        style={{ display: 'none' }}
+                        onChange={handleFileChange}
+                        disabled={uploading}
+                    />
+                </label>
+            </div>
+
             <div className="tender-card-footer">
                 <span className={isUrgent ? 'deadline-urgent' : ''}>
                     <Clock size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />
@@ -111,6 +149,16 @@ export default function Dashboard() {
             setError(err instanceof Error ? err.message : 'Failed to create tender');
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleUpload = async (id: number, file: File) => {
+        try {
+            setError(null);
+            await tenderApi.uploadDocument(id, file);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to upload document');
+            throw err;
         }
     };
 
@@ -291,7 +339,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} />
                                     ))
                                 )}
                             </div>

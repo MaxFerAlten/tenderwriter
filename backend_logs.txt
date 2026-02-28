@@ -1,0 +1,39 @@
+2026-02-28 10:05:51,285 INFO sqlalchemy.engine.Engine [generated in 0.00009s] (50, 0)
+INFO:     172.19.0.7:34696 - "GET /api/proposals?limit=50 HTTP/1.0" 200 OK
+2026-02-28 10:05:51,289 INFO sqlalchemy.engine.Engine COMMIT
+2026-02-28 10:05:53,685 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-02-28 10:05:53,687 INFO sqlalchemy.engine.Engine SELECT count(*) AS count_1 
+FROM (SELECT tenders.id AS id, tenders.title AS title, tenders.client AS client, tenders.description AS description, tenders.deadline AS deadline, tenders.status AS status, tenders.source_file_url AS source_file_url, tenders.budget_estimate AS budget_estimate, tenders.category AS category, tenders.tags AS tags, tenders.metadata_json AS metadata_json, tenders.created_by AS created_by, tenders.created_at AS created_at, tenders.updated_at AS updated_at 
+FROM tenders) AS anon_1
+2026-02-28 10:05:53,687 INFO sqlalchemy.engine.Engine [generated in 0.00012s] ()
+2026-02-28 10:05:53,689 INFO sqlalchemy.engine.Engine SELECT tenders.id, tenders.title, tenders.client, tenders.description, tenders.deadline, tenders.status, tenders.source_file_url, tenders.budget_estimate, tenders.category, tenders.tags, tenders.metadata_json, tenders.created_by, tenders.created_at, tenders.updated_at 
+FROM tenders ORDER BY tenders.created_at DESC 
+ LIMIT $1::INTEGER OFFSET $2::INTEGER
+2026-02-28 10:05:53,689 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (100, 0)
+INFO:     172.19.0.7:59676 - "GET /api/tenders?limit=100 HTTP/1.0" 200 OK
+2026-02-28 10:05:53,693 INFO sqlalchemy.engine.Engine COMMIT
+2026-02-28 10:06:22,834 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-02-28 10:06:22,835 INFO sqlalchemy.engine.Engine SELECT tenders.id, tenders.title, tenders.client, tenders.description, tenders.deadline, tenders.status, tenders.source_file_url, tenders.budget_estimate, tenders.category, tenders.tags, tenders.metadata_json, tenders.created_by, tenders.created_at, tenders.updated_at 
+FROM tenders 
+WHERE tenders.id = $1::INTEGER
+2026-02-28 10:06:22,835 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (1,)
+2026-02-28 10:06:22 [info     ] Ingesting document             doc_type=tender file_path=/tmp/tmpjvyw_s9p.pdf
+2026-02-28 10:06:23 [warning  ] unstructured not available, falling back to basic parsing
+2026-02-28 10:06:23 [debug    ] Embedding batch                batch_size=32 count=752
+2026-02-28 10:06:34 [debug    ] Embedding complete             shape=(752, 768)
+2026-02-28 10:06:34 [debug    ] Semantic chunking complete     num_chunks=76
+2026-02-28 10:06:34 [debug    ] Embedding batch                batch_size=32 count=76
+2026-02-28 10:06:43 [debug    ] Embedding complete             shape=(76, 768)
+2026-02-28 10:06:43 [info     ] Indexed chunks into Qdrant     collection=tw_documents count=76
+2026-02-28 10:06:43 [debug    ] BM25 index updated             new_chunks=76 total=76
+2026-02-28 10:06:43 [info     ] Document ingestion complete    chunks=76 entities=0 point_ids=['f2991c40-c60c-4375-b3fe-e244cecf64a7', '344f6446-d67c-4e00-85fd-056ebdb6276e', 'c1483ee5-ffa4-42d4-aac7-c4cb856e27b3', '30e8a319-9aa5-41c9-8686-cff53313602a', 'e63a68b0-e3e0-40c3-9dc9-b1f34407be3b', '5ca6e68e-7dc7-43fb-a7a5-249cab64a776', '8b075b80-f727-4ff4-ae0d-056941249ce8', 'be49aa84-1fd8-4014-8a14-0a90b2b07315', '36654305-4850-4eda-885b-22f5d571b9f5', 'f40a6b7c-e326-4f56-8ec3-7965c57945dd', '4c9ffae4-a639-47ec-a741-cf5109a37fba', '96c4aebe-d5d6-4d70-9ce6-6be29c1ed226', '469e6054-c385-46a0-bf80-c89f058f68a2', 'ac525f4a-3eda-4072-a564-fa16223f8d15', 'b30669c0-7f9c-4c63-b1fb-6eda6efe17de', '449d6c0e-59e6-48fc-bbb2-9108e175abd7', '59f966ec-1389-4987-a351-1c122685fcdd', 'c02b7ce1-87ed-45a3-b1e3-da331176bd95', '7adaaa2d-53bb-4f36-9087-caac3e8c743c', '357b139b-ef05-4dbb-a437-b051a3eb3e42', '0f5194c8-51c8-4540-b135-0f1749a0df86', '82e34fb2-2ce3-4db8-8002-ef61d4788802', 'd69b7ae9-0dbb-4d9b-9231-54c439feac42', 'a5131153-79b9-4c50-82f6-dbe79be23b30', 'f878b8f3-c4fb-4feb-b4e0-ac44891087ad', 'a5f0e9a1-f3e4-487b-8ce8-74c21283a6cb', '616aef61-6ac7-45ea-ae10-c6a1fbb68865', 'b80af030-f062-4acf-af50-fa08c98b7f4d', 'ea7b15be-2e95-4242-82ee-ca22066c9c93', '36f254e4-cde4-478d-b57a-783410a1ba88', 'f7122a70-7016-440c-9d1f-bb9dfd6fa616', '530c0bb0-8d86-4c20-81e1-01b656e3a502', '9f15b36d-1485-4ad7-b3b0-f1fefa6c2f9e', '7258aaee-bce9-4dfd-aaf4-6f1b0f2a92d9', 'fbe311fb-f08e-4526-800c-1f90755f4242', '89fa136d-c490-4bbc-a3e9-bce6983a3213', '73196c6b-b2df-42f8-ba33-4937a20686de', '7672ab37-4bb2-41ce-a08a-feba63edf42e', '90be2722-971c-4df4-93e1-3217c845709d', 'd16eb78a-927a-4a98-84d8-0ece19c5ebe8', '12ba64d4-b04a-43ec-8322-07b72170b57f', '3bdd6e72-f831-41d4-8c41-e8d6974d2cf4', 'ef7908eb-6fac-4442-a669-dbb553fce829', 'cbbb8a03-7d81-4e88-93e4-940371656e05', '451fd8e3-5801-4390-9ea9-cee138883203', '0345d5f9-5aa6-4874-99ce-18744843c9d5', 'fea87d38-10ee-4643-a4c2-c6a9a0393cfc', 'bb2ae0ed-976b-4faf-9197-e8d45c21506f', '889d899b-3755-4c5e-ad68-26d390d36f16', '7db2808c-bb99-4881-b382-1c0b745c8ea7', '0faf3942-4182-491d-966c-820c2c5d0632', '9a837f7b-d2db-4295-be61-d2442ee77dae', '4bb583d0-5c37-4a17-8dc7-e6118dac129e', 'c4f336e9-b771-49cc-83ea-bcbad175471c', '0d498580-197e-4645-a3a3-f6529d7acd88', 'c9b6cc4a-d996-4334-88f3-49a51c1fed9a', '3aaa37cc-8c02-498d-906c-85c55db0c9e5', 'be97364a-02e1-4b76-b39b-a34cab208668', '70b68b5d-6886-4298-8b01-715628de2652', 'b3e33090-53f8-400b-95a5-c0a3e7fc7814', '0bb72ea6-798b-4b10-abed-02047e7f9f93', '16b4d3e9-c649-4bf9-b785-ad186e413228', 'bfcd108e-d4c5-4fd5-ac66-b40fe4e390b3', '9b94a8a2-4b6a-4f1e-95ab-f8deeb60835f', 'ca6e1b10-82fa-4a19-b376-ce03f3d86aa0', '14e69756-9e7e-4c52-9649-645739bef03c', 'e691bd27-c26b-4a82-92fa-ab5e07cc0f1b', '68e4ce8f-6bb3-40c3-86dc-de6f49f62108', 'f6afb12d-1210-46a1-b92e-39c25e52bd6a', '339e6177-ac7f-4daf-9cde-ddfbb0b42fcc', '7c9cb331-6176-440f-a60e-cca62d14c4ec', '8091b024-4149-47aa-83e6-06f08148824c', '220c87a7-d071-459e-96fc-f4d3504ea448', 'bfef0bd8-d8d8-4672-89ba-db326bbe6f31', '57b3566d-7dfb-4470-a87d-acb91df1519c', '3dca2d9d-e231-4844-8caa-88b81457fbe2'] status=completed
+INFO:     172.19.0.7:59390 - "POST /api/tenders/1/import HTTP/1.0" 202 Accepted
+2026-02-28 10:06:43,799 INFO sqlalchemy.engine.Engine COMMIT
+2026-02-28 10:27:57 [info     ] RAG query started              mode=qa query_len=44
+2026-02-28 10:27:57 [debug    ] Dense search complete          query_len=44 results=20
+2026-02-28 10:27:57 [debug    ] BM25 search complete           query_tokens=7 results=20
+2026-02-28 10:27:57 [debug    ] Graph search complete          query_len=44 results=0
+2026-02-28 10:27:57 [debug    ] Rank fusion complete           dense=20 fused=20 graph=0 sparse=20
+2026-02-28 10:27:58 [debug    ] Re-ranking complete            candidates=20 returned=5 top_score=-0.14704231917858124
+2026-02-28 10:27:58 [debug    ] Generating with Ollama         model=llama3:8b template=general_qa
+2026-02-28 10:29:03 [info     ] Generation complete            completion_tokens=134 output_len=758 prompt_tokens=1706 template=general_qa

@@ -1,0 +1,64 @@
+# System Dashboard, Authentication & Advanced Features Plan
+
+Lo scopo di questo piano è implementare una serie di funzionalità avanzate per la gestione, sicurezza e monitoraggio di TenderWriter, come l'autenticazione a due fattori, il tracciamento della cronologia e una dashboard per il monitoraggio interno (Ollama, Neo4j, Qdrant, MinIO, Redis).
+
+## User Review Required
+
+> [!WARNING]
+> Affinché il backend possa leggere i log dei container (Redis, Ollama, ecc.) e "ricaricare" la configurazione di Nginx nel frontend in tempo reale ("a caldo"), **è necessario montare il socket di Docker all'interno del container del backend**.
+> Questo significa che il backend avrà permessi di "amministratore" per gestire gli altri container. È la soluzione più elegante e pulita per realizzare un System Monitor avanzato senza dover installare agenti complessi su ogni singolo componente. 
+> *Sei d'accordo nell'adottare questo approccio architetturale montando `/var/run/docker.sock` al backend nel [docker-compose.yml](file:///d:/tender/tenderwriter/docker-compose.yml)?*
+
+## Proposed Changes
+
+### 1. Backend: Autenticazione e Sicurezza (Auth System)
+**File Coinvolti:** `backend/app/models.py`, [backend/app/api/auth.py](file:///d:/tender/tenderwriter/backend/app/api/auth.py)
+- [NEW] Tabella [users](file:///d:/tender/tenderwriter/backend/app/api/auth.py#217-221) su PostgreSQL (email, password hashata, role: admin/user, is_verified).
+- [NEW] Tabella `otp_tokens` per la 2FA (registrazione o login).
+- [NEW] Endpoints per registrazione (`/auth/register`), verifica 2FA (`/auth/verify-otp`) e Login JWT (`/auth/login`).
+- [MODIFY] Utenza tecnica *admin/admin*: Verrà generata all'avvio del database se abilitata da file di configurazione ambientale, e potrà essere disabilitata "a caldo" dall'interfaccia utente.
+- [NEW] Supporto per email reale via SMTP (opzionale, configurabile via .env).
+
+### 2. Backend: Cronologia Ricerche (AI Search History)
+**File Coinvolti:** `backend/app/models.py`, [backend/app/api/rag.py](file:///d:/tender/tenderwriter/backend/app/api/rag.py)
+- [NEW] Tabella [search_history](file:///d:/tender/tenderwriter/backend/app/api/rag.py#148-171) con chiave esterna legata all'utente.
+- [MODIFY] La chiamata `/api/rag/query` non solo eseguirà la ricerca in HybridRAG, ma salverà la domanda e le risposte generate (snippet/entità) nella cronologia dell'utente che ha fatto la chiamata.
+
+### 3. Backend: Docker API & System Monitoring
+**File Coinvolti:** [docker-compose.yml](file:///d:/tender/tenderwriter/docker-compose.yml), [backend/app/api/system.py](file:///d:/tender/tenderwriter/backend/app/api/system.py)
+- [MODIFY] Aggiunta di un volume al servizio backend: `- /var/run/docker.sock:/var/run/docker.sock`.
+- [NEW] API `/system/logs/{container_name}` e `/system/stats/{container_name}`. Si appoggerà alla libreria `docker` di Python collegata al socket per estrarre log e metriche in "realtime" di: `qdrant, neo4j, ollama, minio, redis`.
+- [NEW] Sistema di Nginx Dynamic Reload: API `/system/nginx-timeout` che:
+  1. Scrive un piccolo snippet di configurazione con i nuovi valori di `proxy_read_timeout` ecc.
+  2. Esegue tramite API Docker il comando `nginx -s reload` al volo sul container del frontend.
+
+---
+
+### 4. Frontend: Autenticazione e Navigazione
+**File Coinvolti:** [frontend/src/pages/Login.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/Login.tsx), [frontend/src/pages/Register.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/Register.tsx), [frontend/src/App.tsx](file:///d:/tender/tenderwriter/frontend/src/App.tsx)
+- [NEW] Pagine di Login e Registrazione (stile pulito ed elegante). In fase di registrazione, mostrerà uno step aggiuntivo per l'inserimento del codice a 6 cifre OTP (mandato "via mail").
+- [MODIFY] Protezione di tutte le rotte esistenti (Dashboard, Ricerca) dietro al login.
+
+### 5. Frontend: Dashboard Ricerca & Cronologia
+**File Coinvolti:** [frontend/src/pages/Search.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/Search.tsx)
+- [MODIFY] Inserimento di una barra laterale o lista visiva elegante contenente la cronologia delle ricerche passate dell'utente. Cliccando su una passata, si ricarica la conversazione/risposta.
+
+### 6. Frontend: Admin System Monitor
+**File Coinvolti:** [frontend/src/pages/SystemMonitor.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/SystemMonitor.tsx)
+- [NEW] Pagina dedicata all'utente Tecnico in cui:
+  - Vede in un colpo d'occhio il cruscotto di integrazione (CPU, RAM usata, status di Neo4j, Qdrant, MinIO, Redis, Ollama).
+  - Vede un terminale testuale simulato con lo streaming a blocchi dei log dal vivo.
+  - Vede un form con i tre input (`proxy_read_timeout`, `proxy_connect_timeout`, `proxy_send_timeout`) per modificarli "a caldo" e ricaricare l'infrastruttura di rete Nginx senza staccare nulla.
+  - Vede un interruttore perabilitare / disabilitare istantaneamente l'accesso all'account "admin".
+
+## Verification Plan
+
+### Automated Tests
+- Test unitari sul backend per certificare il salvataggio OTP e la risposta valida via JWT al login.
+- Test sui modelli DB (SearchHistory collegato a User).
+
+### Manual Verification
+1. L'utente deve poter creare un account "normale".
+2. L'utente admin deve potersi loggare da subito con credenziali [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30) / [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30).
+3. L'admin cambia il timeout Nginx dal "System Monitor" a `500` e clicca salva. Verificheremo tramite cURL se i valori sono stati propagati dentro il container `tw-frontend`.
+4. Visualizzazione Log interattiva dei servizi correlati.

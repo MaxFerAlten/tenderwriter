@@ -108,6 +108,15 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Mailpit (SMTP Testing) ---
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: tw-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025" # Web UI
+      - "1025:1025" # SMTP
+
   # --- Backend (FastAPI) ---
   backend:
     build:
@@ -141,6 +150,7 @@ services:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # --- Frontend (React + Vite) ---
   frontend:

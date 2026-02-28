@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     app_debug: bool = True
     app_secret_key: str = "changeme_app_secret_key"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    
+    # --- Auth ---
+    admin_username: str = "admin@admin.com"
+    admin_password: str = "admin"
+    admin_enabled: bool = True
 
     # --- PostgreSQL ---
     database_url: str = (
@@ -55,6 +60,22 @@ class Settings(BaseSettings):
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
+
+    # --- SMTP (Email) --- REALI
+    # smtp_host: str = ""
+    # smtp_port: int = 587
+    # smtp_user: str = ""
+    # smtp_password: str = ""
+    # smtp_from: str = "noreply@tenderwriter.ai"
+    # smtp_tls: bool = True
+
+    # --- SMTP (Email) --- MAILPIT TEST
+    smtp_host: str = "mailpit"   # nome service nel docker-compose
+    smtp_port: int = 1025        # SMTP di Mailpit
+    smtp_user: str = ""          # non serve
+    smtp_password: str = ""      # non serve
+    smtp_from: str = "noreply@tenderwriter.ai"
+    smtp_tls: bool = False       # niente TLS su 1025
 
     # --- RAG Pipeline ---
     rag_top_k_dense: int = 20

@@ -1,0 +1,52 @@
+# Walkthrough: Autenticazione, Cronologia e Monitoraggio
+
+Ho completato l'implementazione del sistema di sicurezza e monitoraggio avanzato per TenderWriter. Ecco un riepilogo delle funzionalità principali ora disponibili.
+
+## 🔐 Autenticazione e Sicurezza (2FA)
+
+Ho introdotto un sistema di autenticazione robusto basato su JWT con verifica a due fattori (OTP via email).
+
+- **Registrazione**: Gli utenti possono registrarsi inserendo nome, email e password.
+- **Verifica Email (OTP)**: Dopo la registrazione, viene inviato un codice OTP a 6 cifre (simulato nei log del backend). L'utenza viene attivata solo dopo la verifica.
+- **Login Protetto**: L'accesso richiede credenziali valide e verifica lo stato di attivazione/verifica dell'utente.
+- **Route Guard**: Tutte le pagine dell'applicazione sono ora protette; gli utenti non autenticati vengono reindirizzati automaticamente al Login.
+
+## 👨‍💻 Technical Admin `admin/admin`
+
+È stata creata un'utenza tecnica di sistema predefinita:
+- **Username**: [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30)
+- **Password**: [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30)
+- **Configurabilità**: Può essere abilitata o disabilitata tramite il file [backend/app/config.py](file:///d:/tender/tenderwriter/backend/app/config.py) o dinamicamente dalla pagina **Impostazioni**.
+- **Ruolo**: Solo gli utenti con ruolo [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30) hanno accesso al **System Monitor** e alle impostazioni delle infrastrutture.
+
+## 🕰️ Cronologia Ricerche AI
+
+La sezione **AI Search** è stata potenziata con una memoria persistente per ogni utente.
+- **Salvataggio Automatico**: Ogni domanda posta al RAG e la relativa risposta dell'IA vengono salvate nel database.
+- **Sidebar Retro**: Sulla sinistra della pagina di ricerca è ora presente un pannello con la cronologia delle ultime 50 ricerche.
+- **Deep Recall**: Cliccando su un elemento della cronologia, è possibile visualizzare istantaneamente la query e la risposta generata in precedenza.
+
+## 📊 Dashboard di Monitoraggio (Docker SDK)
+
+È stata aggiunta una nuova pagina **System Monitor** (riservata agli admin) che si interfaccia direttamente con il socket Docker dell'host.
+- **Stato Container**: Monitoraggio in tempo reale di Qdrant, Neo4j, Ollama, MinIO e Redis.
+- **Metriche Real-time**: Visualizzazione dell'uso di **CPU** e **RAM** per ogni componente.
+- **Log Explorer**: Possibilità di leggere gli ultimi 100 log di ogni container direttamente dalla UI.
+
+## ⚙️ Configurazione Dinamica Nginx
+
+Nelle **Impostazioni**, gli amministratori possono ora variare i timeout del proxy Nginx senza riavviare manualmente i container:
+- `proxy_read_timeout`
+- `proxy_connect_timeout`
+- `proxy_send_timeout`
+- **Hot Reload**: Al salvataggio, il backend esegue un comando `nginx -s reload` all'interno del container frontend tramite Docker SDK.
+
+---
+
+### Come Testare
+1. **Login**: Usa [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30) / [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30) per accedere con pieni poteri.
+2. **AI Search**: Fai qualche domanda e osserva la sidebar della cronologia che si popola.
+3. **Monitor**: Accedi a "System Monitor" dalla barra laterale per vedere lo stato dell'infrastruttura.
+4. **Proxy**: In "Impostazioni", prova a cambiare i timeout e clicca "Applica a Caldo".
+
+Tutti i componenti backend e frontend sono stati integrati correttamente e sono pronti all'uso.

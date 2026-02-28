@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     LayoutDashboard,
@@ -7,22 +7,46 @@ import {
     Search,
     Settings,
     Sparkles,
+    LogOut,
+    Activity,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import ProposalEditor from './pages/ProposalEditor';
 import ContentLibrary from './pages/ContentLibrary';
 import RAGSearch from './pages/Search';
 import SettingsPage from './pages/Settings';
+import SystemMonitor from './pages/SystemMonitor';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import { useAuth } from './contexts/AuthContext';
 
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/proposals', label: 'Proposals', icon: FileText },
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
+    { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
 ];
 
 function App() {
     const location = useLocation();
+    const { user, isLoading, logout } = useAuth();
+
+    if (isLoading) {
+        return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>Caricamento in corso...</div>;
+    }
+
+    if (!user) {
+        return (
+            <AnimatePresence mode="wait">
+                <Routes location={location} key={location.pathname}>
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="*" element={<Navigate to="/login" replace />} />
+                </Routes>
+            </AnimatePresence>
+        );
+    }
 
     return (
         <div className="app-layout">
@@ -34,26 +58,46 @@ function App() {
                 </div>
 
                 <nav className="sidebar-nav">
-                    {navItems.map((item) => (
-                        <NavLink
-                            key={item.path}
-                            to={item.path}
-                            className={({ isActive }) =>
-                                `nav-item ${isActive ? 'active' : ''}`
-                            }
-                            end={item.path === '/'}
-                        >
-                            <item.icon />
-                            <span>{item.label}</span>
-                        </NavLink>
-                    ))}
+                    {navItems.map((item) => {
+                        if (item.adminOnly && user?.role !== 'admin') return null;
+                        return (
+                            <NavLink
+                                key={item.path}
+                                to={item.path}
+                                className={({ isActive }) =>
+                                    `nav-item ${isActive ? 'active' : ''}`
+                                }
+                                end={item.path === '/'}
+                            >
+                                <item.icon size={20} />
+                                <span>{item.label}</span>
+                            </NavLink>
+                        );
+                    })}
                 </nav>
 
                 <div className="sidebar-nav" style={{ marginTop: 'auto' }}>
                     <NavLink to="/settings" className="nav-item">
                         <Settings />
-                        <span>Settings</span>
+                        <span>Impostazioni</span>
                     </NavLink>
+                    <button
+                        className="nav-item"
+                        onClick={logout}
+                        style={{
+                            background: 'transparent',
+                            border: 'none',
+                            width: '100%',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            fontSize: 'inherit',
+                            color: 'var(--text-secondary)'
+                        }}
+                    >
+                        <LogOut />
+                        <span>Esci</span>
+                    </button>
                 </div>
             </aside>
 
@@ -74,6 +118,7 @@ function App() {
                             <Route path="/library" element={<ContentLibrary />} />
                             <Route path="/search" element={<RAGSearch />} />
                             <Route path="/settings" element={<SettingsPage />} />
+                            <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
                         </Routes>
                     </motion.div>
                 </AnimatePresence>

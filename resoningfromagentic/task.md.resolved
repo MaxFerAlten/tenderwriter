@@ -1,0 +1,58 @@
+# Analisi Upload PDF e RAG
+
+- [x] Analizzare il flusso di upload dei PDF nel backend.
+- [x] Analizzare come i PDF elaborati finiscono nel sistema RAG.
+- [x] Creare un elenco dei passi eseguiti dal software per l'upload e l'inserimento RAG.
+- [x] Creare un test per certificare il caricamento di un PDF in `hybridrag`.
+- [x] Spiegare come effettuare le ricerche nel sistema.
+
+# Analisi Importazione PDF Frontend
+
+- [x] Analizzare il frontend per capire come viene importato un PDF legato a una gara.
+- [x] Spiegare i passaggi esatti da compiere nell'interfaccia utente (oppure l'assenza della funzionalità).
+
+# Implementazione Upload PDF Frontend
+
+- [x] Aggiungere il metodo [uploadDocument](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#67-83) in [src/api/client.ts](file:///d:/tender/tenderwriter/frontend/src/api/client.ts).
+- [x] Modificare la UI (es. [Dashboard.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/Dashboard.tsx)) per includere il form di upload.
+- [x] Gestire lo stato di caricamento e mostrare il risultato nell'interfaccia utente.
+
+# Autenticazione e Gestione Utenti
+
+- [x] Implementare modello [User](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#73-91) nel database (email, hash password, ruolo, is_active).
+- [x] Creare API backend per registrazione, login (JWT), verifica OTP 2FA (email).
+- [x] Implementare invio email per 2FA (es. tramite SMTP o log locale per dev).
+- [x] Lato FE: Pagina di Login, Pagina di Registrazione + Pagina inserimento OTP.
+- [x] Utenza tecnica configurata come `admin@admin.com` (password [admin](file:///d:/tender/tenderwriter/backend/app/api/system.py#25-30)), sempre attiva/verificata.
+- [x] Debugging backend startup failure (Resolved by switching hash algorithm to pbkdf2_sha256).
+- [x] Rebuilding and verifying frontend Docker build.
+- [x] Final verification of authentication flow and system features.
+
+# Cronologia Ricerche AI
+
+- [x] Implementare modello [SearchHistory](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#106-117) collegato allo [User](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#73-91) nel database.
+- [x] Aggiornare l'endpoint di ricerca RAG nel backend per salvare la cronologia.
+- [x] Lato FE: Mostrare la cronologia all'interno della pagina "AI Search" per l'utente loggato.
+
+# Dashboard di Sistema e Configurazione Dinamica
+
+- [x] Modificare [docker-compose.yml](file:///d:/tender/tenderwriter/docker-compose.yml) per montare il socket Docker nel backend per la gestione dell'infrastruttura.
+- [x] Creare API backend per leggere log e statistiche dai container (Qdrant, Neo4j, Ollama, MinIO, Redis) usando Docker SDK.
+- [x] Creare API backend per aggiornare `proxy_timeout` di Nginx e forzare il reload "a caldo" (`docker exec -it frontend nginx -s reload`).
+- [x] Lato FE: Creare un pannello "Impostazioni Sistema" (solo visibile all'admin) per modificare i timeout.
+- [x] Lato FE: Creare una pagina "System Monitor" con grafici/log in tempo reale dei componenti di integrazione.
+
+# Investigazione Consegna OTP
+- [x] Verificare logica di "invio" OTP nel backend.
+- [x] Fornire istruzioni chiare all'utente su come recuperare l'OTP (log).
+- [x] Implementare un provider email reale (SMTP) configurabile.
+
+# Fix Registrazione Utenti (400 Bad Request)
+- [x] Analizzare log backend per identificare il motivo del 400.
+- [x] Verificare validazione schema [UserRegister](file:///d:/tender/tenderwriter/backend/app/api/auth.py#42-46) nel backend.
+- [x] Verificare invio dati dal frontend ([Register.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/Register.tsx)).
+- [x] Debugging specific user query.
+- [x] Checking Nginx configuration in Dockerfile.
+- [x] Checking backend Dockerfile for file paths.
+- [/] Aggiunta logging per debug registrazione in [auth.py](file:///d:/tender/tenderwriter/backend/app/api/auth.py).
+- [ ] Implementare fix e testare il flusso completo (registrazione -> OTP -> login).
