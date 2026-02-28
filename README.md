@@ -2,77 +2,93 @@
 
 > Open-source Tender Proposal Writing Software powered by HybridRAG
 
-TenderWriter helps teams create, manage, and submit professional tender proposals faster by leveraging a **HybridRAG engine** (Dense + Sparse + Knowledge Graph retrieval) running entirely on local, open-source infrastructure.
+TenderWriter aiuta i team a creare, gestire e inviare proposte di gara professionali più velocemente, sfruttando un **motore HybridRAG** (Dense + Sparse + Knowledge Graph retrieval) che gira interamente su infrastruttura locale e open-source.
 
-## Features
+---
 
-- **HybridRAG Engine** — Combines vector search, BM25 keyword search, and knowledge graph queries for high-quality retrieval
-- **Proposal Builder** — Rich text editor with AI-assisted writing
-- **Content Library** — Reusable content blocks with tagging and search
-- **Tender Dashboard** — Pipeline view with deadline tracking
-- **Compliance Matrix** — Auto-map RFP requirements to proposal sections
-- **PDF Export** — Branded, professional proposal documents
-- **100% Local** — All AI runs on your infrastructure via Ollama. No data leaves your network.
+## 🚀 Stato Attuale (AS-IS)
 
-## Tech Stack
+Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i componenti attualmente implementati e funzionanti:
 
-| Layer | Technology |
+### 🔐 Authentication & Security
+- **Login Tecnico**: Utente `admin@admin.com` con password `admin` pre-configurato.
+- **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
+- **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
+- **Session Management**: Sistema di autenticazione basato su JWT e React Context.
+
+### 🧠 Motore HybridRAG
+- **Dense Retrieval**: Ricerca semantica tramite **Qdrant** (Vector Database).
+- **Sparse Retrieval**: Ricerca per parole chiave (BM25) integrata.
+- **Knowledge Graph**: Integrazione con **Neo4j** per catturare relazioni complesse tra gare e requisiti.
+- **Local LLM**: Generazione e analisi tramite **Ollama** (Llama 3 di default).
+
+### 🖥️ Frontend & Dashboard
+- **Interfaccia Moderna**: Design in Dark Mode con estetica premium (Glassmorphism), animazioni fluide e layout centrato per l'auth.
+- **System Monitor**: Visualizzazione in tempo reale dello stato dei container Docker, utilizzo CPU/RAM e log live dei componenti (Qdrant, Redis, Ollama, ecc.).
+- **Configurazione a Caldo**: Gestione dinamica dei timeout di Nginx direttamente dall'interfaccia di amministrazione.
+- **RAG Health**: Dashboard per monitorare lo stato di salute dei singoli componenti del motore AI.
+
+---
+
+## 🛠️ Tech Stack
+
+| Strato | Tecnologia |
 |-------|-----------|
-| Backend | Python, FastAPI |
-| Frontend | React, TypeScript, Vite, TipTap |
-| Vector DB | Qdrant |
-| Graph DB | Neo4j Community |
-| Relational DB | PostgreSQL + pgvector |
-| LLM | Ollama (Llama 3, Mistral, Qwen) |
-| Embeddings | sentence-transformers (BGE) |
-| Document Parsing | unstructured |
-| Object Storage | MinIO |
-| Task Queue | Celery + Redis |
+| **Backend** | Python 3.11+, FastAPI, SQLAlchemy |
+| **Frontend** | React 18, TypeScript, Vite, Framer Motion, Lucide Icons |
+| **Database Relazionale** | PostgreSQL 16 |
+| **Vector Database** | Qdrant |
+| **Graph Database** | Neo4j Community |
+| **Object Storage** | MinIO |
+| **Infrastruttura AI** | Ollama |
+| **Testing/Developer Tool** | Mailpit (Mock SMTP) |
+| **Proxy & Static** | Nginx |
 
-## Quick Start
+---
+
+## 🚦 Quick Start
+
+Per avviare l'intero stack in locale:
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/tenderwriter.git
-cd tenderwriter
-
-# Start all services
+# 1. Avvia tutti i container
 docker compose up -d
 
-# The app will be available at http://localhost:3000
-# API docs at http://localhost:8000/docs
+# 2. Accedi all'applicazione
+# Frontend: http://localhost:3000
+# Mailpit (per OTP): http://localhost:8025
+# Backend Docs (OpenAPI): http://localhost:8000/docs
 ```
 
-## Development
+### Configurazione Email (Mailpit)
+Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit). Non è necessaria alcuna configurazione SMTP reale per lo sviluppo. Per vedere i codici OTP:
+1. Registrati nell'app (es. `test@example.com`).
+2. Apri `http://localhost:8025` nel browser.
+3. Copia il codice e inseriscilo nel frontend.
 
-### Backend
+---
 
+## 🔧 Sviluppo & Debug
+
+### Backend Debug
+Il backend è configurato con log dettagliati. Puoi monitorarli con:
 ```bash
-cd backend
-pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000
+docker logs -f tw-backend
 ```
 
-### Frontend
-
+### Frontend Build
+Poiché il frontend viene servito da Nginx, dopo modifiche strutturali è necessario ricostruire l'immagine:
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose build frontend
+docker compose up -d frontend
 ```
 
-docker exec -it tw-ollama ollama pull llama3:8b
-docker compose up -d --force-recreate ollama
+---
 
+## 🗺️ Roadmap Prossimi Passi
+- [ ] Integrazione completa della ricerca AI con cronologia utente.
+- [ ] Export professionale in PDF/Docx.
+- [ ] Raffinamento del Compliance Matrix per la mappatura automatica dei bandi.
 
-## Local Startup Checklist
-
-For a step-by-step local startup and troubleshooting guide, see [LOCAL_CHECKLIST.md](LOCAL_CHECKLIST.md).
-
-## Architecture
-
-See [docs/architecture.md](docs/architecture.md) for the full system architecture and HybridRAG pipeline design.
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
+---
+*Progetto sviluppato con ❤️ per l'efficienza nelle gare d'appalto.*
