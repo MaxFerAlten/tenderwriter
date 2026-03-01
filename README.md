@@ -75,6 +75,11 @@ Il backend è configurato con log dettagliati. Puoi monitorarli con:
 ```bash
 docker logs -f tw-backend
 ```
+### cancellare gli user 
+```bash
+docker exec tw-backend sh -c "export PYTHONPATH=/app && python3 app/delete_user.py"
+docker compose build backend
+```
 
 ### Frontend Build
 Poiché il frontend viene servito da Nginx, dopo modifiche strutturali è necessario ricostruire l'immagine:
@@ -89,6 +94,43 @@ docker compose up -d frontend
 - [ ] Integrazione completa della ricerca AI con cronologia utente.
 - [ ] Export professionale in PDF/Docx.
 - [ ] Raffinamento del Compliance Matrix per la mappatura automatica dei bandi.
+
+
+### usare repomix per ottenere un md file da dare a LLM esternmi per analisi architetturali e bug fix e robustezza
+Occorre installare repomix: 
+```
+curl -fsSL https://raw.githubusercontent.com/repomix/repomix/main/install.sh | bash
+```
+poi: 
+```
+repomix --style markdown
+```
+se non funziona repomix per vari motivi di conflitti con altri tool si può usare: 
+```
+docker pull ghcr.io/yamadashy/repomix:latest
+docker run --rm -v "d:/tender/tenderwriter:/app" ghcr.io/yamadashy/repomix .
+📦 Repomix v1.11.0
+No custom config found at repomix.config.ts, repomix.co
+✔ Packing completed successfully!      
+```
+consigliamo di usare repomix in locale con nvm per evitare conflitti con altri tool aggiornare nvm alla versione 20.11.1 (64-bit) con nvm install 20.11. 
+
+E' utile avere repomix file md o xml per analisi architetturali e bug fix e robustezza in pdf per certi llm quindi:
+
+pip install markdown-pdf
+
+bash
+# Crea l'ambiente
+python -m venv venv
+
+# Attivalo
+.\venv\Scripts\activate
+
+# Installa solo quello che ti serve qui
+pip install markdown-pdf 
+
+# per convertire il file md in pdf
+python convert-md-to-pdf.py
 
 ---
 *Progetto sviluppato con ❤️ per l'efficienza nelle gare d'appalto.*

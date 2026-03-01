@@ -1,0 +1,66 @@
+# Repomix outputs
+repomix-output.md
+repomix-output.pdf
+repomix-output.xml
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+.conda/
+__pypackages__/
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Build / packaging ---
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# --- Test / tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# --- Logs ---
+*.log
+
+# --- Local config / secrets ---
+.env
+.env.*
+*.local
+secrets.* 
+*.key
+*.pem
+
+# --- IDE/editor ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Node (se presente) ---
+node_modules/
+
+# --- Output generati (se ne hai) ---
+out/
+output/
+tmp/
+temp/
