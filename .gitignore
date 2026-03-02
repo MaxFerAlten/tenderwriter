@@ -15,6 +15,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# --- Specific tracked pycache artifacts to ignore ---
+backend/app/api/__pycache__/
+
 # --- Build / packaging ---
 build/
 dist/
