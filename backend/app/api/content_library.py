@@ -25,9 +25,10 @@ router = APIRouter()
 
 class ContentBlockCreate(BaseModel):
     title: str
-    content: str
+    content: str | None = None
     category: str | None = None
     tags: list[str] = []
+    onlyoffice_key: str | None = None
 
 
 class ContentBlockUpdate(BaseModel):
@@ -112,9 +113,17 @@ async def create_content_block(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new reusable content block."""
+    content = data.content or ""
+    
+    if data.onlyoffice_key:
+        from app.api.onlyoffice import _document_store, _extract_text_from_docx
+        docx_bytes = _document_store.get(data.onlyoffice_key)
+        if docx_bytes:
+            content = _extract_text_from_docx(docx_bytes)
+    
     block = ContentBlock(
         title=data.title,
-        content=data.content,
+        content=content,
         category=data.category,
         tags=data.tags,
     )

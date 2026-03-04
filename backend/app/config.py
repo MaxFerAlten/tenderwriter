@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     chunk_max_size: int = 1500
     chunk_overlap: int = 100
 
+    # --- OnlyOffice ---
+    onlyoffice_url: str = "http://localhost:8443"  # URL raggiungibile dal browser
+    onlyoffice_jwt_secret: str = "changeme_oo_jwt_secret"
+    onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
+    backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

@@ -2,6 +2,7 @@
 TenderWriter — Proposals API
 
 CRUD endpoints for managing proposals and their sections.
+All endpoints are protected with JWT auth. Access is checked via the associated tender's RBAC.
 """
 
 from __future__ import annotations
@@ -10,12 +11,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.database import get_db
-from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus
+from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission
+from app.api.auth import get_current_user, UserResponse
 
 router = APIRouter()
 
@@ -84,6 +86,36 @@ class ProposalListResponse(BaseModel):
     total: int
 
 
+# ── Helpers ──
+
+
+async def _check_tender_access_for_proposal(
+    tender_id: int, user: UserResponse, db: AsyncSession
+):
+    """Verify the current user has access to the tender that owns a proposal."""
+    if user.role == "admin":
+        return
+
+    result = await db.execute(select(Tender).where(Tender.id == tender_id))
+    tender = result.scalar_one_or_none()
+    if not tender:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    if tender.created_by == user.id:
+        return
+
+    perm = await db.execute(
+        select(TenderPermission).where(
+            TenderPermission.tender_id == tender_id,
+            TenderPermission.user_id == user.id,
+        )
+    )
+    if perm.scalar_one_or_none():
+        return
+
+    raise HTTPException(status_code=404, detail="Proposal not found")
+
+
 # ── Proposal Routes ──
 
 
@@ -93,10 +125,27 @@ async def list_proposals(
     status: ProposalStatus | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List proposals with optional filtering by tender or status."""
+    """List proposals with optional filtering by tender or status. RBAC-filtered."""
     query = select(Proposal)
+
+    # RBAC: non-admin can only see proposals for tenders they own or have permission to
+    if current_user.role != "admin":
+        permitted_tender_ids = (
+            select(TenderPermission.tender_id)
+            .where(TenderPermission.user_id == current_user.id)
+        )
+        owned_tender_ids = (
+            select(Tender.id).where(Tender.created_by == current_user.id)
+        )
+        query = query.where(
+            or_(
+                Proposal.tender_id.in_(owned_tender_ids),
+                Proposal.tender_id.in_(permitted_tender_ids),
+            )
+        )
 
     if tender_id:
         query = query.where(Proposal.tender_id == tender_id)
@@ -128,14 +177,21 @@ async def list_proposals(
 
 
 @router.post("", response_model=ProposalResponse, status_code=201)
-async def create_proposal(data: ProposalCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new proposal for a tender."""
+async def create_proposal(
+    data: ProposalCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new proposal for a tender. RBAC-checked via tender."""
+    await _check_tender_access_for_proposal(data.tender_id, current_user, db)
+
     proposal = Proposal(
         tender_id=data.tender_id,
         title=data.title,
         notes=data.notes,
         status=ProposalStatus.DRAFT,
         version=1,
+        created_by=current_user.id,
     )
     db.add(proposal)
     await db.flush()
@@ -178,8 +234,12 @@ async def create_proposal(data: ProposalCreate, db: AsyncSession = Depends(get_d
 
 
 @router.get("/{proposal_id}", response_model=ProposalDetailResponse)
-async def get_proposal(proposal_id: int, db: AsyncSession = Depends(get_db)):
-    """Get a proposal with all its sections."""
+async def get_proposal(
+    proposal_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a proposal with all its sections. RBAC-checked via tender."""
     result = await db.execute(
         select(Proposal)
         .where(Proposal.id == proposal_id)
@@ -188,6 +248,8 @@ async def get_proposal(proposal_id: int, db: AsyncSession = Depends(get_db)):
     proposal = result.scalar_one_or_none()
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
 
     return ProposalDetailResponse(
         id=proposal.id,
@@ -218,13 +280,16 @@ async def get_proposal(proposal_id: int, db: AsyncSession = Depends(get_db)):
 async def update_proposal(
     proposal_id: int,
     data: ProposalUpdate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update proposal metadata."""
+    """Update proposal metadata. RBAC-checked via tender."""
     result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
     proposal = result.scalar_one_or_none()
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
 
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(proposal, key, value)
@@ -250,9 +315,18 @@ async def update_proposal(
 async def get_section(
     proposal_id: int,
     section_id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single proposal section."""
+    """Get a single proposal section. RBAC-checked via tender."""
+    # First get the proposal to check tender access
+    prop_result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
+    proposal = prop_result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+
     result = await db.execute(
         select(ProposalSection).where(
             ProposalSection.id == section_id,
@@ -280,9 +354,17 @@ async def update_section(
     proposal_id: int,
     section_id: int,
     data: SectionUpdate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a proposal section (content, status, assignment)."""
+    """Update a proposal section (content, status, assignment). RBAC-checked via tender."""
+    prop_result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
+    proposal = prop_result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+
     result = await db.execute(
         select(ProposalSection).where(
             ProposalSection.id == section_id,
@@ -315,12 +397,16 @@ async def update_section(
 async def add_section(
     proposal_id: int,
     data: SectionCreate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a new section to a proposal."""
+    """Add a new section to a proposal. RBAC-checked via tender."""
     result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
-    if not result.scalar_one_or_none():
+    proposal = result.scalar_one_or_none()
+    if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
 
     section = ProposalSection(
         proposal_id=proposal_id,

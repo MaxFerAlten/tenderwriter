@@ -145,12 +145,27 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-changeme_minio_password}
       REDIS_URL: redis://redis:6379/0
       APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme_app_secret_key}
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-changeme_oo_jwt_secret}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
       - /var/run/docker.sock:/var/run/docker.sock
+
+  # --- OnlyOffice Document Server ---
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: tw-onlyoffice
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-changeme_oo_jwt_secret}"
+    ports:
+      - "8443:80"
+    volumes:
+      - onlyoffice_data:/var/log/onlyoffice
+      - onlyoffice_lib:/var/lib/onlyoffice
 
   # --- Frontend (React + Vite) ---
   frontend:
@@ -173,3 +188,5 @@ volumes:
   ollama_data:
   minio_data:
   redis_data:
+  onlyoffice_data:
+  onlyoffice_lib:

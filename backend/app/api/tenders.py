@@ -3,6 +3,7 @@ TenderWriter — Tenders API
 
 CRUD endpoints for managing tenders (RFPs/ITTs).
 Includes document upload + ingestion trigger and requirement management.
+All endpoints are protected with JWT auth and granular RBAC.
 """
 
 from __future__ import annotations
@@ -12,13 +13,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from minio import Minio
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db.database import get_db
-from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus
+from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus, TenderPermission
+from app.api.auth import get_current_user, UserResponse
 
 router = APIRouter()
 
@@ -69,6 +71,8 @@ class TenderResponse(BaseModel):
     budget_estimate: float | None
     created_at: datetime | None
     requirement_count: int = 0
+    created_by: int | None = None
+    created_by_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -82,6 +86,79 @@ class TenderListResponse(BaseModel):
     total: int
 
 
+# ── Helpers ──
+
+
+async def check_tender_access(
+    tender_id: int, user: UserResponse, db: AsyncSession
+) -> Tender:
+    """
+    Check that the current user has access to the given tender.
+    Returns the tender if access is granted, raises 404 otherwise.
+    """
+    result = await db.execute(
+        select(Tender)
+        .where(Tender.id == tender_id)
+        .options(
+            selectinload(Tender.requirements),
+            selectinload(Tender.created_by_user),
+        )
+    )
+    tender = result.scalar_one_or_none()
+    if not tender:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    # Admin has full access
+    if user.role == "admin":
+        return tender
+
+    # Owner has full access
+    if tender.created_by == user.id:
+        return tender
+
+    # Check explicit permission
+    perm_result = await db.execute(
+        select(TenderPermission).where(
+            TenderPermission.tender_id == tender_id,
+            TenderPermission.user_id == user.id,
+        )
+    )
+    if perm_result.scalar_one_or_none():
+        return tender
+
+    raise HTTPException(status_code=404, detail="Tender not found")
+
+
+def _tender_to_response(tender: Tender) -> TenderResponse:
+    """Convert a Tender model to TenderResponse."""
+    creator_name = None
+    # Use inspect to check if created_by_user was loaded to avoid lazy-load errors
+    from sqlalchemy import inspect as sa_inspect
+    insp = sa_inspect(tender)
+    if 'created_by_user' not in insp.unloaded and tender.created_by_user:
+        creator_name = tender.created_by_user.name
+
+    req_count = 0
+    if 'requirements' not in insp.unloaded and tender.requirements:
+        req_count = len(tender.requirements)
+
+    return TenderResponse(
+        id=tender.id,
+        title=tender.title,
+        client=tender.client,
+        description=tender.description,
+        deadline=tender.deadline,
+        status=tender.status.value if tender.status else "draft",
+        category=tender.category,
+        tags=tender.tags or [],
+        budget_estimate=tender.budget_estimate,
+        created_at=tender.created_at,
+        requirement_count=req_count,
+        created_by=tender.created_by,
+        created_by_name=creator_name,
+    )
+
+
 # ── Routes ──
 
 
@@ -92,10 +169,24 @@ async def list_tenders(
     search: str | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List tenders with filtering, search, and pagination."""
-    query = select(Tender)
+    """List tenders with filtering, search, and pagination. RBAC-filtered."""
+    query = select(Tender).options(selectinload(Tender.created_by_user))
+
+    # RBAC filter: non-admin sees only own tenders + tenders with explicit permission
+    if current_user.role != "admin":
+        permitted_subq = (
+            select(TenderPermission.tender_id)
+            .where(TenderPermission.user_id == current_user.id)
+        )
+        query = query.where(
+            or_(
+                Tender.created_by == current_user.id,
+                Tender.id.in_(permitted_subq),
+            )
+        )
 
     if status:
         query = query.where(Tender.status == status)
@@ -113,21 +204,7 @@ async def list_tenders(
     result = await db.execute(query)
     tenders = result.scalars().all()
 
-    items = [
-        TenderResponse(
-            id=t.id,
-            title=t.title,
-            client=t.client,
-            description=t.description,
-            deadline=t.deadline,
-            status=t.status.value if t.status else "draft",
-            category=t.category,
-            tags=t.tags or [],
-            budget_estimate=t.budget_estimate,
-            created_at=t.created_at,
-        )
-        for t in tenders
-    ]
+    items = [_tender_to_response(t) for t in tenders]
 
     return TenderListResponse(items=items, total=total)
 
@@ -135,9 +212,10 @@ async def list_tenders(
 @router.post("", response_model=TenderResponse, status_code=201)
 async def create_tender(
     data: TenderCreate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new tender."""
+    """Create a new tender. The creator is automatically set to the current user."""
     tender = Tender(
         title=data.title,
         client=data.client,
@@ -147,6 +225,7 @@ async def create_tender(
         tags=data.tags,
         budget_estimate=data.budget_estimate,
         status=TenderStatus.DRAFT,
+        created_by=current_user.id,
     )
     db.add(tender)
     await db.flush()
@@ -163,20 +242,18 @@ async def create_tender(
         tags=tender.tags or [],
         budget_estimate=tender.budget_estimate,
         created_at=tender.created_at,
+        created_by=tender.created_by,
     )
 
 
 @router.get("/{tender_id}", response_model=TenderDetailResponse)
-async def get_tender(tender_id: int, db: AsyncSession = Depends(get_db)):
-    """Get a tender by ID with its requirements."""
-    result = await db.execute(
-        select(Tender)
-        .where(Tender.id == tender_id)
-        .options(selectinload(Tender.requirements))
-    )
-    tender = result.scalar_one_or_none()
-    if not tender:
-        raise HTTPException(status_code=404, detail="Tender not found")
+async def get_tender(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a tender by ID with its requirements. RBAC-checked."""
+    tender = await check_tender_access(tender_id, current_user, db)
 
     return TenderDetailResponse(
         id=tender.id,
@@ -189,6 +266,7 @@ async def get_tender(tender_id: int, db: AsyncSession = Depends(get_db)):
         tags=tender.tags or [],
         budget_estimate=tender.budget_estimate,
         created_at=tender.created_at,
+        created_by=tender.created_by,
         requirement_count=len(tender.requirements),
         requirements=[
             RequirementResponse(
@@ -207,13 +285,11 @@ async def get_tender(tender_id: int, db: AsyncSession = Depends(get_db)):
 async def update_tender(
     tender_id: int,
     data: TenderUpdate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a tender."""
-    result = await db.execute(select(Tender).where(Tender.id == tender_id))
-    tender = result.scalar_one_or_none()
-    if not tender:
-        raise HTTPException(status_code=404, detail="Tender not found")
+    """Update a tender. RBAC-checked."""
+    tender = await check_tender_access(tender_id, current_user, db)
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -233,17 +309,18 @@ async def update_tender(
         tags=tender.tags or [],
         budget_estimate=tender.budget_estimate,
         created_at=tender.created_at,
+        created_by=tender.created_by,
     )
 
 
 @router.delete("/{tender_id}", status_code=204)
-async def delete_tender(tender_id: int, db: AsyncSession = Depends(get_db)):
-    """Delete a tender and all associated data."""
-    result = await db.execute(select(Tender).where(Tender.id == tender_id))
-    tender = result.scalar_one_or_none()
-    if not tender:
-        raise HTTPException(status_code=404, detail="Tender not found")
-
+async def delete_tender(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a tender and all associated data. RBAC-checked."""
+    tender = await check_tender_access(tender_id, current_user, db)
     await db.delete(tender)
 
 
@@ -252,17 +329,14 @@ async def import_tender_document(
     tender_id: int,
     request: Request,
     file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Upload and process a tender document (PDF/DOCX).
-
+    Upload and process a tender document (PDF/DOCX). RBAC-checked.
     Triggers the ingestion pipeline: parse → extract requirements → index.
     """
-    result = await db.execute(select(Tender).where(Tender.id == tender_id))
-    tender = result.scalar_one_or_none()
-    if not tender:
-        raise HTTPException(status_code=404, detail="Tender not found")
+    tender = await check_tender_access(tender_id, current_user, db)
 
     # 1. Upload to MinIO
     minio_client = Minio(
@@ -292,11 +366,6 @@ async def import_tender_document(
     )
 
     # 2. Trigger Ingestion Pipeline
-    # We need a local path or a way for the pipeline to read from MinIO.
-    # For now, let's download it to a temp file for processing, 
-    # as the current pipeline implementation likely expects a file path.
-    # improvement: The pipeline should ideally handle stream or MinIO URL.
-    
     import tempfile
     import os
     
@@ -304,24 +373,19 @@ async def import_tender_document(
         tmp.write(content)
         tmp_path = tmp.name
 
-    # Run ingestion in background (or await if fast enough - usually background task)
-    # For MVP we await it to see immediate results, but this should be a background task (Celery/Arq)
     rag_engine = request.app.state.rag_engine
     
-    # We need to access the pipeline. The RAG engine might not expose it directly 
-    # if it's not designed that way. Let's assume we can instantiate it or get it.
     from app.ingestion.pipeline import IngestionPipeline
     pipeline = IngestionPipeline(rag_engine)
     
     try:
         stats = await pipeline.ingest_file(
             file_path=tmp_path,
-            document_id=tender_id, # Linking to tender as document ID for now
+            document_id=tender_id,
             doc_type="tender",
             metadata={"original_filename": file.filename}
         )
     finally:
-        # Cleanup temp file
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 

@@ -9,69 +9,28 @@ import {
     AlertCircle,
     Loader2,
     X,
+    Maximize2,
 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import {
     proposalApi,
     ragApi,
     type Proposal,
     type ProposalDetail,
-    type Section,
     type RAGResponse,
 } from '../api/client';
+import OnlyOfficeEditor from './OnlyOfficeEditor';
 
-function EditorToolbar({ onAiWrite, generating }: { onAiWrite: () => void; generating: boolean }) {
-    const tools = [
-        { label: 'B', title: 'Bold', style: { fontWeight: 700 } as React.CSSProperties },
-        { label: 'I', title: 'Italic', style: { fontStyle: 'italic' } as React.CSSProperties },
-        { label: 'H1', title: 'Heading 1', style: { fontWeight: 700, fontSize: '0.7rem' } as React.CSSProperties },
-        { label: 'H2', title: 'Heading 2', style: { fontWeight: 600, fontSize: '0.7rem' } as React.CSSProperties },
-        { label: '•', title: 'Bullet List', style: { fontSize: '1.1rem' } as React.CSSProperties },
-        { label: '1.', title: 'Numbered List', style: { fontSize: '0.8rem' } as React.CSSProperties },
-        { label: '"', title: 'Blockquote', style: { fontSize: '1rem' } as React.CSSProperties },
-    ];
 
-    return (
-        <div style={{
-            display: 'flex',
-            gap: '2px',
-            padding: '0.5rem 0',
-            borderBottom: '1px solid var(--border-default)',
-            marginBottom: '1rem',
-        }}>
-            {tools.map((tool) => (
-                <button
-                    key={tool.title}
-                    className="btn btn-ghost btn-sm btn-icon"
-                    title={tool.title}
-                    style={{ ...tool.style, minWidth: 32, minHeight: 32 }}
-                >
-                    {tool.label}
-                </button>
-            ))}
-            <div style={{ flex: 1 }} />
-            <button
-                className="btn btn-sm"
-                style={{
-                    background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))',
-                    color: 'white',
-                    border: 'none',
-                    gap: '0.35rem',
-                }}
-                onClick={onAiWrite}
-                disabled={generating}
-            >
-                {generating ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
-                {generating ? 'Writing...' : 'AI Write'}
-            </button>
-        </div>
-    );
-}
 
 export default function ProposalEditor() {
+    const location = useLocation();
+    const navigatedProposalId = location.state?.proposalId as number | undefined;
+
     // Proposal list state
     const [proposals, setProposals] = useState<Proposal[]>([]);
     const [loadingList, setLoadingList] = useState(true);
-    const [selectedProposalId, setSelectedProposalId] = useState<number | null>(null);
+    const [selectedProposalId, setSelectedProposalId] = useState<number | null>(navigatedProposalId || null);
 
     // Proposal detail state
     const [proposal, setProposal] = useState<ProposalDetail | null>(null);
@@ -79,7 +38,6 @@ export default function ProposalEditor() {
     const [activeSection, setActiveSection] = useState(0);
 
     // Editor state
-    const [editorContent, setEditorContent] = useState('');
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
@@ -88,6 +46,7 @@ export default function ProposalEditor() {
     const [aiGenerating, setAiGenerating] = useState(false);
     const [aiResult, setAiResult] = useState<RAGResponse | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
+    const [isFullEdit, setIsFullEdit] = useState(false);
 
     // General
     const [error, setError] = useState<string | null>(null);
@@ -99,7 +58,10 @@ export default function ProposalEditor() {
                 setLoadingList(true);
                 const data = await proposalApi.list({ limit: '50' });
                 setProposals(data.items);
-                if (data.items.length > 0 && !selectedProposalId) {
+
+                if (navigatedProposalId && data.items.some(p => p.id === navigatedProposalId)) {
+                    setSelectedProposalId(navigatedProposalId);
+                } else if (data.items.length > 0 && !selectedProposalId && !navigatedProposalId) {
                     setSelectedProposalId(data.items[0].id);
                 }
             } catch (err) {
@@ -118,12 +80,6 @@ export default function ProposalEditor() {
             const data = await proposalApi.get(id);
             setProposal(data);
             setActiveSection(0);
-            // Load first section content
-            if (data.sections.length > 0) {
-                setEditorContent(sectionToText(data.sections[0]));
-            } else {
-                setEditorContent('');
-            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load proposal');
         } finally {
@@ -137,55 +93,27 @@ export default function ProposalEditor() {
         }
     }, [selectedProposalId, loadProposal]);
 
-    // When section changes, load its content
     useEffect(() => {
         if (proposal && proposal.sections[activeSection]) {
-            setEditorContent(sectionToText(proposal.sections[activeSection]));
             setSaved(false);
             setAiResult(null);
         }
     }, [activeSection, proposal]);
 
-    const sectionToText = (section: Section): string => {
-        // Content is stored as TipTap JSON, but we render plain text for now
-        const content = section.content;
-        if (!content || Object.keys(content).length === 0) return '';
-        // Try to extract text from TipTap JSON structure
-        if (content.type === 'doc' && Array.isArray(content.content)) {
-            return (content.content as Array<{ content?: Array<{ text?: string }> }>)
-                .map((node) =>
-                    (node.content || []).map((c) => c.text || '').join('')
-                )
-                .join('\n\n');
-        }
-        // Fallback: if it's a simple text field
-        if (typeof content.text === 'string') return content.text;
-        return JSON.stringify(content);
-    };
-
-    const textToContent = (text: string): Record<string, unknown> => {
-        // Store as simple TipTap-compatible JSON
-        return {
-            type: 'doc',
-            content: text.split('\n\n').filter(Boolean).map((paragraph) => ({
-                type: 'paragraph',
-                content: [{ type: 'text', text: paragraph }],
-            })),
-        };
-    };
 
     const handleSave = async () => {
         if (!proposal || !proposal.sections[activeSection]) return;
         const section = proposal.sections[activeSection];
         try {
             setSaving(true);
-            await proposalApi.updateSection(proposal.id, section.id, {
-                content: textToContent(editorContent),
+            // Trigger force save via OnlyOffice
+            const token = localStorage.getItem('token');
+            await fetch(`/api/onlyoffice/forcesave/proposal/${proposal.id}/${section.id}`, {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
-            // Refresh
-            await loadProposal(proposal.id);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to save');
         } finally {
@@ -213,7 +141,7 @@ export default function ProposalEditor() {
             } else if (action === 'Check compliance') {
                 const compResult = await ragApi.complianceCheck({
                     requirement: `Requirements for ${section.title}`,
-                    section_content: editorContent,
+                    section_content: section.title,
                 });
                 result = {
                     answer: JSON.stringify(compResult.assessment, null, 2),
@@ -227,7 +155,7 @@ export default function ProposalEditor() {
                 });
             } else if (action === 'Improve current text') {
                 result = await ragApi.query({
-                    query: `Improve the following proposal text for "${section.title}": ${editorContent.slice(0, 500)}`,
+                    query: `Improve the proposal text for "${section.title}"`,
                     mode: 'qa',
                 });
             } else {
@@ -246,8 +174,9 @@ export default function ProposalEditor() {
     };
 
     const insertAiContent = () => {
+        // With OnlyOffice, AI content needs to be copied by the user
         if (aiResult?.answer) {
-            setEditorContent((prev) => (prev ? prev + '\n\n' + aiResult.answer : aiResult.answer));
+            navigator.clipboard.writeText(aiResult.answer);
             setAiResult(null);
         }
     };
@@ -382,40 +311,37 @@ export default function ProposalEditor() {
 
                     {/* Main Editor */}
                     <div className="editor-main">
-                        <h2 style={{ marginBottom: '0.25rem' }}>
-                            {currentSection?.title || 'Select a section'}
-                        </h2>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                            Section {activeSection + 1} of {proposal.sections.length}
-                            {currentSection && <> — Status: <strong>{currentSection.status.replace('_', ' ')}</strong></>}
-                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <div>
+                                <h2 style={{ margin: 0 }}>
+                                    {currentSection?.title || 'Select a section'}
+                                </h2>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                                    Section {activeSection + 1} of {proposal.sections.length}
+                                    {currentSection && <> — Status: <strong>{currentSection.status.replace('_', ' ')}</strong></>}
+                                </p>
+                            </div>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setIsFullEdit(true)}
+                                style={{ gap: '0.4rem' }}
+                            >
+                                <Maximize2 size={14} />
+                                Full Edit
+                            </button>
+                        </div>
 
-                        <EditorToolbar
-                            onAiWrite={() => handleAiAssist('ai-write')}
-                            generating={aiGenerating}
-                        />
-
-                        {/* Editor Area */}
-                        <textarea
-                            style={{
-                                minHeight: 400,
-                                width: '100%',
-                                outline: 'none',
-                                fontSize: '1rem',
-                                lineHeight: 1.75,
-                                color: 'var(--text-primary)',
-                                background: 'transparent',
-                                border: 'none',
-                                resize: 'vertical',
-                                fontFamily: 'inherit',
-                            }}
-                            value={editorContent}
-                            onChange={(e) => {
-                                setEditorContent(e.target.value);
-                                setSaved(false);
-                            }}
-                            placeholder="Start writing your proposal section here, or use AI Write to generate content..."
-                        />
+                        {/* OnlyOffice Editor Area */}
+                        {currentSection && (
+                            <div style={{ flex: 1, minHeight: 0 }}>
+                                <OnlyOfficeEditor
+                                    proposalId={proposal.id}
+                                    sectionId={currentSection.id}
+                                    title={currentSection.title}
+                                    onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* AI Assist Panel */}
@@ -534,6 +460,46 @@ export default function ProposalEditor() {
                     </div>
                 </div>
             ) : null}
+
+            {/* Full Screen Editor Modal */}
+            {proposal && currentSection && isFullEdit && (
+                <div
+                    className="modal-backdrop"
+                    style={{ zIndex: 1000, padding: '1rem' }}
+                >
+                    <div
+                        className="modal"
+                        style={{ width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}
+                    >
+                        <div className="modal-header" style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-default)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <Sparkles size={20} color="var(--accent-blue)" />
+                                <h2 style={{ margin: 0 }}>Full Edit: {currentSection.title}</h2>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+                                    {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />}
+                                    {saving ? 'Saving...' : 'Save'}
+                                </button>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setIsFullEdit(false)}
+                                >
+                                    Exit Full Screen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
+                            <OnlyOfficeEditor
+                                proposalId={proposal.id}
+                                sectionId={currentSection.id}
+                                title={currentSection.title}
+                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

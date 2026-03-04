@@ -143,6 +143,19 @@ export const systemApi = {
     updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
 };
 
+// ── Admin ──
+
+export const adminApi = {
+    listUsers: () => request<AdminUser[]>('/admin/users'),
+    getAllTenderPermissions: () => request<TenderPermissionOverview[]>('/admin/tenders/permissions'),
+    getTenderPermissions: (tenderId: number) =>
+        request<TenderPermissionEntry[]>(`/admin/tenders/${tenderId}/permissions`),
+    grantPermission: (tenderId: number, data: { user_id: number; permission: string }) =>
+        request<TenderPermissionEntry>(`/admin/tenders/${tenderId}/permissions`, { method: 'POST', body: data }),
+    revokePermission: (tenderId: number, userId: number) =>
+        request(`/admin/tenders/${tenderId}/permissions/${userId}`, { method: 'DELETE' }),
+};
+
 // ── Types ──
 
 export interface User {
@@ -169,6 +182,8 @@ export interface Tender {
     tags: string[];
     budget_estimate: number | null;
     created_at: string;
+    created_by: number | null;
+    created_by_name: string | null;
 }
 
 export interface TenderDetail extends Tender {
@@ -280,4 +295,33 @@ export interface ComplianceResponse {
 export interface RequirementsResponse {
     requirements: { text: string; category: string; priority: string }[];
     count: number;
+}
+
+export interface AdminUser {
+    id: number;
+    email: string;
+    name: string;
+    role: string;
+    is_active: boolean;
+    is_verified: boolean;
+    created_at: string | null;
+}
+
+export interface TenderPermissionEntry {
+    id: number;
+    tender_id: number;
+    user_id: number;
+    user_name: string;
+    user_email: string;
+    permission: string;
+    granted_by: number | null;
+    created_at: string | null;
+}
+
+export interface TenderPermissionOverview {
+    tender_id: number;
+    tender_title: string;
+    owner_id: number | null;
+    owner_name: string | null;
+    permissions: TenderPermissionEntry[];
 }

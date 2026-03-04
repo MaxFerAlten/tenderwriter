@@ -1,0 +1,49 @@
+# RBAC Granulare — Walkthrough
+
+## Cosa è stato implementato
+
+Sistema di controllo accessi granulare per i tender: ogni utente vede solo i propri tender, l'admin vede tutto e può concedere/revocare accesso ad altri utenti tramite una pagina dedicata.
+
+---
+
+## File Modificati
+
+### Backend (6 file)
+
+| File | Cambiamento |
+|------|-------------|
+| [\_\_init\_\_.py](file:///d:/tender/tenderwriter/backend/app/models/__init__.py) | Nuovo modello [TenderPermission](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#257-272) + relazioni su [User](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#161-167) e [Tender](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#120-143) |
+| [tenders.py](file:///d:/tender/tenderwriter/backend/app/api/tenders.py) | RBAC su tutti gli endpoint: filtraggio lista, auto-assign `created_by`, [check_tender_access()](file:///d:/tender/tenderwriter/backend/app/api/tenders.py#92-127) |
+| [proposals.py](file:///d:/tender/tenderwriter/backend/app/api/proposals.py) | RBAC via tender associato su tutti gli endpoint |
+| [admin.py](file:///d:/tender/tenderwriter/backend/app/api/admin.py) | **[NEW]** Endpoint admin: `GET /users`, `GET/POST/DELETE` permessi tender |
+| [main.py](file:///d:/tender/tenderwriter/backend/app/main.py) | Registrazione router admin a `/api/admin` |
+
+### Frontend (3 file)
+
+| File | Cambiamento |
+|------|-------------|
+| [client.ts](file:///d:/tender/tenderwriter/frontend/src/api/client.ts) | `adminApi` + tipi [AdminUser](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#300-309), [TenderPermissionEntry](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#310-320), [TenderPermissionOverview](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#321-328) |
+| [TenderPermissions.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/TenderPermissions.tsx) | **[NEW]** Pagina admin per gestione permessi con card espandibili |
+| [App.tsx](file:///d:/tender/tenderwriter/frontend/src/App.tsx) | Route `/permissions` + voce sidebar "Permessi" (admin-only) |
+
+---
+
+## Come funziona
+
+```mermaid
+flowchart TD
+    A[Utente fa richiesta API] --> B{Ha token JWT?}
+    B -->|No| C[401 Unauthorized]
+    B -->|Sì| D{Ruolo = admin?}
+    D -->|Sì| E[Accesso completo a tutti i tender]
+    D -->|No| F{È il creatore del tender?}
+    F -->|Sì| G[Accesso concesso]
+    F -->|No| H{Ha un permesso esplicito in tender_permissions?}
+    H -->|Sì| G
+    H -->|No| I[404 Tender not found]
+```
+
+## Verifica
+
+- ✅ **TypeScript build**: `npx tsc --noEmit` completato senza errori
+- La tabella [tender_permissions](file:///d:/tender/tenderwriter/backend/app/api/admin.py#151-185) verrà creata automaticamente da `Base.metadata.create_all` al prossimo avvio del backend

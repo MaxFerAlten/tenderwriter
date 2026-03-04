@@ -1,0 +1,155 @@
+# Integrazione OnlyOffice Editor + Save-to-RAG
+
+Sostituire il textarea nel ProposalEditor con OnlyOffice Document Server per editing WYSIWYG completo (formattazione, tabelle, immagini, ecc.). Al salvataggio, il contenuto viene estratto come testo e indicizzato nel RAG.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **OnlyOffice Document Server** richiede ~2GB RAM aggiuntivi. L'immagine Docker è `onlyoffice/documentserver:latest` (~2.5GB).
+
+> [!WARNING]
+> OnlyOffice richiede che il browser possa raggiungere il server OOXML **e** che il server possa raggiungere il backend (callback). In Docker questo funziona tramite la rete interna, ma dal browser l'URL deve essere accessibile. Si esporrà la porta `8443` per OnlyOffice.
+
+> [!CAUTION]
+> La versione Community di OnlyOffice ha un limite di **20 connessioni simultanee**. Per uso aziendale serve una licenza.
+
+---
+
+## Architettura
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant OO as OnlyOffice Server
+    participant BE as Backend (FastAPI)
+    participant S as MinIO / Storage
+    participant RAG as RAG Engine
+
+    B->>BE: GET /api/proposals/{id}/sections/{sid}/document
+    BE->>S: Crea/recupera file .docx
+    BE-->>B: URL del file + config editor
+    B->>OO: Apre editor con URL file
+    Note over B,OO: Editing WYSIWYG
+    B->>OO: Utente salva (Ctrl+S o chiude)
+    OO->>BE: POST /api/onlyoffice/callback (con URL file modificato)
+    BE->>OO: Scarica file aggiornato
+    BE->>S: Salva file in MinIO
+    BE->>BE: Estrai testo dal .docx
+    BE->>RAG: ingest_text() → chunking + embedding
+    BE-->>OO: {"error": 0} (success)
+```
+
+---
+
+## Proposed Changes
+
+### Infrastruttura Docker
+
+#### [MODIFY] [docker-compose.yml](file:///d:/tender/tenderwriter/docker-compose.yml)
+
+Aggiungere servizio `onlyoffice`:
+
+```yaml
+onlyoffice:
+  image: onlyoffice/documentserver:latest
+  container_name: tw-onlyoffice
+  restart: unless-stopped
+  environment:
+    JWT_ENABLED: "true"
+    JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-changeme_oo_jwt_secret}"
+  ports:
+    - "8443:80"
+  volumes:
+    - onlyoffice_data:/var/log/onlyoffice
+    - onlyoffice_lib:/var/lib/onlyoffice
+```
+
+Aggiungere volume `onlyoffice_data` e `onlyoffice_lib`.
+
+---
+
+### Backend — File Serving & Callback
+
+#### [NEW] [onlyoffice.py](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py)
+
+Nuovo router `/api/onlyoffice` con:
+
+1. **`GET /document/{proposal_id}/{section_id}`** — Genera/recupera un file `.docx` dal contenuto della sezione, lo salva in MinIO, e ritorna la config JSON per inizializzare l'editor OnlyOffice:
+   ```json
+   {
+     "document_url": "http://backend:8000/api/onlyoffice/files/...",
+     "document_key": "proposal_3_section_5_v1709...",
+     "callback_url": "http://backend:8000/api/onlyoffice/callback",
+     "editor_config": { ... }
+   }
+   ```
+
+2. **`GET /files/{file_key}`** — Serve il file `.docx` da MinIO (endpoint accessibile da OnlyOffice container).
+
+3. **`POST /callback`** — Callback endpoint per OnlyOffice:
+   - Riceve notifica di salvataggio (`status == 2` o `status == 6`)
+   - Scarica il file aggiornato dall'URL fornito da OnlyOffice
+   - Estrae il testo dal `.docx` con `python-docx`
+   - Salva il contenuto nella sezione della proposta (DB)
+   - Indicizza il testo nel RAG via `IngestionPipeline.ingest_text()`
+   - Risponde `{"error": 0}`
+
+#### [MODIFY] [main.py](file:///d:/tender/tenderwriter/backend/app/main.py)
+
+Registrare il router:
+```python
+from app.api import onlyoffice
+app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
+```
+
+#### [MODIFY] [config.py](file:///d:/tender/tenderwriter/backend/app/config.py)
+
+Aggiungere settings:
+```python
+onlyoffice_url: str = "http://localhost:8443"
+onlyoffice_jwt_secret: str = "changeme_oo_jwt_secret"
+onlyoffice_internal_url: str = "http://onlyoffice"  # Docker internal
+backend_public_url: str = "http://localhost:8000"    # Raggiungibile da OO container
+```
+
+---
+
+### Frontend — OnlyOffice Editor Component
+
+#### [NEW] [OnlyOfficeEditor.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/OnlyOfficeEditor.tsx)
+
+Componente React che:
+1. Chiama `GET /api/onlyoffice/document/{proposalId}/{sectionId}` per ottenere la config
+2. Carica lo script JS di OnlyOffice (`{onlyoffice_url}/web-apps/apps/api/documents/api.js`)
+3. Inizializza `new DocsAPI.DocEditor()` con la config ricevuta
+4. Gestisce eventi di save/close
+
+#### [MODIFY] [ProposalEditor.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/ProposalEditor.tsx)
+
+- Sostituire il `<textarea>` (riga ~399-418) con il componente `<OnlyOfficeEditor>`
+- Rimuovere [EditorToolbar](file:///d:/tender/tenderwriter/frontend/src/pages/ProposalEditor.tsx#22-69) (non più necessaria, OnlyOffice ha la sua toolbar)
+- Mantenere il pannello AI Assistant
+- Il "Save" manuale trigga un force-save tramite l'API OnlyOffice
+
+#### [MODIFY] [client.ts](file:///d:/tender/tenderwriter/frontend/src/api/client.ts)
+
+Aggiungere:
+```typescript
+export const onlyofficeApi = {
+    getDocumentConfig: (proposalId: number, sectionId: number) =>
+        request<OnlyOfficeConfig>(`/onlyoffice/document/${proposalId}/${sectionId}`),
+};
+```
+
+---
+
+## Verification Plan
+
+### Manual Verification
+
+1. `docker compose up -d` → verificare che `tw-onlyoffice` sia healthy
+2. Aprire la pagina Proposals → selezionare una sezione
+3. L'editor OnlyOffice dovrebbe caricarsi al posto del textarea
+4. Scrivere/formattare testo → salvare (Ctrl+S)
+5. Verificare nei log backend che il callback sia ricevuto e [ingest_text()](file:///d:/tender/tenderwriter/backend/app/ingestion/pipeline.py#318-349) venga chiamato
+6. Usare AI Search per cercare il contenuto appena scritto → dovrebbe apparire nei risultati RAG

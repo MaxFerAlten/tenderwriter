@@ -1,0 +1,70 @@
+# RBAC Granulare — Walkthrough
+
+## Cosa è stato implementato
+
+Sistema di controllo accessi granulare per i tender: ogni utente vede solo i propri tender, l'admin vede tutto e può concedere/revocare accesso ad altri utenti tramite una pagina dedicata.
+
+---
+
+## Autenticazione OnlyOffice & Save-to-RAG
+**Data:** 04 Marzo 2026
+
+Implementata l'integrazione completa di **OnlyOffice Document Server** per fornire un editor WYSIWYG avanzato all'interno delle proposte, con salvataggio automatico e indicizzazione nel sistema RAG.
+
+**Lavoro Svolto:**
+1. **Infrastruttura Docker:**
+    - Aggiunto il servizio `onlyoffice/documentserver` su porta `8443` con JWT abilitato per prevenire accessi non autorizzati.
+2. **Backend API ([onlyoffice.py](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py)):**
+    - Nuovo endpoint `/api/onlyoffice/document/{pid}/{sid}` che estrae il contenuto JSON TipTap della sezione, ne genera al volo un documento `.docx` e fornisce la configurazione JWT per l'editor JavaScript.
+    - Implementato l'endpoint `/api/onlyoffice/callback`: attende la notifica "ready for save" (status 2 o 6), scarica il file dal server OnlyOffice, ne estrae il plain text e aggiorna la sezione nel database.
+    - **Integrazione RAG:** Nel callback, il testo estratto viene automaticamente processato dalla [IngestionPipeline](file:///d:/tender/tenderwriter/backend/app/ingestion/pipeline.py#21-349) ([ingest_text()](file:///d:/tender/tenderwriter/backend/app/ingestion/pipeline.py#318-349)) per aggiornare la knowledge base con il contenuto digitato dagli utenti.
+3. **Frontend React ([OnlyOfficeEditor.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/OnlyOfficeEditor.tsx)):**
+    - Sostituita la precedente `<textarea>` con il componente ufficiale OnlyOffice, caricato dinamicamente.
+    - Implementato il force-save tramite OnlyOffice API per preservare l'esperienza UX del pulsante "Salva".
+    - Locale in italiano, autosave abilitato e pannello chat laterale di OnlyOffice disabilitato (per mantenere il focus sull'App Assistant IA).
+
+**Verifica Riuscita:** I container (backend, frontend e onlyoffice) sono stati buidati correttamente e sono attualmente in esecuzione locale tramite `docker compose up -d`. L'endpoint JS di OnlyOffice risponde con successo.
+
+---
+
+## File Modificati
+
+### Backend (6 file)
+
+| File | Cambiamento |
+|------|-------------|
+| [\_\_init\_\_.py](file:///d:/tender/tenderwriter/backend/app/models/__init__.py) | Nuovo modello [TenderPermission](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#257-272) + relazioni su [User](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#73-92) e [Tender](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#120-143) |
+| [tenders.py](file:///d:/tender/tenderwriter/backend/app/api/tenders.py) | RBAC su tutti gli endpoint: filtraggio lista, auto-assign `created_by`, [check_tender_access()](file:///d:/tender/tenderwriter/backend/app/api/tenders.py#92-130) |
+| [proposals.py](file:///d:/tender/tenderwriter/backend/app/api/proposals.py) | RBAC via tender associato su tutti gli endpoint |
+| [admin.py](file:///d:/tender/tenderwriter/backend/app/api/admin.py) | **[NEW]** Endpoint admin: `GET /users`, `GET/POST/DELETE` permessi tender |
+| [main.py](file:///d:/tender/tenderwriter/backend/app/main.py) | Registrazione router admin a `/api/admin` |
+
+### Frontend (3 file)
+
+| File | Cambiamento |
+|------|-------------|
+| [client.ts](file:///d:/tender/tenderwriter/frontend/src/api/client.ts) | `adminApi` + tipi [AdminUser](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#300-309), [TenderPermissionEntry](file:///d:/tender/tenderwriter/frontend/src/api/client.ts#310-320), [TenderPermissionOverview](file:///d:/tender/tenderwriter/backend/app/api/admin.py#57-63) |
+| [TenderPermissions.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/TenderPermissions.tsx) | **[NEW]** Pagina admin per gestione permessi con card espandibili |
+| [App.tsx](file:///d:/tender/tenderwriter/frontend/src/App.tsx) | Route `/permissions` + voce sidebar "Permessi" (admin-only) |
+
+---
+
+## Come funziona
+
+```mermaid
+flowchart TD
+    A[Utente fa richiesta API] --> B{Ha token JWT?}
+    B -->|No| C[401 Unauthorized]
+    B -->|Sì| D{Ruolo = admin?}
+    D -->|Sì| E[Accesso completo a tutti i tender]
+    D -->|No| F{È il creatore del tender?}
+    F -->|Sì| G[Accesso concesso]
+    F -->|No| H{Ha un permesso esplicito in tender_permissions?}
+    H -->|Sì| G
+    H -->|No| I[404 Tender not found]
+```
+
+## Verifica
+
+- ✅ **TypeScript build**: `npx tsc --noEmit` completato senza errori
+- La tabella [tender_permissions](file:///d:/tender/tenderwriter/backend/app/api/admin.py#151-185) verrà creata automaticamente da `Base.metadata.create_all` al prossimo avvio del backend

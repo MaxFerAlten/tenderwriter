@@ -11,8 +11,11 @@ import {
     Loader2,
     Check,
     X,
+    FileEdit,
+    Sparkles,
 } from 'lucide-react';
-import { contentApi, type ContentBlock, type ContentBlockCreate } from '../api/client';
+import { contentApi, type ContentBlock } from '../api/client';
+import OnlyOfficeEditor from './OnlyOfficeEditor';
 
 const CATEGORIES = [
     'All',
@@ -52,12 +55,14 @@ export default function ContentLibrary() {
     const [creating, setCreating] = useState(false);
     const [copiedId, setCopiedId] = useState<number | null>(null);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [editingBlock, setEditingBlock] = useState<ContentBlock | null>(null);
+    const [isFullEdit, setIsFullEdit] = useState(false);
 
     // New block form state
     const [formTitle, setFormTitle] = useState('');
-    const [formContent, setFormContent] = useState('');
     const [formCategory, setFormCategory] = useState('');
     const [formTags, setFormTags] = useState('');
+    const [createDocKey, setCreateDocKey] = useState<string | null>(null);
 
     const loadBlocks = useCallback(async () => {
         try {
@@ -81,24 +86,27 @@ export default function ContentLibrary() {
     }, [loadBlocks]);
 
     const handleCreate = async () => {
-        if (!formTitle.trim() || !formContent.trim()) return;
+        if (!formTitle.trim()) return;
         try {
             setCreating(true);
-            const data: ContentBlockCreate = {
+            const data: any = {
                 title: formTitle,
-                content: formContent,
+                content: ' ', // Satisfy backend if not using ONLYOFFICE
+                onlyoffice_key: createDocKey,
             };
             if (formCategory) data.category = formCategory;
             if (formTags.trim()) {
                 data.tags = formTags.split(',').map((t) => t.trim()).filter(Boolean);
             }
             await contentApi.create(data);
+
             // Reset form
             setFormTitle('');
-            setFormContent('');
             setFormCategory('');
             setFormTags('');
+            setCreateDocKey(null);
             setShowNewBlock(false);
+
             await loadBlocks();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to create content block');
@@ -208,15 +216,16 @@ export default function ContentLibrary() {
                             onChange={(e) => setFormTitle(e.target.value)}
                         />
                     </div>
-                    <div className="form-group">
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column' }}>
                         <label className="form-label">Content *</label>
-                        <textarea
-                            className="form-textarea"
-                            placeholder="Write reusable content..."
-                            style={{ minHeight: 120 }}
-                            value={formContent}
-                            onChange={(e) => setFormContent(e.target.value)}
-                        />
+                        <div style={{ minHeight: '600px', height: '600px', marginBottom: '1.5rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                            <OnlyOfficeEditor
+                                mode="create"
+                                title={formTitle || 'Nuovo Blocco'}
+                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                onConfigLoaded={(cfg) => setCreateDocKey(cfg.config.document.key)}
+                            />
+                        </div>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                         <div className="form-group">
@@ -246,26 +255,91 @@ export default function ContentLibrary() {
                         <button
                             className="btn btn-primary"
                             onClick={handleCreate}
-                            disabled={creating || !formTitle.trim() || !formContent.trim()}
+                            disabled={creating || !formTitle.trim()}
                         >
                             {creating ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
-                            {creating ? 'Creating...' : 'Create'}
+                            {creating ? 'Creating...' : 'Create Block'}
                         </button>
-                        <button className="btn btn-ghost" onClick={() => setShowNewBlock(false)}>Cancel</button>
+                        <button className="btn btn-ghost" onClick={() => {
+                            setShowNewBlock(false);
+                            setFormTitle('');
+                            setCreateDocKey(null);
+                        }}>Cancel</button>
                     </div>
                 </motion.div>
             )}
 
             {/* Loading */}
-            {loading && (
+            {loading && !searchQuery && (
                 <div className="loading-spinner" style={{ padding: '3rem 0' }}>
                     <div className="spinner" />
                     <p style={{ color: 'var(--text-muted)', marginTop: '0.75rem' }}>Loading content blocks...</p>
                 </div>
             )}
 
-            {/* Content Grid */}
-            {!loading && (
+            {/* Inline Editor for Existing Block */}
+            {editingBlock && !isFullEdit && (
+                <motion.div
+                    className="card"
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    style={{ marginBottom: '1.5rem', borderLeft: '4px solid var(--accent-blue)' }}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <div>
+                            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <FileEdit size={20} color="var(--accent-blue)" />
+                                Editing: {editingBlock.title}
+                            </h3>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                {editingBlock.category || 'Uncategorized'}
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setIsFullEdit(true)}
+                                title="Open in Full Screen Modal"
+                            >
+                                <Sparkles size={14} />
+                                Full Edit
+                            </button>
+                            <button
+                                className="btn btn-ghost btn-sm btn-icon"
+                                onClick={() => {
+                                    setEditingBlock(null);
+                                    loadBlocks();
+                                }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ minHeight: '600px', height: '600px', marginBottom: '1rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                        <OnlyOfficeEditor
+                            mode="library"
+                            libraryBlockId={editingBlock.id}
+                            title={editingBlock.title}
+                            onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                setEditingBlock(null);
+                                loadBlocks();
+                            }}
+                        >
+                            Done Editing
+                        </button>
+                    </div>
+                </motion.div>
+            )}
+
+            {/* Content Grid - Hidden when editing inline */}
+            {!loading && !editingBlock && (
                 <div className="content-grid">
                     {blocks.map((block, i) => (
                         <motion.div
@@ -283,6 +357,13 @@ export default function ContentLibrary() {
                                     </span>
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                    <button
+                                        className="btn btn-ghost btn-icon btn-sm"
+                                        title="Edit in OnlyOffice"
+                                        onClick={() => setEditingBlock(block)}
+                                    >
+                                        <FileEdit size={14} />
+                                    </button>
                                     <button
                                         className="btn btn-ghost btn-icon btn-sm"
                                         title="Copy to clipboard"
@@ -324,7 +405,7 @@ export default function ContentLibrary() {
                 </div>
             )}
 
-            {!loading && blocks.length === 0 && (
+            {!loading && blocks.length === 0 && !editingBlock && (
                 <div className="empty-state">
                     <Filter size={48} />
                     <h3>No content blocks found</h3>
@@ -333,6 +414,44 @@ export default function ContentLibrary() {
                         : 'Create your first content block to get started'}
                     </p>
                 </div>
+            )}
+
+            {/* OnlyOffice Editor Modal - Now triggered only by isFullEdit */}
+            {editingBlock && isFullEdit && (
+                <motion.div
+                    className="modal-backdrop"
+                    style={{ zIndex: 100, padding: '1rem' }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                >
+                    <motion.div
+                        className="modal"
+                        style={{ width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                    >
+                        <div className="modal-header" style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-default)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <Sparkles size={20} color="var(--accent-blue)" />
+                                <h2 style={{ margin: 0 }}>Full Edit: {editingBlock.title}</h2>
+                            </div>
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => setIsFullEdit(false)}
+                            >
+                                Exit Full Screen
+                            </button>
+                        </div>
+                        <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
+                            <OnlyOfficeEditor
+                                mode="library"
+                                libraryBlockId={editingBlock.id}
+                                title={editingBlock.title}
+                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                            />
+                        </div>
+                    </motion.div>
+                </motion.div>
             )}
         </div>
     );

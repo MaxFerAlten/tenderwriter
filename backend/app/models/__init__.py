@@ -88,6 +88,7 @@ class User(Base):
     proposals = relationship("Proposal", back_populates="created_by_user")
     otp_tokens = relationship("OTPToken", back_populates="user", cascade="all, delete")
     search_history = relationship("SearchHistory", back_populates="user", cascade="all, delete", order_by="desc(SearchHistory.created_at)")
+    tender_permissions = relationship("TenderPermission", back_populates="user", foreign_keys="TenderPermission.user_id", cascade="all, delete")
 
 
 class OTPToken(Base):
@@ -138,6 +139,7 @@ class Tender(Base):
     created_by_user = relationship("User", back_populates="tenders")
     requirements = relationship("TenderRequirement", back_populates="tender", cascade="all, delete")
     proposals = relationship("Proposal", back_populates="tender", cascade="all, delete")
+    permissions = relationship("TenderPermission", back_populates="tender", cascade="all, delete")
 
 
 class TenderRequirement(Base):
@@ -250,3 +252,20 @@ class Chunk(Base):
 
     # Relationships
     document = relationship("Document", back_populates="chunks")
+
+
+class TenderPermission(Base):
+    """Granular per-tender access control."""
+    __tablename__ = "tender_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    permission = Column(String(50), default="viewer")  # viewer, editor
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    tender = relationship("Tender", back_populates="permissions")
+    user = relationship("User", back_populates="tender_permissions", foreign_keys=[user_id])
+    granted_by_user = relationship("User", foreign_keys=[granted_by])

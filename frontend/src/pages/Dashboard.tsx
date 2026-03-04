@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     Plus,
     Clock,
@@ -10,8 +10,11 @@ import {
     Loader2,
     Upload,
     Check,
+    FileEdit,
+    X,
 } from 'lucide-react';
-import { tenderApi, type Tender, type TenderCreate } from '../api/client';
+import { useNavigate } from 'react-router-dom';
+import { tenderApi, proposalApi, type Tender, type TenderCreate } from '../api/client';
 
 const PIPELINE_COLUMNS = [
     { key: 'draft', label: 'Draft', color: '#64748b' },
@@ -28,7 +31,7 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void> }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number) => void }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
@@ -64,7 +67,7 @@ function TenderCard({ tender, index, onUpload }: { tender: Tender; index: number
             <div className="tender-card-title">{tender.title}</div>
             <div className="tender-card-client">{tender.client || 'No client'}</div>
 
-            <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+            <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <label className="btn btn-secondary btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>
                     {uploading ? <Loader2 size={12} className="spin" /> : success ? <Check size={12} color="#10b981" /> : <Upload size={12} />}
                     {uploading ? 'Uploading...' : success ? 'Uploaded' : 'Upload PDF'}
@@ -76,6 +79,14 @@ function TenderCard({ tender, index, onUpload }: { tender: Tender; index: number
                         disabled={uploading}
                     />
                 </label>
+                <button
+                    className="btn btn-primary btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', gap: '0.25rem' }}
+                    onClick={() => onCreateProposal(tender.id)}
+                >
+                    <FileEdit size={12} />
+                    Create Proposal
+                </button>
             </div>
 
             <div className="tender-card-footer">
@@ -115,6 +126,13 @@ export default function Dashboard() {
     const [form, setForm] = useState<TenderCreate>({ ...EMPTY_FORM });
     const [creating, setCreating] = useState(false);
 
+    // Proposal creation state
+    const [showNewProposal, setShowNewProposal] = useState<number | null>(null);
+    const [proposalTitle, setProposalTitle] = useState('');
+    const [creatingProposal, setCreatingProposal] = useState(false);
+
+    const navigate = useNavigate();
+
     const loadTenders = useCallback(async () => {
         try {
             setLoading(true);
@@ -149,6 +167,25 @@ export default function Dashboard() {
             setError(err instanceof Error ? err.message : 'Failed to create tender');
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleCreateProposal = async () => {
+        if (!proposalTitle.trim() || showNewProposal === null) return;
+        try {
+            setCreatingProposal(true);
+            const proposal = await proposalApi.create({
+                tender_id: showNewProposal,
+                title: proposalTitle,
+            });
+            setShowNewProposal(null);
+            setProposalTitle('');
+            // Navigate to proposals page and select the new proposal
+            navigate('/proposals', { state: { proposalId: proposal.id } });
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to create proposal');
+        } finally {
+            setCreatingProposal(false);
         }
     };
 
@@ -339,7 +376,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} />
                                     ))
                                 )}
                             </div>
@@ -347,6 +384,78 @@ export default function Dashboard() {
                     })}
                 </div>
             )}
+
+            {/* New Proposal Modal */}
+            <AnimatePresence>
+                {showNewProposal !== null && (
+                    <motion.div
+                        className="modal-backdrop"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                    >
+                        <motion.div
+                            className="modal"
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                        >
+                            <div className="modal-header">
+                                <h2>Create New Proposal</h2>
+                                <button
+                                    className="btn btn-ghost btn-sm btn-icon"
+                                    onClick={() => {
+                                        setShowNewProposal(null);
+                                        setProposalTitle('');
+                                    }}
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div className="form-group">
+                                    <label>Proposal Title *</label>
+                                    <input
+                                        type="text"
+                                        className="input"
+                                        placeholder="e.g., Technical Proposal - Phase 1"
+                                        value={proposalTitle}
+                                        onChange={(e) => setProposalTitle(e.target.value)}
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                                    <button
+                                        className="btn btn-ghost"
+                                        onClick={() => {
+                                            setShowNewProposal(null);
+                                            setProposalTitle('');
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        className="btn btn-primary"
+                                        disabled={!proposalTitle.trim() || creatingProposal}
+                                        onClick={handleCreateProposal}
+                                    >
+                                        {creatingProposal ? (
+                                            <>
+                                                <Loader2 size={16} className="spin" />
+                                                Creating...
+                                            </>
+                                        ) : (
+                                            'Create Proposal'
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Empty state */}
             {!loading && tenders.length === 0 && !error && (

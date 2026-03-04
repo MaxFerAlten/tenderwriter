@@ -9,6 +9,7 @@ import {
     Sparkles,
     LogOut,
     Activity,
+    Shield,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import ProposalEditor from './pages/ProposalEditor';
@@ -16,6 +17,7 @@ import ContentLibrary from './pages/ContentLibrary';
 import RAGSearch from './pages/Search';
 import SettingsPage from './pages/Settings';
 import SystemMonitor from './pages/SystemMonitor';
+import TenderPermissions from './pages/TenderPermissions';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { useAuth } from './contexts/AuthContext';
@@ -26,6 +28,7 @@ const navItems = [
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
     { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
+    { path: '/permissions', label: 'Permessi', icon: Shield, adminOnly: true },
 ];
 
 function App() {
@@ -110,6 +113,7 @@ function App() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -8 }}
                         transition={{ duration: 0.2 }}
+                        style={{ width: '100%' }}
                     >
                         <Routes location={location}>
                             <Route path="/" element={<Dashboard />} />
@@ -119,6 +123,7 @@ function App() {
                             <Route path="/search" element={<RAGSearch />} />
                             <Route path="/settings" element={<SettingsPage />} />
                             <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
+                            <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
                         </Routes>
                     </motion.div>
                 </AnimatePresence>

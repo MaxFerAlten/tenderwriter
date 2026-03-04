@@ -1,0 +1,43 @@
+# Fix OnlyOffice [object Object] Error
+
+The user is seeing an `Errore OnlyOffice: [object Object]` error when trying to open the editor in Proposal or Content Library sections. This is due to the frontend not stringifying the error object received from OnlyOffice, and likely caused by a JWT secret mismatch between the backend and OnlyOffice services.
+
+### Backend
+
+#### [MODIFY] [onlyoffice.py](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py)
+- Update [OnlyOfficeConfig](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py#40-45) model to contain a [config](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py#50-96) dictionary and a `token`.
+- Standardize the configuration object creation into a helper function to ensure consistency between Proposals and Library.
+- Ensure the `token` is a signature of the *exact* dictionary returned in the [config](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py#50-96) field.
+
+### Frontend
+
+#### [MODIFY] [OnlyOfficeEditor.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/OnlyOfficeEditor.tsx)
+- Update [EditorConfig](file:///d:/tender/tenderwriter/frontend/src/pages/OnlyOfficeEditor.tsx#23-28) interface.
+- Modify `initEditor` to use the [config](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py#50-96) object from the backend response directly, simply adding the `token` to it before passing to `DocEditor`.
+
+### Backend
+
+#### [MODIFY] [onlyoffice.py](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py)
+- Addition of `GET /document/create` to serve a temporary, blank configuration.
+- Update [onlyoffice_callback](file:///d:/tender/tenderwriter/backend/app/api/onlyoffice.py#337-470) to accept `new_` document keys.
+
+#### [MODIFY] [content_library.py](file:///d:/tender/tenderwriter/backend/app/api/content_library.py)
+- Update [ContentBlockCreate](file:///d:/tender/tenderwriter/backend/app/api/content_library.py#26-31) to include an optional `onlyoffice_key`.
+- In [create_content_block](file:///d:/tender/tenderwriter/backend/app/api/content_library.py#109-135), if `onlyoffice_key` is present, use it to pull the content from the in-memory store instead of the [content](file:///d:/tender/tenderwriter/backend/app/api/content_library.py#137-155) field.
+
+### Frontend
+
+#### [MODIFY] [ContentLibrary.tsx](file:///d:/tender/tenderwriter/frontend/src/pages/ContentLibrary.tsx)
+- State variable to hold the temporary OnlyOffice configuration (`newDocConfig`).
+- Fetch this config when opening the "New Block" form.
+- Replace the `textarea` with the [OnlyOfficeEditor](file:///d:/tender/tenderwriter/frontend/src/pages/OnlyOfficeEditor.tsx#29-268) component.
+- Update [handleCreate](file:///d:/tender/tenderwriter/frontend/src/pages/ContentLibrary.tsx#86-118) to pass the `doc_key` if available.
+
+## Verification Plan
+
+### Manual Verification
+1. **Creation Flow**: Go to Content Library, click "New Block".
+2. Fill in Title and Category.
+3. Click "Create & Edit with OnlyOffice".
+4. Verify that the block is created and the OnlyOffice editor opens automatically.
+5. Write some formatted text, close the editor, and verify the card shows a preview of the text.
