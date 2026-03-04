@@ -335,6 +335,7 @@ export default function ProposalEditor() {
                         {currentSection && (
                             <div style={{ flex: 1, minHeight: 0 }}>
                                 <OnlyOfficeEditor
+                                    key={`${proposal.id}-${currentSection.id}`}
                                     proposalId={proposal.id}
                                     sectionId={currentSection.id}
                                     title={currentSection.title}

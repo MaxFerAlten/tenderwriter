@@ -69,6 +69,7 @@ def _build_config_dict(
                 "edit": True,
                 "print": True,
                 "fillForms": True,
+                "chat": True,
             }
         },
         "documentType": "word",
@@ -84,13 +85,12 @@ def _build_config_dict(
             },
             "customization": {
                 "autosave": True,
-                "chat": False,
-                "comments": False,
+                "comments": True,
                 "compactHeader": True,
                 "compactToolbar": False,
                 "feedback": False,
                 "forcesave": True,
-                "help": False,
+                "help": True,
                 "hideRightMenu": True,
                 "hideRulers": False,
                 "logo": {
@@ -390,30 +390,23 @@ class CallbackPayload(BaseModel):
     token: str | None = None
 
 
-@router.post("/callback")
+@router.api_route("/callback", methods=["GET", "POST"])
 async def onlyoffice_callback(
-    payload: CallbackPayload,
     request: Request,
+    payload: CallbackPayload = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
     OnlyOffice callback endpoint.
-    
-    Status codes from OnlyOffice:
-    - 0: No changes (user opened but didn't edit)
-    - 1: Document is being edited
-    - 2: Document is ready for saving (all users closed)
-    - 3: Document saving error
-    - 4: Document closed with no changes
-    - 6: Document is being edited, but forcesave was requested
-    - 7: Error during forcesave
+    Handles both POST (data) and GET (ping).
     """
-    logger.info(
-        "OnlyOffice callback received",
-        key=payload.key,
-        status=payload.status,
-        url=payload.url,
-    )
+    if request.method == "GET":
+        return {"error": 0}
+    
+    if not payload:
+         return {"error": 0}
+
+    logger.info("OnlyOffice callback received", key=payload.key, status=payload.status)
     
     # Status 2 = ready to save, 6 = force save
     if payload.status in (2, 6) and payload.url:

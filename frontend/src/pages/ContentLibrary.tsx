@@ -318,6 +318,7 @@ export default function ContentLibrary() {
 
                     <div style={{ minHeight: '600px', height: '600px', marginBottom: '1rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
                         <OnlyOfficeEditor
+                            key={`lib-edit-${editingBlock.id}`}
                             mode="library"
                             libraryBlockId={editingBlock.id}
                             title={editingBlock.title}
@@ -444,9 +445,9 @@ export default function ContentLibrary() {
                         </div>
                         <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
                             <OnlyOfficeEditor
-                                mode="library"
-                                libraryBlockId={editingBlock.id}
-                                title={editingBlock.title}
+                                key="lib-create-new"
+                                mode="create"
+                                title="Nuovo Blocco"
                                 onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
                             />
                         </div>

@@ -143,8 +143,8 @@ export default function OnlyOfficeEditor({
             editorRef.current = new window.DocsAPI.DocEditor(
                 editorContainerId,
                 {
-                    ...config.config, // Use the full config object from the backend (already includes width/height/token-keys)
-                    token: config.token, // Add the token
+                    ...config.config,
+                    token: config.token,
                     events: {
                         onAppReady: () => {
                             setLoading(false);
