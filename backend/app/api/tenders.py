@@ -337,6 +337,13 @@ async def import_tender_document(
     Triggers the ingestion pipeline: parse → extract requirements → index.
     """
     tender = await check_tender_access(tender_id, current_user, db)
+    
+    # Restrict uploads for finalized tenders
+    if tender.status in [TenderStatus.SUBMITTED, TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot upload documents to a tender with status '{tender.status.value}'"
+        )
 
     # 1. Upload to MinIO
     minio_client = Minio(

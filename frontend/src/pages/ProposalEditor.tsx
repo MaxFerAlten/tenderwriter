@@ -57,12 +57,13 @@ export default function ProposalEditor() {
             try {
                 setLoadingList(true);
                 const data = await proposalApi.list({ limit: '50' });
-                setProposals(data.items);
+                const activeProposals = data.items.filter(p => p.status !== 'submitted');
+                setProposals(activeProposals);
 
-                if (navigatedProposalId && data.items.some(p => p.id === navigatedProposalId)) {
+                if (navigatedProposalId && activeProposals.some(p => p.id === navigatedProposalId)) {
                     setSelectedProposalId(navigatedProposalId);
-                } else if (data.items.length > 0 && !selectedProposalId && !navigatedProposalId) {
-                    setSelectedProposalId(data.items[0].id);
+                } else if (activeProposals.length > 0 && !selectedProposalId && !navigatedProposalId) {
+                    setSelectedProposalId(activeProposals[0].id);
                 }
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'Failed to load proposals');
@@ -235,15 +236,19 @@ export default function ProposalEditor() {
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button className="btn btn-primary" onClick={handleSave} disabled={saving || !proposal}>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleSave}
+                        disabled={saving || !proposal || proposal.status === 'submitted'}
+                    >
                         {saving ? <Loader2 size={16} className="spin" /> : saved ? <Check size={16} /> : <Check size={16} />}
-                        {saving ? 'Saving...' : saved ? 'Saved!' : 'Save'}
+                        {saving ? 'Saving...' : saved ? 'Saved!' : proposal?.status === 'submitted' ? 'Submitted' : 'Save'}
                     </button>
                 </div>
             </div>
 
-            {/* Error */}
-            {error && (
+            {/* Error or Read-only Banner */}
+            {error ? (
                 <div className="card" style={{ borderColor: '#ef4444', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#ef4444' }}>
                     <AlertCircle size={18} />
                     <span>{error}</span>
@@ -251,7 +256,12 @@ export default function ProposalEditor() {
                         <X size={14} />
                     </button>
                 </div>
-            )}
+            ) : proposal?.status === 'submitted' ? (
+                <div className="card" style={{ borderColor: 'var(--accent-purple)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-purple)', background: 'rgba(139, 92, 246, 0.05)' }}>
+                    <Send size={18} />
+                    <span>This proposal has been <strong>Submitted</strong> and is now in read-only mode.</span>
+                </div>
+            ) : null}
 
             {loadingDetail ? (
                 <div className="loading-spinner" style={{ padding: '4rem 0' }}>

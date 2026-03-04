@@ -74,17 +74,19 @@ function TenderCard({ tender, index, onUpload, onCreateProposal, onSubmit }: { t
             <div className="tender-card-client">{tender.client || 'No client'}</div>
 
             <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <label className="btn btn-secondary btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>
-                    {uploading ? <Loader2 size={12} className="spin" /> : success ? <Check size={12} color="#10b981" /> : <Upload size={12} />}
-                    {uploading ? 'Uploading...' : success ? 'Uploaded' : 'Upload PDF'}
-                    <input
-                        type="file"
-                        accept=".pdf,.docx,.txt"
-                        style={{ display: 'none' }}
-                        onChange={handleFileChange}
-                        disabled={uploading}
-                    />
-                </label>
+                {!['submitted', 'won', 'lost', 'cancelled'].includes(tender.status) && (
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>
+                        {uploading ? <Loader2 size={12} className="spin" /> : success ? <Check size={12} color="#10b981" /> : <Upload size={12} />}
+                        {uploading ? 'Uploading...' : success ? 'Uploaded' : 'Upload PDF'}
+                        <input
+                            type="file"
+                            accept=".pdf,.docx,.txt"
+                            style={{ display: 'none' }}
+                            onChange={handleFileChange}
+                            disabled={uploading}
+                        />
+                    </label>
+                )}
 
                 {tender.status === 'active' && (
                     <button
