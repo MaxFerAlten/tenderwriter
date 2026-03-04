@@ -31,7 +31,7 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload, onCreateProposal }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number) => void }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal, onSubmit }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onSubmit: (id: number) => Promise<void> }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
@@ -62,7 +62,13 @@ function TenderCard({ tender, index, onUpload, onCreateProposal }: { tender: Ten
             className="tender-card"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.05 }}
+            whileHover={{ y: -4, boxShadow: 'var(--shadow-lg)', borderColor: 'var(--accent-blue)' }}
+            transition={{ delay: index * 0.05, duration: 0.2 }}
+            style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                backdropFilter: 'blur(10px)',
+                cursor: 'default'
+            }}
         >
             <div className="tender-card-title">{tender.title}</div>
             <div className="tender-card-client">{tender.client || 'No client'}</div>
@@ -79,14 +85,38 @@ function TenderCard({ tender, index, onUpload, onCreateProposal }: { tender: Ten
                         disabled={uploading}
                     />
                 </label>
-                <button
-                    className="btn btn-primary btn-sm"
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', gap: '0.25rem' }}
-                    onClick={() => onCreateProposal(tender.id)}
-                >
-                    <FileEdit size={12} />
-                    Create Proposal
-                </button>
+
+                {tender.status === 'active' && (
+                    <button
+                        className="btn btn-primary btn-sm"
+                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', gap: '0.25rem' }}
+                        onClick={() => onCreateProposal(tender.id)}
+                    >
+                        <FileEdit size={12} />
+                        Create Proposal
+                    </button>
+                )}
+
+                {tender.status === 'in_progress' && (
+                    <>
+                        <button
+                            className="btn btn-primary btn-sm"
+                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', gap: '0.25rem' }}
+                            onClick={() => onCreateProposal(tender.id)}
+                        >
+                            <FileEdit size={12} />
+                            Edit Proposal
+                        </button>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', gap: '0.25rem', background: 'var(--accent-purple)', color: 'white', border: 'none' }}
+                            onClick={() => onSubmit(tender.id)}
+                        >
+                            <CheckCircle size={12} />
+                            Submit
+                        </button>
+                    </>
+                )}
             </div>
 
             <div className="tender-card-footer">
@@ -193,15 +223,29 @@ export default function Dashboard() {
         try {
             setError(null);
             await tenderApi.uploadDocument(id, file);
+            // Refresh to see status change from DRAFT -> ACTIVE
+            await loadTenders();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to upload document');
             throw err;
         }
     };
 
+    const handleSubmitTender = async (id: number) => {
+        try {
+            setLoading(true);
+            await tenderApi.update(id, { status: 'submitted' });
+            await loadTenders();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to submit tender');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // Compute real stats
     const activeTenders = tenders.filter(
-        (t) => t.status === 'active' || t.status === 'in_progress'
+        (t) => t.status === 'active' || t.status === 'in_progress' || t.status === 'submitted'
     ).length;
     const wonTenders = tenders.filter((t) => t.status === 'won').length;
     const totalDecided = tenders.filter(
@@ -210,7 +254,9 @@ export default function Dashboard() {
     const winRate = totalDecided > 0 ? Math.round((wonTenders / totalDecided) * 100) : 0;
     const pendingDeadlines = tenders.filter((t) => {
         const days = getDaysUntil(t.deadline);
-        return days !== null && days > 0 && days <= 14;
+        // exclude won, lost, cancelled from pending deadlines
+        const isPending = !['won', 'lost', 'cancelled'].includes(t.status);
+        return isPending && days !== null && days > 0 && days <= 14;
     }).length;
 
     const stats = [
@@ -254,7 +300,13 @@ export default function Dashboard() {
                         className="stat-card"
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.08 }}
+                        whileHover={{ y: -4, boxShadow: 'var(--shadow-glow)', borderColor: 'var(--accent-blue)' }}
+                        transition={{ delay: i * 0.08, duration: 0.2 }}
+                        style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            backdropFilter: 'blur(10px)',
+                            border: '1px solid var(--border-default)',
+                        }}
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <div>
@@ -269,75 +321,7 @@ export default function Dashboard() {
                 ))}
             </div>
 
-            {/* New Tender Form */}
-            {showNewTender && (
-                <motion.div
-                    className="card"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    style={{ marginBottom: '1.5rem' }}
-                >
-                    <h3 style={{ marginBottom: '1rem' }}>Create New Tender</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div className="form-group">
-                            <label className="form-label">Tender Title *</label>
-                            <input
-                                className="form-input"
-                                placeholder="e.g., Highway Bridge Rehabilitation"
-                                value={form.title}
-                                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Client</label>
-                            <input
-                                className="form-input"
-                                placeholder="e.g., State DOT"
-                                value={form.client || ''}
-                                onChange={(e) => setForm({ ...form, client: e.target.value })}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Category</label>
-                            <select
-                                className="form-select"
-                                value={form.category || ''}
-                                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                            >
-                                <option value="">Select category</option>
-                                <option>Infrastructure</option>
-                                <option>IT & Technology</option>
-                                <option>Water & Environment</option>
-                                <option>Energy</option>
-                                <option>Healthcare</option>
-                                <option>Education</option>
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Deadline</label>
-                            <input
-                                className="form-input"
-                                type="date"
-                                value={form.deadline || ''}
-                                onChange={(e) => setForm({ ...form, deadline: e.target.value })}
-                            />
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleCreate}
-                            disabled={creating || !form.title.trim()}
-                        >
-                            {creating ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
-                            {creating ? 'Creating...' : 'Create Tender'}
-                        </button>
-                        <button className="btn btn-ghost" onClick={() => setShowNewTender(false)}>
-                            Cancel
-                        </button>
-                    </div>
-                </motion.div>
-            )}
+            {/* Tenders list logic remains below */}
 
             {/* Loading */}
             {loading && (
@@ -376,7 +360,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onSubmit={handleSubmitTender} />
                                     ))
                                 )}
                             </div>
@@ -389,21 +373,21 @@ export default function Dashboard() {
             <AnimatePresence>
                 {showNewProposal !== null && (
                     <motion.div
-                        className="modal-backdrop"
+                        className="modal-overlay"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                     >
                         <motion.div
-                            className="modal"
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="modal-content"
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
                         >
                             <div className="modal-header">
-                                <h2>Create New Proposal</h2>
+                                <h3 style={{ margin: 0 }}>Create New Proposal</h3>
                                 <button
-                                    className="btn btn-ghost btn-sm btn-icon"
+                                    className="btn btn-icon btn-ghost"
                                     onClick={() => {
                                         setShowNewProposal(null);
                                         setProposalTitle('');
@@ -413,44 +397,149 @@ export default function Dashboard() {
                                 </button>
                             </div>
 
-                            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div className="modal-body">
+                                <p className="page-subtitle" style={{ marginBottom: '1.5rem', marginTop: 0 }}>
+                                    Define the title for your new technical proposal. You can change this later.
+                                </p>
                                 <div className="form-group">
-                                    <label>Proposal Title *</label>
+                                    <label className="form-label">Proposal Title *</label>
                                     <input
                                         type="text"
-                                        className="input"
+                                        className="form-input"
                                         placeholder="e.g., Technical Proposal - Phase 1"
                                         value={proposalTitle}
                                         onChange={(e) => setProposalTitle(e.target.value)}
                                         autoFocus
                                     />
                                 </div>
+                            </div>
 
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
-                                    <button
-                                        className="btn btn-ghost"
-                                        onClick={() => {
-                                            setShowNewProposal(null);
-                                            setProposalTitle('');
-                                        }}
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        className="btn btn-primary"
-                                        disabled={!proposalTitle.trim() || creatingProposal}
-                                        onClick={handleCreateProposal}
-                                    >
-                                        {creatingProposal ? (
-                                            <>
-                                                <Loader2 size={16} className="spin" />
-                                                Creating...
-                                            </>
-                                        ) : (
-                                            'Create Proposal'
-                                        )}
-                                    </button>
+                            <div className="modal-footer">
+                                <button
+                                    className="btn btn-ghost"
+                                    onClick={() => {
+                                        setShowNewProposal(null);
+                                        setProposalTitle('');
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="btn btn-primary"
+                                    disabled={!proposalTitle.trim() || creatingProposal}
+                                    onClick={handleCreateProposal}
+                                >
+                                    {creatingProposal ? (
+                                        <>
+                                            <Loader2 size={16} className="spin" />
+                                            Creating...
+                                        </>
+                                    ) : (
+                                        'Create Proposal'
+                                    )}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+                {showNewTender && (
+                    <motion.div
+                        className="modal-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                    >
+                        <motion.div
+                            className="modal-content"
+                            style={{ maxWidth: '650px' }}
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                        >
+                            <div className="modal-header">
+                                <h3 style={{ margin: 0 }}>Create New Tender</h3>
+                                <button
+                                    className="btn btn-icon btn-ghost"
+                                    onClick={() => setShowNewTender(false)}
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="modal-body">
+                                <p className="page-subtitle" style={{ marginBottom: '1.5rem', marginTop: 0 }}>
+                                    Add a new opportunity to the pipeline. You can import documents immediately after creation.
+                                </p>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Tender Title *</label>
+                                        <input
+                                            className="form-input"
+                                            placeholder="e.g., Highway Bridge Rehabilitation"
+                                            value={form.title}
+                                            onChange={(e) => setForm({ ...form, title: e.target.value })}
+                                            autoFocus
+                                        />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Client</label>
+                                        <input
+                                            className="form-input"
+                                            placeholder="e.g., State DOT"
+                                            value={form.client || ''}
+                                            onChange={(e) => setForm({ ...form, client: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Category</label>
+                                        <select
+                                            className="form-select"
+                                            value={form.category || ''}
+                                            onChange={(e) => setForm({ ...form, category: e.target.value })}
+                                        >
+                                            <option value="">Select category</option>
+                                            <option>Infrastructure</option>
+                                            <option>IT & Technology</option>
+                                            <option>Water & Environment</option>
+                                            <option>Energy</option>
+                                            <option>Healthcare</option>
+                                            <option>Education</option>
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Deadline</label>
+                                        <input
+                                            className="form-input"
+                                            type="date"
+                                            value={form.deadline || ''}
+                                            onChange={(e) => setForm({ ...form, deadline: e.target.value })}
+                                        />
+                                    </div>
                                 </div>
+                                <div className="form-group" style={{ marginTop: '0.25rem' }}>
+                                    <label className="form-label">Description (Optional)</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        placeholder="Briefly describe the tender requirements or context..."
+                                        value={form.description || ''}
+                                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                                        rows={3}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="modal-footer">
+                                <button className="btn btn-ghost" onClick={() => setShowNewTender(false)}>
+                                    Cancel
+                                </button>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleCreate}
+                                    disabled={creating || !form.title.trim()}
+                                >
+                                    {creating ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+                                    {creating ? 'Creating...' : 'Create Tender'}
+                                </button>
                             </div>
                         </motion.div>
                     </motion.div>

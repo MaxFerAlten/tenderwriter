@@ -61,7 +61,7 @@ export const tenderApi = {
     },
     get: (id: number) => request<TenderDetail>(`/tenders/${id}`),
     create: (data: TenderCreate) => request<Tender>('/tenders', { method: 'POST', body: data }),
-    update: (id: number, data: Partial<TenderCreate>) =>
+    update: (id: number, data: TenderUpdate) =>
         request<Tender>(`/tenders/${id}`, { method: 'PUT', body: data }),
     delete: (id: number) => request(`/tenders/${id}`, { method: 'DELETE' }),
     uploadDocument: async (id: number, file: File) => {
@@ -203,6 +203,17 @@ export interface TenderCreate {
     client?: string;
     description?: string;
     deadline?: string;
+    category?: string;
+    tags?: string[];
+    budget_estimate?: number;
+}
+
+export interface TenderUpdate {
+    title?: string;
+    client?: string;
+    description?: string;
+    deadline?: string;
+    status?: string;
     category?: string;
     tags?: string[];
     budget_estimate?: number;

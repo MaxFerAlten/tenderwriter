@@ -1,0 +1,70 @@
+# TenderWriter System Architecture
+
+This diagram illustrates how the various components of the TenderWriter infrastructure interact to provide AI-powered tender management, HybridRAG search, and real-time document editing.
+
+```mermaid
+graph TD
+    subgraph "External / Browser"
+        User["User Browser"]
+    end
+
+    subgraph "Frontend Layer"
+        FE["Frontend (React + Vite)"]
+    end
+
+    subgraph "Application Layer"
+        BE["Backend (FastAPI)"]
+        OO["OnlyOffice Document Server"]
+    end
+
+    subgraph "AI & RAG Services"
+        Ollama["Ollama (LLM)"]
+        Qdrant["Qdrant (Vector DB)"]
+        Neo4j["Neo4j (Knowledge Graph)"]
+    end
+
+    subgraph "Data & Messaging"
+        Postgres[("PostgreSQL")]
+        MinIO[("MinIO (S3 Object Storage)")]
+        Redis[("Redis (Queue / Cache)")]
+        Mailpit["Mailpit (SMTP Test)"]
+    end
+
+    %% User Interactions
+    User --> FE
+    User -- "Editor Iframe" --> OO
+
+    %% Frontend Interactions
+    FE -- "REST API (JWT)" --> BE
+
+    %% Backend Dependencies
+    BE -- "SQL / State" --> Postgres
+    BE -- "Files / Docs" --> MinIO
+    BE -- "Async Tasks" --> Redis
+    BE -- "SMTP" --> Mailpit
+
+    %% RAG & AI Pipeline
+    BE -- "LLM Inference" --> Ollama
+    BE -- "Vector Search" --> Qdrant
+    BE -- "Graph Queries" --> Neo4j
+
+    %% OnlyOffice Integration
+    BE -- "JWT / Config" --> OO
+    OO -- "Fetch / Save Files" --> BE
+    OO -- "Status Callbacks" --> BE
+```
+
+### Component Roles & Iterations
+
+| Component | Responsibility | Interaction Pattern |
+| :--- | :--- | :--- |
+| **Frontend** | User Interface | Fetches/Sends data via Backend; initializes OnlyOffice editor. |
+| **Backend** | Business Logic | Orchestrates RAG pipeline, manages document lifecycle, and secures storage. |
+| **OnlyOffice** | Document Editing | Loads documents from Backend; sends changes back via callbacks. |
+| **PostgreSQL** | Relational Data | Stores tenders, proposals, user accounts, and permissions. |
+| **MinIO** | Document Storage | Persistence for uploaded PDFs and generated DOCX proposals. |
+| **Qdrant** | Vector Search | Stores and searches document embeddings for context retrieval. |
+| **Neo4j** | Knowledge Graph | Manages relationships between entities (clients, categories, requirements). |
+| **Ollama** | AI Engine | Runs local LLM models for generating proposal content and analysis. |
+| **Redis** | Task Queue | Handles background processing for document ingestion and AI generation. |
+| **Mailpit** | Email Testing | Captures outgoing SMTP emails for local development/testing. |

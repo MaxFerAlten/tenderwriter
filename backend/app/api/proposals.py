@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.database import get_db
-from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission
+from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission, TenderStatus
 from app.api.auth import get_current_user, UserResponse
 
 router = APIRouter()
@@ -194,6 +194,13 @@ async def create_proposal(
         created_by=current_user.id,
     )
     db.add(proposal)
+
+    # Automatically set tender to IN_PROGRESS
+    result = await db.execute(select(Tender).where(Tender.id == data.tender_id))
+    tender = result.scalar_one_or_none()
+    if tender and tender.status in [TenderStatus.DRAFT, TenderStatus.ACTIVE]:
+        tender.status = TenderStatus.IN_PROGRESS
+
     await db.flush()
     await db.refresh(proposal)
 
@@ -293,6 +300,13 @@ async def update_proposal(
 
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(proposal, key, value)
+
+    # Automatically set tender to SUBMITTED if proposal is submitted
+    if data.status == ProposalStatus.SUBMITTED:
+        result = await db.execute(select(Tender).where(Tender.id == proposal.tender_id))
+        tender = result.scalar_one_or_none()
+        if tender:
+            tender.status = TenderStatus.SUBMITTED
 
     await db.flush()
     await db.refresh(proposal)

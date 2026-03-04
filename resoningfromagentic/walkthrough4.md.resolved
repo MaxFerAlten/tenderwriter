@@ -1,0 +1,106 @@
+# Walkthrough: Proposal Status & Dashboard Metrics
+
+I have implemented the logic to connect tender/proposal statuses with the dashboard metrics. This ensures that the pipeline progress is accurately reflected in the statistics cards and kanban columns.
+
+## Backend: Automatic Status Transitions
+
+The backend now automatically updates the status of a [Tender](file:///d:/tender/tenderwriter/backend/app/models/__init__.py#120-143) based on actions taken on its associated `Proposals`.
+
+### 1. New Proposal -> In Progress
+When you click **"Create Proposal"** for a tender that is in `DRAFT` or `ACTIVE` status, the tender is automatically moved to `IN_PROGRESS`.
+
+```python
+# backend/app/api/proposals.py
+
+# Automatically set tender to IN_PROGRESS
+result = await db.execute(select(Tender).where(Tender.id == data.tender_id))
+tender = result.scalar_one_or_none()
+if tender and tender.status in [TenderStatus.DRAFT, TenderStatus.ACTIVE]:
+    tender.status = TenderStatus.IN_PROGRESS
+```
+
+### 2. Submitted Proposal -> Submitted Tender
+When a proposal's status is updated to `SUBMITTED`, the parent tender is also automatically marked as `SUBMITTED`.
+
+```python
+# backend/app/api/proposals.py
+
+# Automatically set tender to SUBMITTED if proposal is submitted
+if data.status == ProposalStatus.SUBMITTED:
+    result = await db.execute(select(Tender).where(Tender.id == proposal.tender_id))
+    tender = result.scalar_one_or_none()
+    if tender:
+        tender.status = TenderStatus.SUBMITTED
+```
+
+## Frontend: Updated Dashboard Metrics
+
+The Dashboard now calculates its statistics based on the refined status definitions.
+
+- **Active Tenders**: Now includes `active`, `in_progress`, and `submitted`.
+- **Win Rate**: Calculated as `won / (won + lost)`.
+- **Pending Deadlines**: No longer shows deadlines for tenders that are already `won`, `lost`, or `cancelled`.
+
+```tsx
+// frontend/src/pages/Dashboard.tsx
+
+const activeTenders = tenders.filter(
+    (t) => t.status === 'active' || t.status === 'in_progress' || t.status === 'submitted'
+).length;
+
+const pendingDeadlines = tenders.filter((t) => {
+    const days = getDaysUntil(t.deadline);
+    const isPending = !['won', 'lost', 'cancelled'].includes(t.status);
+    return isPending && days !== null && days > 0 && days <= 14;
+}).length;
+```
+
+## Dashboard UI: Status-Specific Actions
+
+The Dashboard now dynamically adapts the actions available for each tender:
+
+- **Draft**: Only "Upload PDF" is shown.
+- **Active**: Shows "Upload PDF" and **"Create Proposal"**.
+- **In Progress**: Shows "Upload PDF", **"Edit Proposal"**, and a new **"Submit"** button.
+- **Submitted**: Actions are hidden to indicate the proposal is under review.
+
+### 1. Draft -> Active (Automated)
+When you upload a tender document, the status automatically moves from `DRAFT` to `ACTIVE`.
+
+```python
+# backend/app/api/tenders.py
+
+# Update status to ACTIVE if it was DRAFT
+if tender.status == TenderStatus.DRAFT:
+    tender.status = TenderStatus.ACTIVE
+```
+
+### 2. In Progress -> Submitted (Dashboard Button)
+A new **"Submit"** button is available directly on the dashboard card for in-progress tenders. This allows for a quick workflow without entering the editor.
+
+```tsx
+// frontend/src/pages/Dashboard.tsx
+
+const handleSubmitTender = async (id: number) => {
+    await tenderApi.update(id, { status: 'submitted' });
+    await loadTenders();
+};
+```
+
+## Visual Excellence: Premium UI Redesign
+
+The dashboard and modals have undergone a significant aesthetic overhaul to provide a "premium" and "wow" experience:
+
+- **Glassmorphic Modals**: The "New Tender" and "New Proposal" forms are now centered, modern modals with background blur (glassmorphism) and smooth exit/entry animations.
+- **Card Enhancements**:
+    - **Hover Lift**: Tender cards and statistics cards now subtly "lift" on hover, providing interactive feedback.
+    - **Backdrop Blur**: Cards use a subtle transparent background with blur to integrate beautifully with the application background.
+    - **Refined Badges**: Status badges have been polished with better padding and curated colors.
+- **Improved Layout**: Fixed "thin bar" layout issues for modals and added better spacing across the dashboard.
+- **Global Design System**: Updated [index.css](file:///d:/tender/tenderwriter/frontend/src/index.css) with a cohesive modal and form design system.
+
+## Verification Results
+
+1.  **Aesthetics**: Confirmed a high-end visual feel with consistent glassmorphism.
+2.  **Responsiveness**: Modals now have proper `maxWidth` constraints and center correctly on all screen sizes.
+3.  **Interactions**: Smooth hover effects and transitions verified across all dashboard cards.

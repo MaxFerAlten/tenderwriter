@@ -389,6 +389,12 @@ async def import_tender_document(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+    # 3. Update status to ACTIVE if it was DRAFT
+    if tender.status == TenderStatus.DRAFT:
+        tender.status = TenderStatus.ACTIVE
+        await db.flush()
+        await db.refresh(tender)
+
     return {
         "message": "Document uploaded and ingested successfully",
         "tender_id": tender_id,
