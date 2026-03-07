@@ -19,9 +19,6 @@ __pypackages__/
 # --- Specific tracked pycache artifacts to ignore ---
 backend/app/api/__pycache__/
 
-# --- Models ---
-models/
-
 # --- Build / packaging ---
 build/
 dist/
