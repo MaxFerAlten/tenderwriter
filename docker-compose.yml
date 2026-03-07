@@ -53,7 +53,7 @@ services:
       timeout: 10s
       retries: 5
 
-# --- Ollama (Local LLM - DEPRECATED, use llama-server instead) ---
+  # --- Ollama (Local LLM - DEPRECATED, use llama-server instead) ---
   # ollama:
   #   image: ollama/ollama:latest
   #   container_name: tw-ollama
@@ -73,8 +73,8 @@ services:
     volumes:
       - ./models:/models
       - llama_tender_cache:/root/.cache/llama.cpp
-    entrypoint: ["/app/llama-server"]
-    command: ["-m", "/models/qwen2.5-3b-instruct-q4_k_m.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "4096", "-t", "16", "--n-predict", "512", "-b", "512"]
+    entrypoint: [ "/app/llama-server" ]
+    command: [ "-m", "/models/qwen2.5-3b-instruct-q4_k_m.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "4096", "-t", "16", "--n-predict", "512", "-b", "512" ]
     networks:
       - default
 
@@ -88,8 +88,8 @@ services:
     volumes:
       - ./models:/models
       - llama_opencode_cache:/root/.cache/llama.cpp
-    entrypoint: ["/app/llama-server"]
-    command: ["-m", "/models/qwen2.5-3b-instruct-q4_k_m.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "16"]
+    entrypoint: [ "/app/llama-server" ]
+    command: [ "-m", "/models/Qwen2.5-Coder-3B-Instruct-Q8_0.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "16" ]
     networks:
       - default
 
@@ -115,7 +115,7 @@ services:
       # Per usare modelli cloud (Anthropic/OpenAI), imposta:
       # - ANTHROPIC_API_KEY=your-key
       # - OPENAI_API_KEY=your-key
-    command: ["web", "--hostname", "0.0.0.0", "--port", "4096"]
+    command: [ "web", "--hostname", "0.0.0.0", "--port", "4096" ]
     depends_on:
       llama-opencode:
         condition: service_started
@@ -318,7 +318,7 @@ volumes:
   postgres_data:
   qdrant_data:
   neo4j_data:
-  ollama_data:  # Kept for potential future Ollama use
+  ollama_data: # Kept for potential future Ollama use
   minio_data:
   redis_data:
   onlyoffice_data:
