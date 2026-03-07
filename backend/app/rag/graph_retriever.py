@@ -1,10 +1,8 @@
 """
 TenderWriter — Graph Retriever (Neo4j Knowledge Graph)
 
-Queries the knowledge graph for structured relationships between entities
-(projects, team members, certifications, clients, requirements).
-Returns structured context that complements the unstructured text
-retrieved by dense and sparse retrievers.
+Retrieves structured information from the knowledge graph including
+projects, team members, certifications, and their relationships.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ logger = structlog.get_logger()
 
 @dataclass
 class GraphSearchResult:
-    """A single result from knowledge graph retrieval."""
+    """A single result from graph search."""
     text: str
     score: float
     metadata: dict
@@ -33,43 +31,40 @@ class GraphRetriever:
     """
     Knowledge graph retrieval using Neo4j.
 
-    Provides structured context by querying entity relationships
-    that can't be captured by text similarity alone.
+    Manages graph schema, entity indexing, and relationship-aware search.
     """
 
     def __init__(self):
         self._driver = None
 
     async def initialize(self):
-        """Connect to Neo4j and ensure schema constraints exist."""
+        """Connect to Neo4j and ensure schema constraints."""
         self._driver = AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
         )
+
         # Verify connectivity
         async with self._driver.session() as session:
             result = await session.run("RETURN 1 AS ping")
             await result.single()
 
         logger.info("Connected to Neo4j", uri=settings.neo4j_uri)
-
-        # Create indexes and constraints
         await self._ensure_schema()
 
     async def _ensure_schema(self):
-        """Create Neo4j indexes and constraints for the knowledge graph."""
+        """Create indexes and constraints for the knowledge graph."""
         constraints = [
             "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (t:TeamMember) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Client) REQUIRE c.name IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (cert:Certification) REQUIRE cert.name IS UNIQUE",
-            "CREATE CONSTRAINT IF NOT EXISTS FOR (cat:Category) REQUIRE cat.name IS UNIQUE",
-            "CREATE CONSTRAINT IF NOT EXISTS FOR (r:Requirement) REQUIRE r.id IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (req:Requirement) REQUIRE req.id IS UNIQUE",
         ]
+
         indexes = [
             "CREATE INDEX IF NOT EXISTS FOR (p:Project) ON (p.name)",
             "CREATE INDEX IF NOT EXISTS FOR (t:TeamMember) ON (t.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (p:Project) ON (p.category)",
         ]
 
         async with self._driver.session() as session:
@@ -78,59 +73,46 @@ class GraphRetriever:
 
         logger.info("Neo4j schema constraints ensured")
 
-    # ──────────────────────────────────────────────
-    # Ingestion: Build the graph from extracted entities
-    # ──────────────────────────────────────────────
-
     async def add_project(self, project: dict):
         """
-        Add a project node and its relationships to the graph.
+        Add a project node to the knowledge graph.
 
-        Expected keys: id, name, description, category, client, team_members,
-                       certifications, value, year
+        Expected keys: id, name, description, category, year, client, team, certifications
         """
         query = """
         MERGE (p:Project {id: $id})
         SET p.name = $name,
             p.description = $description,
             p.category = $category,
-            p.value = $value,
-            p.year = $year,
-            p.updated_at = datetime()
-
-        // Link to client
+            p.year = $year
         WITH p
-        FOREACH (_ IN CASE WHEN $client IS NOT NULL THEN [1] ELSE [] END |
-            MERGE (c:Client {name: $client})
-            MERGE (p)-[:FOR_CLIENT]->(c)
-        )
-
-        // Link to category
+        MERGE (c:Client {name: $client})
+        MERGE (p)-[:FOR_CLIENT]->(c)
         WITH p
-        FOREACH (_ IN CASE WHEN $category IS NOT NULL THEN [1] ELSE [] END |
-            MERGE (cat:Category {name: $category})
-            MERGE (p)-[:HAS_CATEGORY]->(cat)
-        )
+        MERGE (cat:Category {name: $category})
+        MERGE (p)-[:HAS_CATEGORY]->(cat)
         """
+
         async with self._driver.session() as session:
             await session.run(query, **project)
 
         # Add team member relationships
-        for member in project.get("team_members", []):
-            await self._link_team_member_to_project(project["id"], member)
+        if "team" in project and project["team"]:
+            for member in project["team"]:
+                await self._link_team_member_to_project(project["id"], member)
 
-        # Add certification relationships
-        for cert in project.get("certifications", []):
-            await self._link_certification_to_project(project["id"], cert)
+        # Add certification requirements
+        if "certifications" in project and project["certifications"]:
+            for cert_name in project["certifications"]:
+                await self._link_certification_to_project(project["id"], cert_name)
 
-        logger.debug("Added project to graph", project_name=project.get("name"))
+        logger.info("Added project to graph", project_id=project["id"])
 
     async def _link_team_member_to_project(self, project_id: str, member: dict):
-        """Link a team member to a project with their role."""
+        """Link a team member to a project with role information."""
         query = """
         MATCH (p:Project {id: $project_id})
         MERGE (t:TeamMember {id: $member_id})
-        SET t.name = $name, t.title = $title
         MERGE (t)-[r:DELIVERED]->(p)
         SET r.role = $role
         """
@@ -138,80 +120,73 @@ class GraphRetriever:
             await session.run(
                 query,
                 project_id=project_id,
-                member_id=member.get("id", member.get("name", "")),
-                name=member.get("name", ""),
-                title=member.get("title", ""),
-                role=member.get("role", ""),
+                member_id=member.get("id"),
+                role=member.get("role", "Team Member"),
             )
 
     async def _link_certification_to_project(self, project_id: str, cert_name: str):
-        """Link a certification to a project."""
+        """Link a certification requirement to a project."""
         query = """
         MATCH (p:Project {id: $project_id})
-        MERGE (c:Certification {name: $cert_name})
-        MERGE (p)-[:REQUIRES_CERT]->(c)
+        MERGE (cert:Certification {name: $cert_name})
+        MERGE (p)-[:REQUIRES_CERT]->(cert)
         """
         async with self._driver.session() as session:
             await session.run(query, project_id=project_id, cert_name=cert_name)
 
     async def add_team_member(self, member: dict):
         """
-        Add or update a team member node.
+        Add a team member node to the knowledge graph.
 
-        Expected keys: id, name, title, years_experience, certifications, skills
+        Expected keys: id, name, title, years_experience, skills, certifications
         """
         query = """
         MERGE (t:TeamMember {id: $id})
         SET t.name = $name,
             t.title = $title,
             t.years_experience = $years_experience,
-            t.skills = $skills,
-            t.updated_at = datetime()
+            t.skills = $skills
         """
+
         async with self._driver.session() as session:
             await session.run(
                 query,
                 id=member["id"],
-                name=member.get("name", ""),
+                name=member["name"],
                 title=member.get("title", ""),
                 years_experience=member.get("years_experience", 0),
                 skills=member.get("skills", []),
             )
 
-        # Link certifications
-        for cert in member.get("certifications", []):
-            cert_query = """
-            MATCH (t:TeamMember {id: $member_id})
-            MERGE (c:Certification {name: $cert_name})
-            MERGE (t)-[:HOLDS]->(c)
-            """
-            async with self._driver.session() as session:
-                await session.run(cert_query, member_id=member["id"], cert_name=cert)
+        # Add certifications
+        if "certifications" in member and member["certifications"]:
+            for cert in member["certifications"]:
+                cert_query = """
+                MATCH (t:TeamMember {id: $member_id})
+                MERGE (cert:Certification {name: $cert_name})
+                MERGE (t)-[:HOLDS]->(cert)
+                """
+                async with self._driver.session() as session:
+                    await session.run(cert_query, member_id=member["id"], cert_name=cert)
 
     async def add_requirement(self, requirement: dict, tender_id: str):
-        """Add a requirement node linked to a tender context."""
+        """Add a tender requirement to the knowledge graph."""
         query = """
         MERGE (r:Requirement {id: $id})
         SET r.text = $text,
             r.category = $category,
-            r.priority = $priority
-        WITH r
-        MERGE (t:Tender {id: $tender_id})
-        MERGE (t)-[:HAS_REQUIREMENT]->(r)
+            r.priority = $priority,
+            r.tender_id = $tender_id
         """
         async with self._driver.session() as session:
             await session.run(
                 query,
                 id=requirement["id"],
-                text=requirement.get("text", ""),
-                category=requirement.get("category", ""),
+                text=requirement["text"],
+                category=requirement.get("category", "general"),
                 priority=requirement.get("priority", "medium"),
                 tender_id=tender_id,
             )
-
-    # ──────────────────────────────────────────────
-    # Retrieval: Query the graph for structured context
-    # ──────────────────────────────────────────────
 
     async def search(
         self,
@@ -269,7 +244,7 @@ class GraphRetriever:
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, {"query": query, "top_k": top_k})
+            cursor = await session.run(cypher, query=query, top_k=top_k)
             records = await cursor.data()
 
             for record in records:
@@ -336,7 +311,7 @@ class GraphRetriever:
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, {"query": query, "top_k": top_k})
+            cursor = await session.run(cypher, query=query, top_k=top_k)
             records = await cursor.data()
 
             for record in records:
@@ -377,16 +352,11 @@ class GraphRetriever:
         return results
 
     async def get_compliance_context(self, requirement_text: str) -> list[GraphSearchResult]:
-        """
-        Find projects and team members related to a specific requirement.
-
-        This is used by the compliance checker to find evidence
-        that the team can meet specific tender requirements.
-        """
+        """Get relevant context for compliance checking."""
         return await self.search(requirement_text, top_k=5)
 
     async def shutdown(self):
-        """Close the Neo4j driver."""
+        """Close the Neo4j driver connection."""
         if self._driver:
             await self._driver.close()
             logger.info("Neo4j connection closed")

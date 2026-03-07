@@ -127,8 +127,12 @@ class HybridRAGEngine:
         # Re-ranker
         self.reranker = Reranker()
 
-        # Generator (Ollama)
-        self.generator = Generator()
+        # Generator (Llama Server)
+        self.generator = Generator(
+            base_url=settings.llama_server_url,
+            model=settings.llama_model,
+            timeout=settings.llama_timeout
+        )
 
         self._initialized = True
         logger.info("HybridRAG Engine initialized successfully")

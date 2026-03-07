@@ -1,0 +1,47 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "llama-cpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen2.5 32B Instruct (Local)",
+      "options": {
+        "baseURL": "http://llama-opencode:8080/v1",
+        "apiKey": "sk-local"
+      },
+      "models": {
+        "qwen2.5-32b-instruct": {
+          "default": true
+        }
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      },
+      "models": {
+        "claude-sonnet-4-20250514": {
+          "default": true,
+          "name": "Claude Sonnet 4"
+        },
+        "claude-opus-4-5-20250514": {
+          "name": "Claude Opus 4"
+        }
+      }
+    },
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "gpt-4.1": {
+          "default": true,
+          "name": "GPT-4.1"
+        },
+        "gpt-4.1-mini": {
+          "name": "GPT-4.1 Mini"
+        }
+      }
+    }
+  },
+  "model": "llama-cpp/qwen2.5-32b-instruct"
+}
