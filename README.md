@@ -11,7 +11,7 @@ TenderWriter aiuta i team a creare, gestire e inviare proposte di gara professio
 Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i componenti attualmente implementati e funzionanti:
 
 ### 🔐 Authentication & Security
-- **Login Tecnico**: Utente `admin@admin.com` con password `admin` pre-configurato.
+- **Login Tecnico**: Utente `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
 - **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
 - **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
 - **Session Management**: Sistema di autenticazione basato su JWT e React Context.
@@ -40,7 +40,7 @@ Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i compo
 | **Vector Database** | Qdrant |
 | **Graph Database** | Neo4j Community |
 | **Object Storage** | MinIO |
-| **Infrastruttura AI** | Ollama |
+| **Infrastruttura AI** | llama.cpp server (Qwen2.5-Coder-7B) |
 | **Testing/Developer Tool** | Mailpit (Mock SMTP) |
 | **Proxy & Static** | Nginx |
 
@@ -183,7 +183,134 @@ Apri http://localhost:8001
 Connettiti a Redis:
 Host: redis (dal container) o localhost (dal host)
 Port: 6379
+---
+
+## 🤖 OpenCode - AI Coding Agent
+
+TenderWriter include **OpenCode**, un agente AI per coding che gira localmente con un LLM dedicato.
+
+### Architettura
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    OpenCode + Codebase + LLM                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐   │
+│  │  tw-opencode │────▶│ tw-codebase  │     │   tw-llama-server    │   │
+│  │  (agente AI) │     │ (sorgente)   │     │  (Qwen2.5-Coder 7B)│   │
+│  └──────────────┘     └──────────────┘     └──────────────────────┘   │
+│         │                     │                      │                 │
+│         │            /workspace/codebase           http://localhost:8080│
+│         │                     │                      │                 │
+│         └─────────────────────┴──────────────────────┘                 │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                     Provider Supportati                           │  │
+│  │  1. Locale: llama.cpp (Qwen2.5-Coder 7B)                      │  │
+│  │  2. Cloud: Anthropic (Claude) - richiede API key               │  │
+│  │  3. Cloud: OpenAI (GPT-4.1) - richiede API key                 │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Servizi
+
+| Servizio | Container | Descrizione |
+|----------|-----------|-------------|
+| LLM Server | tw-llama-server | Qwen2.5-Coder:7B (porta 8080) |
+| OpenCode | tw-opencode | Agente AI |
+| Codebase | tw-codebase | Codice sorgente montato |
+
+### Come Usare
+
+```bash
+# 1. Entrare nel container OpenCode
+docker compose exec opencode bash
+
+# 2. Avviare OpenCode
+opencode
+
+# 3. Il codice è disponibile in /workspace/codebase
+cd /workspace/codebase
+ls -la  # Vedrai backend/ e frontend/
+```
+
+### Cambiare Provider/Modello
+
+```bash
+# Vedere modelli disponibili (locale + cloud)
+/models
+
+# Usare modello locale (default)
+/use llama-cpp/qwen2.5-coder-7b
+
+# Usare Claude (richiede ANTHROPIC_API_KEY)
+/use anthropic/claude-sonnet-4-20250514
+
+# Usare GPT-4.1 (richiede OPENAI_API_KEY)
+/use openai/gpt-4.1
+```
+
+### Configurazione API Cloud
+
+Per usare modelli cloud, imposta le variabili d'ambiente:
+
+```bash
+# Nel docker-compose o .env
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+
+Oppure passa le variabili all'avvio:
+
+```bash
+docker compose exec -e ANTHROPIC_API_KEY=sk-ant-... opencode bash
+```
+
+### Comandi Utili
+
+```bash
+# Vedere i modelli disponibili
+/models
+
+# Cambiare modello
+/use llama-cpp/qwen2.5-coder-7b
+
+# Analizzare il codice corrente
+analyze the codebase
+
+# Chiedere aiuto
+/help
+```
+
+### Configurazione
+
+Il file `opencode.json` supporta:
+
+| Provider | Modello | Tipo |
+|----------|---------|------|
+| llama-cpp | qwen2.5-coder-7b | Locale (default) |
+| anthropic | claude-sonnet-4 | Cloud |
+| openai | gpt-4.1 | Cloud |
+
+### Risoluzione Problemi
+
+```bash
+# Verificare che il server LLM sia attivo
+curl http://localhost:8080/v1/models
+
+# Vedere i log di llama-server
+docker compose logs llama-server
+
+# Vedere i log di OpenCode
+docker compose logs opencode
+
+# Verificare che il codebase sia montato
+docker compose exec opencode ls -la /workspace/codebase
+```
 
 ---
+
 *Progetto sviluppato con ❤️ per l'efficienza nelle gare d'appalto.*
 ```

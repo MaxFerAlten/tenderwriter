@@ -48,10 +48,15 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
 
-    # --- Ollama ---
+    # --- Ollama (DEPRECATED - use llama_server instead) ---
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3:8b"
     ollama_timeout: int = 120
+
+    # --- Llama Server (for RAG/TenderWriter) ---
+    llama_server_url: str = "http://llama-tender:8080/v1"
+    llama_model: str = "qwen2.5-coder-7b"
+    llama_timeout: int = 300  # 5 minutes for slow CPU inference
 
     # --- Embeddings ---
     embedding_model: str = "BAAI/bge-base-en-v1.5"
