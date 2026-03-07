@@ -19,6 +19,8 @@ from docx import Document as DocxDocument
 from docx.shared import Pt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from minio import Minio
+from minio.error import S3Error
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +34,100 @@ from app.api.auth import get_current_user, UserResponse
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+class MinioDocumentStore:
+    """MinIO-based document storage for OnlyOffice documents.
+    
+    Replaces in-memory dict storage with persistent MinIO storage.
+    Includes TTL-based cleanup for old documents.
+    """
+    
+    def __init__(self):
+        self.bucket_name = "onlyoffice-documents"
+        self.client = Minio(
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=settings.minio_secure,
+        )
+        self._ensure_bucket()
+    
+    def _ensure_bucket(self):
+        """Create bucket if it doesn't exist."""
+        try:
+            if not self.client.bucket_exists(self.bucket_name):
+                self.client.make_bucket(self.bucket_name)
+                logger.info("Created MinIO bucket", bucket=self.bucket_name)
+        except S3Error as e:
+            logger.error("Failed to ensure bucket", error=str(e))
+    
+    async def save(self, doc_key: str, docx_bytes: bytes) -> None:
+        """Save document to MinIO."""
+        try:
+            data = io.BytesIO(docx_bytes)
+            self.client.put_object(
+                self.bucket_name,
+                doc_key,
+                data,
+                length=len(docx_bytes),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            logger.info("Document saved to MinIO", doc_key=doc_key, size=len(docx_bytes))
+        except S3Error as e:
+            logger.error("Failed to save document to MinIO", doc_key=doc_key, error=str(e))
+            raise
+    
+    async def get(self, doc_key: str) -> bytes | None:
+        """Retrieve document from MinIO."""
+        try:
+            response = self.client.get_object(self.bucket_name, doc_key)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                return None
+            logger.error("Failed to get document from MinIO", doc_key=doc_key, error=str(e))
+            raise
+    
+    async def delete(self, doc_key: str) -> bool:
+        """Delete document from MinIO."""
+        try:
+            self.client.remove_object(self.bucket_name, doc_key)
+            logger.info("Document deleted from MinIO", doc_key=doc_key)
+            return True
+        except S3Error as e:
+            logger.error("Failed to delete document from MinIO", doc_key=doc_key, error=str(e))
+            return False
+    
+    async def cleanup_old_documents(self, max_age_hours: int = 24) -> int:
+        """Remove documents older than max_age_hours.
+        
+        Returns count of deleted documents.
+        """
+        from datetime import timedelta
+        
+        try:
+            objects = self.client.list_objects(self.bucket_name)
+            deleted_count = 0
+            cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+            
+            for obj in objects:
+                if obj.last_modified and obj.last_modified.replace(tzinfo=None) < cutoff_time:
+                    self.client.remove_object(self.bucket_name, obj.object_name)
+                    deleted_count += 1
+                    logger.info("Old document deleted", doc_key=obj.object_name, last_modified=obj.last_modified)
+            
+            return deleted_count
+        except S3Error as e:
+            logger.error("Failed to cleanup old documents", error=str(e))
+            return 0
+
+
+# Singleton instance
+_document_store = MinioDocumentStore()
 
 
 # ── Schemas ──
@@ -191,9 +287,7 @@ def _text_to_tiptap_content(text: str) -> dict:
     }
 
 
-# In-memory document store (maps document keys to docx bytes)
-# In production, use MinIO, but for MVP this avoids extra complexity
-_document_store: dict[str, bytes] = {}
+# In-memory metadata mappings (for quick lookups)
 _key_to_section: dict[str, tuple[int, int]] = {}  # key -> (proposal_id, section_id)
 _key_to_library_block: dict[str, int] = {}  # key -> block_id
 
@@ -232,8 +326,8 @@ async def get_document_config(
     # Generate unique key
     doc_key = _generate_document_key(proposal_id, section_id)
     
-    # Store in memory
-    _document_store[doc_key] = docx_bytes
+    # Store in MinIO
+    await _document_store.save(doc_key, docx_bytes)
     _key_to_section[doc_key] = (proposal_id, section_id)
     
     # Build URLs
@@ -279,8 +373,8 @@ async def get_create_document_config(
     # Generate unique key
     doc_key = _generate_create_document_key()
     
-    # Store in memory
-    _document_store[doc_key] = docx_bytes
+    # Store in MinIO
+    await _document_store.save(doc_key, docx_bytes)
     
     # Build URLs
     file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
@@ -330,8 +424,8 @@ async def get_library_document_config(
     # Generate unique key
     doc_key = _generate_library_document_key(block_id)
     
-    # Store in memory
-    _document_store[doc_key] = docx_bytes
+    # Store in MinIO
+    await _document_store.save(doc_key, docx_bytes)
     _key_to_library_block[doc_key] = block_id
     
     # Build URLs
@@ -366,7 +460,7 @@ async def get_library_document_config(
 @router.get("/files/{doc_key}")
 async def serve_document(doc_key: str):
     """Serve a .docx file to OnlyOffice Document Server."""
-    docx_bytes = _document_store.get(doc_key)
+    docx_bytes = await _document_store.get(doc_key)
     if not docx_bytes:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -424,8 +518,8 @@ async def onlyoffice_callback(
                 response.raise_for_status()
                 updated_docx = response.content
             
-            # Update in-memory store
-            _document_store[payload.key] = updated_docx
+            # Update in MinIO store
+            await _document_store.save(payload.key, updated_docx)
             
             # Extract text from the updated .docx
             extracted_text = _extract_text_from_docx(updated_docx)

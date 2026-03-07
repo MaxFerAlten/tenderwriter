@@ -144,7 +144,7 @@ export default function RAGSearch() {
 
                 {history.length === 0 ? (
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
-                        Nessuna ricerca recente.
+                        No recent searches.
                     </p>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

@@ -88,6 +88,20 @@ docker compose build frontend
 docker compose up -d frontend
 ```
 
+### Backend Debug
+Il backend è ora in funzione con:
+
+✅ Validazione secret al startup
+✅ Rate limiting (3/min register, 5/min login)
+✅ Storage MinIO per OnlyOffice
+✅ Valori di default cambiati nel docker-compose
+
+Nota: Le password di default sono ora DefaultPg2024Pass, DefaultNEO4J2024Pass, DefaultMinIO2024Pass. In produzione dovresti usarne di più sicure e memorizzarle in un vault.
+
+Credenziali temporanee per test:
+
+Email: admin@admin.com
+Password: vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0
 ---
 
 ## 🗺️ Roadmap Prossimi Passi
@@ -132,5 +146,44 @@ pip install markdown-pdf
 # per convertire il file md in pdf
 python convert-md-to-pdf.py
 
+
+# NEO4J
+Tutti i nodi Tender
+MATCH (t:Tender) RETURN t LIMIT 25
+2. Nodi correlati a Tender con relazioni
+MATCH (t:Tender)-[r]->(n) 
+RETURN t.id as tender, type(r) as relazione, labels(n)[0] as tipo_nodo, n.name as nome
+3. Visualizzazione completa grafo
+MATCH (n) RETURN n
+4. Solo nodi Tender con loro requisiti
+MATCH (t:Tender)-[:HAS_REQUIREMENT]->(r:Requirement)
+RETURN t.id, t.title, r.id, r.description
+5. Statistiche nodi
+MATCH (n) 
+RETURN labels(n)[0] as Tipo, count(*) as Quantita
+ORDER BY Quantita DESC
+Nota: Il database Neo4j sembra vuoto. I nodi vengono creati quando inserisci dati nel sistema (es. tenders, proposals). Per popolare il grafo, usa la funzionalità RAG di TenderWriter.
+
+
+
+```
+Utilizzo:
+Celery Worker - esegue i task in background
+Redis - gestisce la coda dei messaggi tra backend e worker
+Quando avvii un task (Index/Generate/Export), il backend invia il messaggio a Redis → Celery Worker lo preleva ed esegue il task.
+
+
+Vai su http://localhost:7474
+Inserisci:
+Username: neo4j
+Password: DefaultNEO4J2024Pass
+
+Configurazione:
+Apri http://localhost:8001
+Connettiti a Redis:
+Host: redis (dal container) o localhost (dal host)
+Port: 6379
+
 ---
 *Progetto sviluppato con ❤️ per l'efficienza nelle gare d'appalto.*
+```

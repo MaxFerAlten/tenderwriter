@@ -10,6 +10,9 @@ import {
     LogOut,
     Activity,
     Shield,
+    Play,
+    Server,
+    Code,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import ProposalEditor from './pages/ProposalEditor';
@@ -18,6 +21,9 @@ import RAGSearch from './pages/Search';
 import SettingsPage from './pages/Settings';
 import SystemMonitor from './pages/SystemMonitor';
 import TenderPermissions from './pages/TenderPermissions';
+import TaskManager from './pages/TaskManager';
+import Components from './pages/Components';
+import Developments from './pages/Developments';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { useAuth } from './contexts/AuthContext';
@@ -27,8 +33,12 @@ const navItems = [
     { path: '/proposals', label: 'Proposals', icon: FileText },
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
+    { path: '/tasks', label: 'Task Manager', icon: Play },
+    { path: '/components', label: 'Components', icon: Server, adminOnly: true },
+    { path: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
     { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
-    { path: '/permissions', label: 'Permessi', icon: Shield, adminOnly: true },
+    { path: '/developments', label: 'Developments', icon: Code, adminOnly: true },
+    { path: '/permissions', label: 'Permissions', icon: Shield, adminOnly: true },
 ];
 
 function App() {
@@ -36,7 +46,7 @@ function App() {
     const { user, isLoading, logout } = useAuth();
 
     if (isLoading) {
-        return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>Caricamento in corso...</div>;
+        return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>Loading...</div>;
     }
 
     if (!user) {
@@ -80,10 +90,6 @@ function App() {
                 </nav>
 
                 <div className="sidebar-nav" style={{ marginTop: 'auto' }}>
-                    <NavLink to="/settings" className="nav-item">
-                        <Settings />
-                        <span>Impostazioni</span>
-                    </NavLink>
                     <button
                         className="nav-item"
                         onClick={logout}
@@ -99,7 +105,7 @@ function App() {
                         }}
                     >
                         <LogOut />
-                        <span>Esci</span>
+                        <span>Logout</span>
                     </button>
                 </div>
             </aside>
@@ -121,8 +127,11 @@ function App() {
                             <Route path="/proposals/:id" element={<ProposalEditor />} />
                             <Route path="/library" element={<ContentLibrary />} />
                             <Route path="/search" element={<RAGSearch />} />
-                            <Route path="/settings" element={<SettingsPage />} />
+                            <Route path="/tasks" element={<TaskManager />} />
+                            <Route path="/components" element={user?.role === 'admin' ? <Components /> : <Navigate to="/" />} />
+                            <Route path="/settings" element={user?.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                             <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
+                            <Route path="/developments" element={user?.role === 'admin' ? <Developments /> : <Navigate to="/" />} />
                             <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
                         </Routes>
                     </motion.div>

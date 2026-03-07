@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 
@@ -110,8 +112,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Rate limiting
+    from app.api.auth import limiter
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     # Register API routers
     from app.api import tenders, proposals, content_library, rag, auth, system, admin, onlyoffice
+    from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(system.router, prefix="/api/system", tags=["System Dashboard"])
@@ -123,6 +131,7 @@ def create_app() -> FastAPI:
         content_library.router, prefix="/api/content-blocks", tags=["Content Library"]
     )
     app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])
+    app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
 
     @app.get("/health", tags=["Health"])
     async def health_check():

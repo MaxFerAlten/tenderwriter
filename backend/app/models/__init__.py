@@ -98,6 +98,8 @@ class OTPToken(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token = Column(String(10), nullable=False, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, default=0)
+    max_attempts = Column(Integer, default=3)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

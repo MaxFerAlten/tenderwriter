@@ -92,7 +92,7 @@ export default function SystemMonitor() {
             const { logs } = await systemApi.getLogs(name, 100);
             setLogs(logs);
         } catch (e) {
-            setLogs('Errore durante il caricamento dei log.');
+            setLogs('Error loading logs.');
         }
     };
 
@@ -108,7 +108,7 @@ export default function SystemMonitor() {
                         <Activity size={28} color="#60a5fa" style={{ verticalAlign: 'middle', marginRight: 8 }} />
                         System Monitor
                     </h1>
-                    <p className="page-subtitle">Monitoring in tempo reale dell'infrastruttura Docker</p>
+                    <p className="page-subtitle">Real-time monitoring of Docker infrastructure</p>
                 </div>
                 <button
                     className={`btn btn-secondary btn-sm ${isRefreshing ? 'animate-pulse' : ''}`}
@@ -168,7 +168,7 @@ export default function SystemMonitor() {
                                 </div>
                             </div>
                         ) : (
-                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Statistiche non disponibili</p>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Stats not available</p>
                         )}
                     </motion.div>
                 ))}
@@ -191,7 +191,7 @@ export default function SystemMonitor() {
                         whiteSpace: 'pre-wrap',
                         background: '#0f172a'
                     }}>
-                        {logs || 'Nessun log disponibile.'}
+                        {logs || 'No logs available.'}
                     </pre>
                 </div>
             </div>

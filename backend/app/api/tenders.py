@@ -357,7 +357,9 @@ async def import_tender_document(
     if not minio_client.bucket_exists(bucket_name):
         minio_client.make_bucket(bucket_name)
 
-    object_name = f"tenders/{tender_id}/{file.filename}"
+    # Use username in path for better organization
+    username = current_user.email.split('@')[0] if current_user else "unknown"
+    object_name = f"tenders/{username}/{tender_id}/{file.filename}"
     
     # Read file content to upload
     content = await file.read()

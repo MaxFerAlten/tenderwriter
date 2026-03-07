@@ -41,6 +41,10 @@ export default function ProposalEditor() {
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
+    // Modal state
+    const [showAddSectionModal, setShowAddSectionModal] = useState(false);
+    const [newSectionTitle, setNewSectionTitle] = useState('');
+
     // AI state
     const [aiQuery, setAiQuery] = useState('');
     const [aiGenerating, setAiGenerating] = useState(false);
@@ -50,6 +54,28 @@ export default function ProposalEditor() {
 
     // General
     const [error, setError] = useState<string | null>(null);
+
+    // Add section handler
+    const handleAddSection = async () => {
+        if (!newSectionTitle || !proposal) return;
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`http://localhost:8000/api/proposals/${proposal.id}/sections`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ title: newSectionTitle, content: {}, order: proposal.sections.length })
+            });
+            if (res.ok) {
+                const newSection = await res.json();
+                setProposal({ ...proposal, sections: [...proposal.sections, newSection] });
+                setActiveSection(proposal.sections.length);
+                setShowAddSectionModal(false);
+                setNewSectionTitle('');
+            }
+        } catch (err) {
+            console.error('Failed to add section:', err);
+        }
+    };
 
     // Load proposals list
     useEffect(() => {
@@ -174,11 +200,33 @@ export default function ProposalEditor() {
         }
     };
 
-    const insertAiContent = () => {
-        // With OnlyOffice, AI content needs to be copied by the user
-        if (aiResult?.answer) {
-            navigator.clipboard.writeText(aiResult.answer);
+    const insertAiContent = async () => {
+        if (!aiResult?.answer || !proposal || !proposal.sections[activeSection]) return;
+        try {
+            const token = localStorage.getItem('token');
+            const section = proposal.sections[activeSection];
+            
+            // Update section content in database
+            await fetch(`http://localhost:8000/api/proposals/${proposal.id}/sections/${section.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ title: section.title, content: aiResult.answer, order: section.order })
+            });
+            
+            // Update local state
+            const updatedSections = [...proposal.sections];
+            updatedSections[activeSection] = { ...section, content: aiResult.answer as any };
+            setProposal({ ...proposal, sections: updatedSections });
+            
+            // Trigger OnlyOffice force save
+            await fetch(`/api/onlyoffice/forcesave/proposal/${proposal.id}/${section.id}`, {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            
             setAiResult(null);
+        } catch (err) {
+            console.error('Failed to insert AI content:', err);
         }
     };
 
@@ -287,6 +335,97 @@ export default function ProposalEditor() {
                                 </span>
                             </div>
                         ))}
+
+                        <button
+                            onClick={() => setShowAddSectionModal(true)}
+                            style={{
+                                width: '100%',
+                                marginTop: '0.5rem',
+                                padding: '0.5rem',
+                                background: 'var(--accent-blue)',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 'var(--radius-sm)',
+                                cursor: 'pointer',
+                                fontSize: '0.8rem'
+                            }}
+                        >
+                            + Aggiungi Sezione
+                        </button>
+
+                        {/* Add Section Modal */}
+                        {showAddSectionModal && (
+                            <div style={{
+                                position: 'fixed',
+                                inset: 0,
+                                background: 'rgba(0,0,0,0.5)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                zIndex: 50
+                            }}>
+                                <div style={{
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border-default)',
+                                    borderRadius: 'var(--radius-lg)',
+                                    padding: '1.5rem',
+                                    width: '100%',
+                                    maxWidth: '400px'
+                                }}>
+                                    <h3 style={{ color: 'var(--text-primary)', marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>
+                                        Nuova Sezione
+                                    </h3>
+                                    <input
+                                        type="text"
+                                        placeholder="Titolo della sezione"
+                                        value={newSectionTitle}
+                                        onChange={e => setNewSectionTitle(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && newSectionTitle && handleAddSection()}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.75rem',
+                                            background: 'var(--bg-input)',
+                                            border: '1px solid var(--border-default)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '0.9rem',
+                                            marginBottom: '1rem'
+                                        }}
+                                        autoFocus
+                                    />
+                                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                        <button
+                                            onClick={() => { setShowAddSectionModal(false); setNewSectionTitle(''); }}
+                                            style={{
+                                                padding: '0.5rem 1rem',
+                                                background: 'var(--bg-input)',
+                                                border: '1px solid var(--border-default)',
+                                                borderRadius: 'var(--radius-sm)',
+                                                color: 'var(--text-secondary)',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Annulla
+                                        </button>
+                                        <button
+                                            onClick={handleAddSection}
+                                            disabled={!newSectionTitle}
+                                            style={{
+                                                padding: '0.5rem 1rem',
+                                                background: newSectionTitle ? 'var(--accent-blue)' : 'var(--bg-input)',
+                                                border: 'none',
+                                                borderRadius: 'var(--radius-sm)',
+                                                color: 'white',
+                                                cursor: newSectionTitle ? 'pointer' : 'not-allowed',
+                                                opacity: newSectionTitle ? 1 : 0.5
+                                            }}
+                                        >
+                                            Aggiungi
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Compliance Summary */}
                         <div style={{ marginTop: '1.5rem', padding: '0.75rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>

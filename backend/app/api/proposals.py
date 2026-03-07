@@ -27,13 +27,13 @@ router = APIRouter()
 
 class SectionCreate(BaseModel):
     title: str
-    content: dict = {}
+    content: dict | str = {}
     order: int = 0
 
 
 class SectionUpdate(BaseModel):
     title: str | None = None
-    content: dict | None = None
+    content: dict | str | None = None
     order: int | None = None
     status: SectionStatus | None = None
     assigned_to: int | None = None
@@ -42,7 +42,7 @@ class SectionUpdate(BaseModel):
 class SectionResponse(BaseModel):
     id: int
     title: str
-    content: dict
+    content: dict | str
     order: int
     status: str
     assigned_to: int | None
@@ -325,6 +325,42 @@ async def update_proposal(
 # ── Section Routes ──
 
 
+@router.get("/{proposal_id}/sections", response_model=list[SectionResponse])
+async def list_sections(
+    proposal_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all sections for a proposal. RBAC-checked via tender."""
+    prop_result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
+    proposal = prop_result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+
+    result = await db.execute(
+        select(ProposalSection)
+        .where(ProposalSection.proposal_id == proposal_id)
+        .order_by(ProposalSection.order)
+    )
+    sections = result.scalars().all()
+
+    return [
+        SectionResponse(
+            id=s.id,
+            title=s.title,
+            content=s.content or {},
+            order=s.order or 0,
+            status=s.status.value if s.status else "todo",
+            assigned_to=s.assigned_to,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sections
+    ]
+
+
 @router.get("/{proposal_id}/sections/{section_id}", response_model=SectionResponse)
 async def get_section(
     proposal_id: int,
@@ -390,7 +426,10 @@ async def update_section(
         raise HTTPException(status_code=404, detail="Section not found")
 
     for key, value in data.model_dump(exclude_unset=True).items():
-        setattr(section, key, value)
+        if key == 'content' and isinstance(value, str):
+            setattr(section, key, value)
+        else:
+            setattr(section, key, value)
 
     await db.flush()
     await db.refresh(section)

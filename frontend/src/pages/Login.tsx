@@ -25,7 +25,7 @@ export default function Login() {
             login(response.access_token, response.user);
             navigate('/');
         } catch (err: any) {
-            setError(err.message || 'Errore durante il login');
+            setError(err.message || 'Error during login');
         } finally {
             setIsLoading(false);
         }

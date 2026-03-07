@@ -5,6 +5,18 @@ All settings are loaded from environment variables with sensible defaults.
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
+
+
+UNSAFE_DEFAULTS = [
+    "changeme_app_secret_key",
+    "changeme_pg_password",
+    "changeme_neo4j_password",
+    "changeme_minio_password",
+    "changeme_oo_jwt_secret",
+    "changeme",
+    "secret",
+]
 
 
 class Settings(BaseSettings):
@@ -13,19 +25,17 @@ class Settings(BaseSettings):
     # --- App ---
     app_name: str = "TenderWriter"
     app_version: str = "0.1.0"
-    app_debug: bool = True
-    app_secret_key: str = "changeme_app_secret_key"
+    app_debug: bool = False
+    app_secret_key: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     
     # --- Auth ---
     admin_username: str = "admin@admin.com"
-    admin_password: str = "admin"
+    admin_password: str = ""
     admin_enabled: bool = True
 
     # --- PostgreSQL ---
-    database_url: str = (
-        "postgresql+asyncpg://tenderwriter:changeme_pg_password@localhost:5432/tenderwriter"
-    )
+    database_url: str = ""
 
     # --- Qdrant ---
     qdrant_host: str = "localhost"
@@ -36,7 +46,7 @@ class Settings(BaseSettings):
     # --- Neo4j ---
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "changeme_neo4j_password"
+    neo4j_password: str = ""
 
     # --- Ollama ---
     ollama_base_url: str = "http://localhost:11434"
@@ -54,7 +64,7 @@ class Settings(BaseSettings):
     # --- MinIO ---
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "changeme_minio_password"
+    minio_secret_key: str = ""
     minio_bucket: str = "tenderwriter"
     minio_secure: bool = False
 
@@ -94,11 +104,36 @@ class Settings(BaseSettings):
 
     # --- OnlyOffice ---
     onlyoffice_url: str = "http://localhost:8443"  # URL raggiungibile dal browser
-    onlyoffice_jwt_secret: str = "changeme_oo_jwt_secret"
+    onlyoffice_jwt_secret: str = ""
     onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
     backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    @model_validator(mode='before')
+    @classmethod
+    def validate_secrets(cls, values: dict) -> dict:
+        """Validate that sensitive settings are not using unsafe defaults."""
+        sensitive_fields = {
+            'app_secret_key': values.get('app_secret_key', ''),
+            'admin_password': values.get('admin_password', ''),
+            'database_url': values.get('database_url', ''),
+            'neo4j_password': values.get('neo4j_password', ''),
+            'minio_secret_key': values.get('minio_secret_key', ''),
+            'onlyoffice_jwt_secret': values.get('onlyoffice_jwt_secret', ''),
+        }
+        
+        errors = []
+        for field_name, field_value in sensitive_fields.items():
+            if not field_value or field_value.strip() == '':
+                errors.append(f"{field_name} è obbligatorio e non può essere vuoto")
+            elif any(unsafe in field_value.lower() for unsafe in UNSAFE_DEFAULTS):
+                errors.append(f"{field_name} usa un valore non sicuro. Cambialo da '{field_value}'")
+        
+        if errors:
+            raise ValueError("; ".join(errors))
+        
+        return values
 
 
 # Singleton settings instance

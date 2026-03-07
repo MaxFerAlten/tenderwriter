@@ -117,7 +117,7 @@ async def create_content_block(
     
     if data.onlyoffice_key:
         from app.api.onlyoffice import _document_store, _extract_text_from_docx
-        docx_bytes = _document_store.get(data.onlyoffice_key)
+        docx_bytes = await _document_store.get(data.onlyoffice_key)
         if docx_bytes:
             content = _extract_text_from_docx(docx_bytes)
     

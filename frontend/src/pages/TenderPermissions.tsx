@@ -46,7 +46,7 @@ export default function TenderPermissions() {
             setTenders(tendersData);
             setUsers(usersData);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Errore nel caricamento dei dati');
+            setError(err instanceof Error ? err.message : 'Error loading data');
         } finally {
             setLoading(false);
         }
@@ -65,29 +65,29 @@ export default function TenderPermissions() {
                 user_id: Number(grantUserId),
                 permission: grantPermission,
             });
-            setSuccess('Permesso concesso con successo');
+setSuccess('Permission granted');
             setGrantTenderId(null);
             setGrantUserId('');
             setGrantPermission('viewer');
             await loadData();
             setTimeout(() => setSuccess(null), 3000);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Errore nella concessione del permesso');
+            setError(err instanceof Error ? err.message : 'Error granting permission');
         } finally {
             setGranting(false);
         }
     };
 
     const handleRevoke = async (tenderId: number, userId: number, userName: string) => {
-        if (!confirm(`Revocare l'accesso di ${userName} a questo tender?`)) return;
+if (!confirm(`Revoke ${userName}'s access to this tender?`)) return;
         try {
             setError(null);
             await adminApi.revokePermission(tenderId, userId);
-            setSuccess('Permesso revocato con successo');
+            setSuccess('Permission revoked');
             await loadData();
             setTimeout(() => setSuccess(null), 3000);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Errore nella revoca del permesso');
+            setError(err instanceof Error ? err.message : 'Error revoking permission');
         }
     };
 
@@ -187,8 +187,8 @@ export default function TenderPermissions() {
             {loading && (
                 <div className="loading-spinner" style={{ padding: '3rem 0' }}>
                     <div className="spinner" />
-                    <p style={{ color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                        Caricamento permessi...
+<p style={{ color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+                        Loading permissions...
                     </p>
                 </div>
             )}
@@ -199,7 +199,7 @@ export default function TenderPermissions() {
                     {filteredTenders.length === 0 ? (
                         <div className="empty-state" style={{ padding: '3rem 0' }}>
                             <FileText size={48} />
-                            <h3>Nessun tender trovato</h3>
+                            <h3>No tenders found</h3>
                             <p>Non ci sono tender corrispondenti alla ricerca</p>
                         </div>
                     ) : (
@@ -324,7 +324,7 @@ export default function TenderPermissions() {
                                                                 padding: '1rem 0',
                                                             }}
                                                         >
-                                                            Nessun permesso aggiuntivo. Solo il proprietario ha accesso.
+                                                            No additional permissions. Only the owner has access.
                                                         </p>
                                                     ) : (
                                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

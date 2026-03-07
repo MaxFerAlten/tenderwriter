@@ -31,10 +31,10 @@ export default function Register() {
 
         try {
             const response = await authApi.register({ name, email, password });
-            setSuccessMessage(response.message || 'Controlla la tua email per il codice OTP.');
+setSuccessMessage(response.message || 'Check your email for the OTP code.');
             setStep(2);
         } catch (err: any) {
-            setError(err.message || 'Errore durante la registrazione');
+            setError(err.message || 'Error during registration');
         } finally {
             setIsLoading(false);
         }
@@ -50,7 +50,7 @@ export default function Register() {
             login(response.access_token, response.user);
             navigate('/');
         } catch (err: any) {
-            setError(err.message || 'OTP non valido o scaduto');
+            setError(err.message || 'Invalid or expired OTP');
         } finally {
             setIsLoading(false);
         }
@@ -160,7 +160,7 @@ export default function Register() {
                             exit={{ opacity: 0, x: -20 }}
                         >
                             <div className="form-group">
-                                <label>Codice OTP (6 cifre)</label>
+                                <label>OTP Code (6 digits)</label>
                                 <div className="input-wrapper otp-wrapper">
                                     <input
                                         type="text"
@@ -172,7 +172,7 @@ export default function Register() {
                                         pattern="\d{6}"
                                     />
                                 </div>
-                                <p className="help-text">Abbiamo inviato un codice OTP a {email}. Controlla la posta (e lo spam).</p>
+                                <p className="help-text">We sent an OTP code to {email}. Check your inbox (and spam).</p>
                             </div>
 
                             <button

@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tenderwriter}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_pg_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-DefaultPg2024Pass}
       POSTGRES_DB: ${POSTGRES_DB:-tenderwriter}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -42,7 +42,7 @@ services:
     container_name: tw-neo4j
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme_neo4j_password}
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-DefaultNEO4J2024Pass}
       NEO4J_PLUGINS: '["apoc"]'
     ports:
       - "7474:7474" # Browser UI
@@ -50,7 +50,7 @@ services:
     volumes:
       - neo4j_data:/data
     healthcheck:
-      test: [ "CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-changeme_neo4j_password} 'RETURN 1'" ]
+      test: [ "CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:-DefaultNEO4J2024Pass} 'RETURN 1'" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -76,12 +76,12 @@ services:
     # --- MinIO (Object Storage) ---
   minio:
     image: minio/minio:latest
-    container_name: tw-minio
+    container_name: minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-changeme_minio_password}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-DefaultMinIO2024Pass}
     ports:
       - "9000:9000"
       - "9001:9001" # Console UI
@@ -108,6 +108,50 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Redis Insight (Redis GUI) ---
+  redis-insight:
+    image: rediscommander/redis-commander:latest
+    container_name: tw-redis-insight
+    restart: unless-stopped
+    ports:
+      - "8001:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+
+  # --- Celery Worker ---
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tw-celery-worker
+    restart: unless-stopped
+    command: celery -A app.celery worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+
+  # --- Celery Beat (Scheduler) ---
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tw-celery-beat
+    restart: unless-stopped
+    command: celery -A app.celery beat --loglevel=info
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+
   # --- Mailpit (SMTP Testing) ---
   mailpit:
     image: axllent/mailpit:latest
@@ -124,6 +168,8 @@ services:
       dockerfile: Dockerfile
     container_name: tw-backend
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,21 +178,34 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tenderwriter}:${POSTGRES_PASSWORD:-changeme_pg_password}@postgres:5432/${POSTGRES_DB:-tenderwriter}
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: 6333
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-changeme_neo4j_password}
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-changeme_minio_password}
-      REDIS_URL: redis://redis:6379/0
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme_app_secret_key}
-      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-changeme_oo_jwt_secret}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      DATABASE_URL: ${DATABASE_URL}
+      QDRANT_HOST: ${QDRANT_HOST}
+      QDRANT_PORT: ${QDRANT_PORT}
+      NEO4J_URI: ${NEO4J_URI}
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      REDIS_URL: ${REDIS_URL}
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_ENABLED: ${ADMIN_ENABLED}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_SECURE: ${MINIO_SECURE}
+      ONLYOFFICE_INTERNAL_URL: ${ONLYOFFICE_INTERNAL_URL}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_TLS: ${SMTP_TLS}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:

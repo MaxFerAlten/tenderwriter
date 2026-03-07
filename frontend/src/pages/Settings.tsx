@@ -63,9 +63,9 @@ const Settings: FC = () => {
                 connect_timeout: connectTimeout,
                 send_timeout: sendTimeout
             });
-            setNginxResult({ success: true, message: 'Nginx config aggiornata con successo!' });
+setNginxResult({ success: true, message: 'Nginx config updated successfully!' });
         } catch (err) {
-            setNginxResult({ success: false, message: 'Errore durante l\'aggiornamento Nginx.' });
+            setNginxResult({ success: false, message: 'Error updating Nginx.' });
         } finally {
             setIsSavingNginx(false);
         }

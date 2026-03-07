@@ -65,9 +65,9 @@ export default function OnlyOfficeEditor({
         script.async = true;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         script.onload = () => setScriptLoaded(true);
-        script.onerror = () => {
+script.onerror = () => {
             setError(
-                'Impossibile caricare OnlyOffice. Verificare che il server sia attivo su ' +
+                'Cannot load OnlyOffice. Verify the server is running at ' +
                 onlyofficeApiUrl
             );
             setLoading(false);
@@ -103,7 +103,7 @@ export default function OnlyOfficeEditor({
             if (!response.ok) {
                 const err = await response
                     .json()
-                    .catch(() => ({ detail: 'Errore sconosciuto' }));
+                    .catch(() => ({ detail: 'Unknown error' }));
 
                 let errorMsg = err.detail;
                 if (Array.isArray(err.detail)) {
@@ -156,7 +156,7 @@ export default function OnlyOfficeEditor({
                             const detail = typeof event === 'object'
                                 ? JSON.stringify(event)
                                 : String(event);
-                            setError(`Errore OnlyOffice: ${detail}`);
+                            setError(`OnlyOffice Error: ${detail}`);
                             setLoading(false);
                         },
                     },
@@ -166,7 +166,7 @@ export default function OnlyOfficeEditor({
             setError(
                 err instanceof Error
                     ? err.message
-                    : 'Errore nel caricamento del documento'
+                    : 'Error loading document'
             );
             setLoading(false);
         }
@@ -226,7 +226,7 @@ export default function OnlyOfficeEditor({
                             fontSize: '0.875rem',
                         }}
                     >
-                        Caricamento editor per "{title}"...
+                        Loading editor for "{title}"...
                     </p>
                 </div>
             )}
