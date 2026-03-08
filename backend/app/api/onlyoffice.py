@@ -31,6 +31,7 @@ from app.db.database import get_db
 from app.db.redis import redis_client
 from app.models import Proposal, ProposalSection, ContentBlock
 from app.api.auth import get_current_user, UserResponse
+from app.utils.naming import sanitize_name, get_structured_minio_path
 
 logger = structlog.get_logger()
 
@@ -45,14 +46,13 @@ class MinioDocumentStore:
     """
     
     def __init__(self):
-        self.bucket_name = "onlyoffice-documents"
+        self.bucket_name = settings.minio_bucket
         self.client = Minio(
             settings.minio_endpoint,
             access_key=settings.minio_access_key,
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure,
         )
-        self._ensure_bucket()
     
     def _ensure_bucket(self):
         """Create bucket if it doesn't exist."""
@@ -201,7 +201,7 @@ def _build_config_dict(
 
 
 def _get_minio_object_name(doc_type: str, entity_id: int | str) -> str:
-    """Helper to generate a stable MinIO object name for an entity."""
+    """Legacy helper. Structured paths preferred."""
     return f"{doc_type}/{entity_id}.docx"
 
 
@@ -337,16 +337,20 @@ async def get_document_config(
     Generate a document config for OnlyOffice editor.
     Creates a .docx from the section content and returns config to initialize the editor.
     """
-    # Fetch the section
+    # Fetch the section with proposal
     result = await db.execute(
-        select(ProposalSection).where(
+        select(ProposalSection)
+        .where(
             ProposalSection.id == section_id,
             ProposalSection.proposal_id == proposal_id,
         )
+        .options(selectinload(ProposalSection.proposal))
     )
     section = result.scalar_one_or_none()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
+    
+    proposal = section.proposal
 
     # Extract text from section content
     text = _section_content_to_text(section.content)
@@ -357,8 +361,13 @@ async def get_document_config(
     # Generate unique key including version info
     doc_key = _generate_document_key(proposal_id, section_id, section.updated_at or section.created_at)
     
-    # Store in MinIO using a STABLE path
-    object_name = _get_minio_object_name("section", section_id)
+    # Store in MinIO using a STABLE STRUCTURED path
+    object_name = get_structured_minio_path(
+        proposal_title=proposal.title,
+        proposal_id=proposal.id,
+        section_title=section.title,
+        section_id=section.id
+    )
     await _document_store.save(object_name, docx_bytes)
     
     # Store metadata in Redis

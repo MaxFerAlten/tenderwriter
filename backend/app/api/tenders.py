@@ -21,6 +21,7 @@ from app.config import settings
 from app.db.database import get_db
 from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus, TenderPermission
 from app.api.auth import get_current_user, UserResponse
+from app.utils.naming import get_structured_minio_path, get_tender_upload_path
 
 router = APIRouter()
 
@@ -333,9 +334,23 @@ async def import_tender_document(
     if not minio_client.bucket_exists(bucket_name):
         minio_client.make_bucket(bucket_name)
 
-    # Use username in path for better organization
-    username = current_user.email.split('@')[0] if current_user else "unknown"
-    object_name = f"tenders/{username}/{tender_id}/{file.filename}"
+    # Determine structured path
+    if tender.proposals:
+        # Use first proposal for folder naming if available
+        proposal = tender.proposals[0]
+        object_name = get_structured_minio_path(
+            proposal_title=proposal.title,
+            proposal_id=proposal.id,
+            is_upload=True,
+            filename=file.filename
+        )
+    else:
+        # Fallback to tender-based path if no proposal exists yet
+        object_name = get_tender_upload_path(
+            tender_title=tender.title,
+            tender_id=tender.id,
+            filename=file.filename
+        )
     
     # Read file content to upload
     content = await file.read()
