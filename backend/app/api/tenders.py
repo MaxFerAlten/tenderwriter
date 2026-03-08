@@ -334,11 +334,15 @@ async def import_tender_document(
     if not minio_client.bucket_exists(bucket_name):
         minio_client.make_bucket(bucket_name)
 
+    # Determine user prefix for folder structure
+    user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
+
     # Determine structured path
     if tender.proposals:
         # Use first proposal for folder naming if available
         proposal = tender.proposals[0]
         object_name = get_structured_minio_path(
+            user_prefix=user_prefix,
             proposal_title=proposal.title,
             proposal_id=proposal.id,
             is_upload=True,
@@ -347,6 +351,7 @@ async def import_tender_document(
     else:
         # Fallback to tender-based path if no proposal exists yet
         object_name = get_tender_upload_path(
+            user_prefix=user_prefix,
             tender_title=tender.title,
             tender_id=tender.id,
             filename=file.filename

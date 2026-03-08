@@ -358,11 +358,15 @@ async def get_document_config(
     # Create .docx
     docx_bytes = _create_docx_from_text(text, title=section.title)
     
+    # Determine user prefix for folder structure
+    user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
+
     # Generate unique key including version info
     doc_key = _generate_document_key(proposal_id, section_id, section.updated_at or section.created_at)
     
     # Store in MinIO using a STABLE STRUCTURED path
     object_name = get_structured_minio_path(
+        user_prefix=user_prefix,
         proposal_title=proposal.title,
         proposal_id=proposal.id,
         section_title=section.title,
