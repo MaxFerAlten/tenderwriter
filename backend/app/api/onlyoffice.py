@@ -28,8 +28,10 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db.database import get_db
+from app.db.redis import redis_client
 from app.models import Proposal, ProposalSection, ContentBlock
 from app.api.auth import get_current_user, UserResponse
+from app.utils.naming import sanitize_name, get_structured_minio_path
 
 logger = structlog.get_logger()
 
@@ -44,14 +46,13 @@ class MinioDocumentStore:
     """
     
     def __init__(self):
-        self.bucket_name = "onlyoffice-documents"
+        self.bucket_name = settings.minio_bucket
         self.client = Minio(
             settings.minio_endpoint,
             access_key=settings.minio_access_key,
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure,
         )
-        self._ensure_bucket()
     
     def _ensure_bucket(self):
         """Create bucket if it doesn't exist."""
@@ -199,24 +200,33 @@ def _build_config_dict(
     }
 
 
-def _generate_document_key(proposal_id: int, section_id: int) -> str:
-    """Generate a unique document key for OnlyOffice.
+def _get_minio_object_name(doc_type: str, entity_id: int | str) -> str:
+    """Legacy helper. Structured paths preferred."""
+    return f"{doc_type}/{entity_id}.docx"
+
+
+def _generate_document_key(proposal_id: int, section_id: int, updated_at: datetime | None) -> str:
+    """Generate a dynamic document key for OnlyOffice based on version.
     
-    OnlyOffice caches documents by key. We include a timestamp
-    so that each editing session gets a fresh key.
+    OnlyOffice requires a new key when the document is changed.
+    We use the updated_at timestamp as a version identifier.
     """
-    raw = f"p{proposal_id}_s{section_id}_{int(time.time())}"
+    ts = int(updated_at.timestamp()) if updated_at else 0
+    raw = f"p{proposal_id}_s{section_id}_{ts}"
     return hashlib.md5(raw.encode()).hexdigest()[:20]
 
 
-def _generate_library_document_key(block_id: int) -> str:
-    """Generate a unique document key for a library block."""
-    raw = f"lib_{block_id}_{int(time.time())}"
+def _generate_library_document_key(block_id: int, updated_at: datetime | None) -> str:
+    """Generate a dynamic document key for a library block."""
+    ts = int(updated_at.timestamp()) if updated_at else 0
+    raw = f"lib_{block_id}_{ts}"
     return hashlib.md5(raw.encode()).hexdigest()[:20]
 
 
 def _generate_create_document_key() -> str:
-    """Generate a unique document key for a new document creation."""
+    """Generate a unique document key for a new document creation.
+    We keep this one unique as it's for a temporary 'new' doc.
+    """
     raw = f"create_{int(time.time())}"
     return hashlib.md5(raw.encode()).hexdigest()[:20]
 
@@ -287,9 +297,30 @@ def _text_to_tiptap_content(text: str) -> dict:
     }
 
 
-# In-memory metadata mappings (for quick lookups)
-_key_to_section: dict[str, tuple[int, int]] = {}  # key -> (proposal_id, section_id)
-_key_to_library_block: dict[str, int] = {}  # key -> block_id
+# Redis-backed metadata persistence
+# We store keys in Redis to survive worker restarts
+import json
+
+async def save_session_metadata(key: str, metadata: dict, ttl: int = 86400):
+    """Store session metadata in Redis with a TTL (default 24h)."""
+    await redis_client.setex(f"oo_session:meta:{key}", ttl, json.dumps(metadata))
+    
+    # Also track the "last active key" for specific entities to support force-save lookup
+    if "section_id" in metadata:
+        entity_id = f"section:{metadata['proposal_id']}:{metadata['section_id']}"
+        await redis_client.setex(f"oo_session:active:{entity_id}", ttl, key)
+    elif "block_id" in metadata:
+        entity_id = f"block:{metadata['block_id']}"
+        await redis_client.setex(f"oo_session:active:{entity_id}", ttl, key)
+
+async def get_session_metadata(key: str) -> dict | None:
+    """Retrieve session metadata from Redis."""
+    data = await redis_client.get(f"oo_session:meta:{key}")
+    return json.loads(data) if data else None
+
+async def get_active_key(entity_type: str, entity_id: str) -> str | None:
+    """Retrieve the active session key for an entity."""
+    return await redis_client.get(f"oo_session:active:{entity_type}:{entity_id}")
 
 
 # ── Routes ──
@@ -306,16 +337,20 @@ async def get_document_config(
     Generate a document config for OnlyOffice editor.
     Creates a .docx from the section content and returns config to initialize the editor.
     """
-    # Fetch the section
+    # Fetch the section with proposal
     result = await db.execute(
-        select(ProposalSection).where(
+        select(ProposalSection)
+        .where(
             ProposalSection.id == section_id,
             ProposalSection.proposal_id == proposal_id,
         )
+        .options(selectinload(ProposalSection.proposal))
     )
     section = result.scalar_one_or_none()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
+    
+    proposal = section.proposal
 
     # Extract text from section content
     text = _section_content_to_text(section.content)
@@ -323,12 +358,29 @@ async def get_document_config(
     # Create .docx
     docx_bytes = _create_docx_from_text(text, title=section.title)
     
-    # Generate unique key
-    doc_key = _generate_document_key(proposal_id, section_id)
+    # Determine user prefix for folder structure
+    user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
+
+    # Generate unique key including version info
+    doc_key = _generate_document_key(proposal_id, section_id, section.updated_at or section.created_at)
     
-    # Store in MinIO
-    await _document_store.save(doc_key, docx_bytes)
-    _key_to_section[doc_key] = (proposal_id, section_id)
+    # Store in MinIO using a STABLE STRUCTURED path
+    object_name = get_structured_minio_path(
+        user_prefix=user_prefix,
+        proposal_title=proposal.title,
+        proposal_id=proposal.id,
+        section_title=section.title,
+        section_id=section.id
+    )
+    await _document_store.save(object_name, docx_bytes)
+    
+    # Store metadata in Redis
+    await save_session_metadata(doc_key, {
+        "type": "section",
+        "proposal_id": proposal_id,
+        "section_id": section_id,
+        "object_name": object_name
+    })
     
     # Build URLs
     file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
@@ -380,6 +432,12 @@ async def get_create_document_config(
     file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
     callback_url = f"{settings.backend_public_url}/api/onlyoffice/callback"
     
+    # Store metadata in Redis
+    await save_session_metadata(doc_key, {
+        "type": "create",
+        "object_name": doc_key  # For 'create', the doc_key itself is unique enough
+    })
+    
     config = _build_config_dict(
         doc_key=doc_key,
         title="Nuovo Documento.docx",
@@ -421,12 +479,19 @@ async def get_library_document_config(
     # Create .docx
     docx_bytes = _create_docx_from_text(text, title=block.title)
     
-    # Generate unique key
-    doc_key = _generate_library_document_key(block_id)
+    # Generate unique key including version info
+    doc_key = _generate_library_document_key(block_id, block.updated_at or block.created_at)
     
-    # Store in MinIO
-    await _document_store.save(doc_key, docx_bytes)
-    _key_to_library_block[doc_key] = block_id
+    # Store in MinIO using a STABLE path
+    object_name = _get_minio_object_name("block", block_id)
+    await _document_store.save(object_name, docx_bytes)
+    
+    # Store metadata in Redis
+    await save_session_metadata(doc_key, {
+        "type": "library_block",
+        "block_id": block_id,
+        "object_name": object_name
+    })
     
     # Build URLs
     file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
@@ -460,8 +525,16 @@ async def get_library_document_config(
 @router.get("/files/{doc_key}")
 async def serve_document(doc_key: str):
     """Serve a .docx file to OnlyOffice Document Server."""
-    docx_bytes = await _document_store.get(doc_key)
+    # Find metadata to get the actual MinIO object name
+    metadata = await get_session_metadata(doc_key)
+    object_name = doc_key  # Fallback
+    
+    if metadata and "object_name" in metadata:
+        object_name = metadata["object_name"]
+    
+    docx_bytes = await _document_store.get(object_name)
     if not docx_bytes:
+        logger.warning("Document not found in MinIO", object_name=object_name, key=doc_key)
         raise HTTPException(status_code=404, detail="Document not found")
     
     return StreamingResponse(
@@ -504,22 +577,38 @@ async def onlyoffice_callback(
     
     # Status 2 = ready to save, 6 = force save
     if payload.status in (2, 6) and payload.url:
-        is_library_block = payload.key in _key_to_library_block
-        is_section = payload.key in _key_to_section
-
-        if not is_library_block and not is_section:
-            logger.warning("Unknown document key in callback", key=payload.key)
+        metadata = await get_session_metadata(payload.key)
+        if not metadata:
+            logger.warning("Unknown document key in callback (Redis lookup failed)", key=payload.key)
             return {"error": 0}
+            
+        is_library_block = metadata.get("type") == "library_block"
+        is_section = metadata.get("type") == "section"
         
         try:
+            download_url = payload.url
+            # OnlyOffice might send a URL with 'localhost:8443' if accessed via the host.
+            # The backend container must use 'onlyoffice' (port 80) to reach it.
+            if "localhost:8443" in download_url:
+                download_url = download_url.replace("localhost:8443", "onlyoffice")
+            elif "localhost" in download_url:
+                download_url = download_url.replace("localhost", "onlyoffice")
+            elif "127.0.0.1:8443" in download_url:
+                download_url = download_url.replace("127.0.0.1:8443", "onlyoffice")
+            elif "127.0.0.1" in download_url:
+                download_url = download_url.replace("127.0.0.1", "onlyoffice")
+            
+            logger.info("Downloading updated document from OnlyOffice", url=download_url)
+            
             # Download the updated document from OnlyOffice
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(payload.url)
+                response = await client.get(download_url)
                 response.raise_for_status()
                 updated_docx = response.content
             
-            # Update in MinIO store
-            await _document_store.save(payload.key, updated_docx)
+            # Update in MinIO store using stable object name
+            object_name = metadata.get("object_name", payload.key)
+            await _document_store.save(object_name, updated_docx)
             
             # Extract text from the updated .docx
             extracted_text = _extract_text_from_docx(updated_docx)
@@ -531,7 +620,8 @@ async def onlyoffice_callback(
             )
             
             if is_section:
-                proposal_id, section_id = _key_to_section[payload.key]
+                proposal_id = metadata["proposal_id"]
+                section_id = metadata["section_id"]
                 # Update section content in database
                 result = await db.execute(
                     select(ProposalSection).where(
@@ -569,7 +659,7 @@ async def onlyoffice_callback(
                         logger.error("Failed to index section in RAG", error=str(e), section_id=section_id)
             
             elif is_library_block:
-                block_id = _key_to_library_block[payload.key]
+                block_id = metadata["block_id"]
                 # Update library block content in database
                 result = await db.execute(select(ContentBlock).where(ContentBlock.id == block_id))
                 block = result.scalar_one_or_none()
@@ -620,11 +710,8 @@ async def force_save_library(
     """
     Trigger a force save in OnlyOffice for a library block.
     """
-    # Find the active key for this block
-    active_key = None
-    for key, bid in _key_to_library_block.items():
-        if bid == block_id:
-            active_key = key
+    # Find the active key for this block in Redis
+    active_key = await get_active_key("block", str(block_id))
     
     if not active_key:
         raise HTTPException(status_code=404, detail="No active editing session found")
@@ -658,11 +745,8 @@ async def force_save(
     Trigger a force save in OnlyOffice.
     This calls the OnlyOffice Document Server command service to force saving.
     """
-    # Find the active key for this section
-    active_key = None
-    for key, (pid, sid) in _key_to_section.items():
-        if pid == proposal_id and sid == section_id:
-            active_key = key
+    # Find the active key for this section in Redis
+    active_key = await get_active_key("section", f"{proposal_id}:{section_id}")
     
     if not active_key:
         raise HTTPException(status_code=404, detail="No active editing session found")

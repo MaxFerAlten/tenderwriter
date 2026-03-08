@@ -31,7 +31,7 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload, onCreateProposal, onSubmit }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onSubmit: (id: number) => Promise<void> }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void> }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
@@ -104,7 +104,13 @@ function TenderCard({ tender, index, onUpload, onCreateProposal, onSubmit }: { t
                         <button
                             className="btn btn-primary btn-sm"
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', gap: '0.25rem' }}
-                            onClick={() => onCreateProposal(tender.id)}
+                            onClick={() => {
+                                if (tender.proposal_id) {
+                                    onEditProposal(tender.proposal_id);
+                                } else {
+                                    onCreateProposal(tender.id);
+                                }
+                            }}
                         >
                             <FileEdit size={12} />
                             Edit Proposal
@@ -231,6 +237,10 @@ export default function Dashboard() {
             setError(err instanceof Error ? err.message : 'Failed to upload document');
             throw err;
         }
+    };
+
+    const handleEditProposal = (proposalId: number) => {
+        navigate('/proposals', { state: { proposalId } });
     };
 
     const handleSubmitTender = async (id: number) => {
@@ -362,7 +372,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onSubmit={handleSubmitTender} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} />
                                     ))
                                 )}
                             </div>

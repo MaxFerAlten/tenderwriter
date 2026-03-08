@@ -21,6 +21,7 @@ from app.config import settings
 from app.db.database import get_db
 from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus, TenderPermission
 from app.api.auth import get_current_user, UserResponse
+from app.utils.naming import get_structured_minio_path, get_tender_upload_path
 
 router = APIRouter()
 
@@ -71,6 +72,7 @@ class TenderResponse(BaseModel):
     budget_estimate: float | None
     created_at: datetime | None
     requirement_count: int = 0
+    proposal_id: int | None = None
     created_by: int | None = None
     created_by_name: str | None = None
 
@@ -102,6 +104,7 @@ async def check_tender_access(
         .options(
             selectinload(Tender.requirements),
             selectinload(Tender.created_by_user),
+            selectinload(Tender.proposals),
         )
     )
     tender = result.scalar_one_or_none()
@@ -142,6 +145,10 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
     if 'requirements' not in insp.unloaded and tender.requirements:
         req_count = len(tender.requirements)
 
+    prop_id = None
+    if 'proposals' not in insp.unloaded and tender.proposals and len(tender.proposals) > 0:
+        prop_id = tender.proposals[0].id
+
     return TenderResponse(
         id=tender.id,
         title=tender.title,
@@ -154,6 +161,7 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         budget_estimate=tender.budget_estimate,
         created_at=tender.created_at,
         requirement_count=req_count,
+        proposal_id=prop_id,
         created_by=tender.created_by,
         created_by_name=creator_name,
     )
@@ -173,7 +181,10 @@ async def list_tenders(
     db: AsyncSession = Depends(get_db),
 ):
     """List tenders with filtering, search, and pagination. RBAC-filtered."""
-    query = select(Tender).options(selectinload(Tender.created_by_user))
+    query = select(Tender).options(
+        selectinload(Tender.created_by_user),
+        selectinload(Tender.proposals),
+    )
 
     # RBAC filter: non-admin sees only own tenders + tenders with explicit permission
     if current_user.role != "admin":
@@ -231,19 +242,7 @@ async def create_tender(
     await db.flush()
     await db.refresh(tender)
 
-    return TenderResponse(
-        id=tender.id,
-        title=tender.title,
-        client=tender.client,
-        description=tender.description,
-        deadline=tender.deadline,
-        status=tender.status.value,
-        category=tender.category,
-        tags=tender.tags or [],
-        budget_estimate=tender.budget_estimate,
-        created_at=tender.created_at,
-        created_by=tender.created_by,
-    )
+    return _tender_to_response(tender)
 
 
 @router.get("/{tender_id}", response_model=TenderDetailResponse)
@@ -255,19 +254,9 @@ async def get_tender(
     """Get a tender by ID with its requirements. RBAC-checked."""
     tender = await check_tender_access(tender_id, current_user, db)
 
+    response = _tender_to_response(tender)
     return TenderDetailResponse(
-        id=tender.id,
-        title=tender.title,
-        client=tender.client,
-        description=tender.description,
-        deadline=tender.deadline,
-        status=tender.status.value,
-        category=tender.category,
-        tags=tender.tags or [],
-        budget_estimate=tender.budget_estimate,
-        created_at=tender.created_at,
-        created_by=tender.created_by,
-        requirement_count=len(tender.requirements),
+        **response.model_dump(),
         requirements=[
             RequirementResponse(
                 id=r.id,
@@ -298,19 +287,7 @@ async def update_tender(
     await db.flush()
     await db.refresh(tender)
 
-    return TenderResponse(
-        id=tender.id,
-        title=tender.title,
-        client=tender.client,
-        description=tender.description,
-        deadline=tender.deadline,
-        status=tender.status.value if tender.status else "draft",
-        category=tender.category,
-        tags=tender.tags or [],
-        budget_estimate=tender.budget_estimate,
-        created_at=tender.created_at,
-        created_by=tender.created_by,
-    )
+    return _tender_to_response(tender)
 
 
 @router.delete("/{tender_id}", status_code=204)
@@ -357,9 +334,28 @@ async def import_tender_document(
     if not minio_client.bucket_exists(bucket_name):
         minio_client.make_bucket(bucket_name)
 
-    # Use username in path for better organization
-    username = current_user.email.split('@')[0] if current_user else "unknown"
-    object_name = f"tenders/{username}/{tender_id}/{file.filename}"
+    # Determine user prefix for folder structure
+    user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
+
+    # Determine structured path
+    if tender.proposals:
+        # Use first proposal for folder naming if available
+        proposal = tender.proposals[0]
+        object_name = get_structured_minio_path(
+            user_prefix=user_prefix,
+            proposal_title=proposal.title,
+            proposal_id=proposal.id,
+            is_upload=True,
+            filename=file.filename
+        )
+    else:
+        # Fallback to tender-based path if no proposal exists yet
+        object_name = get_tender_upload_path(
+            user_prefix=user_prefix,
+            tender_title=tender.title,
+            tender_id=tender.id,
+            filename=file.filename
+        )
     
     # Read file content to upload
     content = await file.read()

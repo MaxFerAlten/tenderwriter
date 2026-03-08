@@ -181,6 +181,7 @@ export interface Tender {
     category: string | null;
     tags: string[];
     budget_estimate: number | null;
+    proposal_id?: number | null;
     created_at: string;
     created_by: number | null;
     created_by_name: string | null;
