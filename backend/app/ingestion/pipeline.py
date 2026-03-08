@@ -70,17 +70,22 @@ class IngestionPipeline:
 
         # Step 3: Chunk the text
         from app.rag.chunker import ChunkMetadata
+        from fastapi.concurrency import run_in_threadpool
         chunk_meta = ChunkMetadata(
             document_id=document_id,
             source_file=file_path,
             doc_type=doc_type,
         )
-        chunks = self.rag_engine.chunk_and_embed(full_text, chunk_meta)
+        chunks = await run_in_threadpool(
+            self.rag_engine.chunk_and_embed, full_text, chunk_meta
+        )
 
         # Step 4: Index chunks (dense + sparse)
         point_ids = []
         if chunks:
-            point_ids = self.rag_engine.index_chunks(chunks)
+            point_ids = await run_in_threadpool(
+                self.rag_engine.index_chunks, chunks
+            )
 
         # Step 5: Extract entities and build knowledge graph
         entity_count = 0
@@ -332,13 +337,18 @@ Return as JSON:
         metadata["doc_type"] = doc_type
 
         from app.rag.chunker import ChunkMetadata
+        from fastapi.concurrency import run_in_threadpool
         chunk_meta = ChunkMetadata(
             document_id=document_id,
             doc_type=doc_type,
         )
 
-        chunks = self.rag_engine.chunk_and_embed(text, chunk_meta)
-        point_ids = self.rag_engine.index_chunks(chunks) if chunks else []
+        chunks = await run_in_threadpool(
+            self.rag_engine.chunk_and_embed, text, chunk_meta
+        )
+        point_ids = await run_in_threadpool(
+            self.rag_engine.index_chunks, chunks
+        ) if chunks else []
 
         return {
             "status": "completed",

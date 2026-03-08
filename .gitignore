@@ -68,3 +68,6 @@ out/
 output/
 tmp/
 temp/
+
+# --- Models ---
+*.gguf

@@ -65,11 +65,13 @@ async def lifespan(app: FastAPI):
                 await session.commit()
                 logger.info(f"Admin user '{settings.admin_username}' created successfully")
 
+        import asyncio
         # Initialize RAG engine components
         from app.rag.engine import HybridRAGEngine
         app.state.rag_engine = HybridRAGEngine()
-        await app.state.rag_engine.initialize()
-        logger.info("HybridRAG engine initialized")
+        # Initialize RAG in background to avoid blocking startup
+        asyncio.create_task(app.state.rag_engine.initialize())
+        logger.info("HybridRAG engine initialization started in background")
 
     except Exception as e:
         import traceback
