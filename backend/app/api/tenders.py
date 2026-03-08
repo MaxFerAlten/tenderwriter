@@ -338,24 +338,12 @@ async def import_tender_document(
     user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
 
     # Determine structured path
-    if tender.proposals:
-        # Use first proposal for folder naming if available
-        proposal = tender.proposals[0]
-        object_name = get_structured_minio_path(
-            user_prefix=user_prefix,
-            proposal_title=proposal.title,
-            proposal_id=proposal.id,
-            is_upload=True,
-            filename=file.filename
-        )
-    else:
-        # Fallback to tender-based path if no proposal exists yet
-        object_name = get_tender_upload_path(
-            user_prefix=user_prefix,
-            tender_title=tender.title,
-            tender_id=tender.id,
-            filename=file.filename
-        )
+    object_name = get_tender_upload_path(
+        user_prefix=user_prefix,
+        tender_title=tender.title,
+        tender_id=tender.id,
+        filename=file.filename
+    )
     
     # Read file content to upload
     content = await file.read()
