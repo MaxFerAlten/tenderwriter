@@ -337,20 +337,23 @@ async def get_document_config(
     Generate a document config for OnlyOffice editor.
     Creates a .docx from the section content and returns config to initialize the editor.
     """
-    # Fetch the section with proposal
+    # Fetch the section with proposal and tender
     result = await db.execute(
         select(ProposalSection)
         .where(
             ProposalSection.id == section_id,
             ProposalSection.proposal_id == proposal_id,
         )
-        .options(selectinload(ProposalSection.proposal))
+        .options(
+            selectinload(ProposalSection.proposal).selectinload(Proposal.tender)
+        )
     )
     section = result.scalar_one_or_none()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
     
     proposal = section.proposal
+    tender = proposal.tender
 
     # Extract text from section content
     text = _section_content_to_text(section.content)
@@ -367,8 +370,8 @@ async def get_document_config(
     # Store in MinIO using a STABLE STRUCTURED path
     object_name = get_structured_minio_path(
         user_prefix=user_prefix,
-        proposal_title=proposal.title,
-        proposal_id=proposal.id,
+        tender_title=tender.title,
+        tender_id=tender.id,
         section_title=section.title,
         section_id=section.id
     )
