@@ -2,6 +2,11 @@
 repomix-output.md
 repomix-output.pdf
 repomix-output.xml
+repomix-output.xml.md
+repomix-output.xml.pdf
+tenderwriter_app_summary.pdf
+tenderwriter_architettura_completa.drawio
+tenderwriter_presentazione_manageriale_tecnica.pptx
 
 # --- Virtual environments ---
 venv/
