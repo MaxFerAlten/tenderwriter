@@ -156,6 +156,31 @@ export const adminApi = {
         request(`/admin/tenders/${tenderId}/permissions/${userId}`, { method: 'DELETE' }),
 };
 
+// ── Gateway Admin ──
+
+export interface GatewayTarget {
+    id: number;
+    route_key: string;
+    target_kind: string;
+    provider: string;
+    base_url: string;
+    model_name?: string | null;
+    enabled: boolean;
+    priority: number;
+    timeout_ms: number;
+    use_anonymizer: boolean;
+    metadata_json?: Record<string, unknown>;
+}
+
+export const gatewayApi = {
+    listTargets: () => request<GatewayTarget[]>('/gateway/targets'),
+    createTarget: (data: Omit<GatewayTarget, 'id'>) =>
+        request<GatewayTarget>('/gateway/targets', { method: 'POST', body: data }),
+    updateTarget: (id: number, data: Partial<Omit<GatewayTarget, 'id'>>) =>
+        request<GatewayTarget>(`/gateway/targets/${id}`, { method: 'PUT', body: data }),
+    deleteTarget: (id: number) => request(`/gateway/targets/${id}`, { method: 'DELETE' }),
+};
+
 // ── Types ──
 
 export interface User {

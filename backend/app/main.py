@@ -121,11 +121,13 @@ def create_app() -> FastAPI:
 
     # Register API routers
     from app.api import tenders, proposals, content_library, rag, auth, system, admin, onlyoffice
+    from app.api import gateway_admin
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(system.router, prefix="/api/system", tags=["System Dashboard"])
     app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    app.include_router(gateway_admin.router, prefix="/api/gateway", tags=["Gateway"])
     app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])

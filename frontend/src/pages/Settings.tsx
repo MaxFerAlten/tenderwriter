@@ -10,8 +10,12 @@ import {
     Server,
     Shield,
     Clock,
+    Plus,
+    Trash2,
+    ToggleRight,
+    ToggleLeft,
 } from 'lucide-react';
-import { ragApi, systemApi } from '../api/client';
+import { ragApi, systemApi, gatewayApi, GatewayTarget } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
@@ -37,6 +41,22 @@ const Settings: FC = () => {
     const [isSavingNginx, setIsSavingNginx] = useState(false);
     const [nginxResult, setNginxResult] = useState<{ success: boolean, message: string } | null>(null);
 
+    // Gateway targets (admin)
+    const [gatewayTargets, setGatewayTargets] = useState<GatewayTarget[]>([]);
+    const [gwLoading, setGwLoading] = useState(false);
+    const [gwError, setGwError] = useState<string | null>(null);
+    const [gwForm, setGwForm] = useState<Partial<Omit<GatewayTarget, 'id'>>>({
+        route_key: 'tender',
+        target_kind: 'docker',
+        provider: 'llama',
+        base_url: '',
+        model_name: '',
+        priority: 1,
+        timeout_ms: 30000,
+        enabled: true,
+        use_anonymizer: false,
+    });
+
     const checkHealth = async () => {
         try {
             setLoadingHealth(true);
@@ -52,7 +72,68 @@ const Settings: FC = () => {
 
     useEffect(() => {
         checkHealth();
-    }, []);
+        if (user?.role === 'admin') {
+            loadGatewayTargets();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.role]);
+
+    const loadGatewayTargets = async () => {
+        try {
+            setGwLoading(true);
+            setGwError(null);
+            const items = await gatewayApi.listTargets();
+            setGatewayTargets(items.sort((a, b) => a.priority - b.priority));
+        } catch (err) {
+            setGwError('Impossibile caricare le configurazioni del gateway.');
+        } finally {
+            setGwLoading(false);
+        }
+    };
+
+    const handleAddTarget = async () => {
+        if (!gwForm.base_url) {
+            setGwError('Base URL obbligatoria');
+            return;
+        }
+        try {
+            setGwError(null);
+            const created = await gatewayApi.createTarget({
+                route_key: gwForm.route_key || 'tender',
+                target_kind: gwForm.target_kind || 'docker',
+                provider: gwForm.provider || 'llama',
+                base_url: gwForm.base_url,
+                model_name: gwForm.model_name || '',
+                enabled: gwForm.enabled ?? true,
+                priority: gwForm.priority ?? 1,
+                timeout_ms: gwForm.timeout_ms ?? 30000,
+                use_anonymizer: gwForm.use_anonymizer ?? false,
+                metadata_json: {},
+            } as any);
+            setGatewayTargets((prev) => [...prev, created].sort((a, b) => a.priority - b.priority));
+            setGwForm((f) => ({ ...f, base_url: '' }));
+        } catch (err) {
+            setGwError('Errore nel salvataggio del target.');
+        }
+    };
+
+    const toggleEnable = async (t: GatewayTarget) => {
+        try {
+            const updated = await gatewayApi.updateTarget(t.id, { enabled: !t.enabled });
+            setGatewayTargets((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+        } catch (err) {
+            setGwError('Errore nel salvataggio.');
+        }
+    };
+
+    const removeTarget = async (id: number) => {
+        try {
+            await gatewayApi.deleteTarget(id);
+            setGatewayTargets((prev) => prev.filter((x) => x.id !== id));
+        } catch (err) {
+            setGwError('Errore nella cancellazione.');
+        }
+    };
 
     const handleSaveNginx = async () => {
         setIsSavingNginx(true);
@@ -260,6 +341,58 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                     <input type="checkbox" defaultChecked />
                                     <span className="slider round"></span>
                                 </label>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>AI Gateway Targets</h3>
+                                    <button className="btn btn-ghost btn-sm" onClick={loadGatewayTargets} disabled={gwLoading}>
+                                        <RefreshCw size={14} /> Aggiorna
+                                    </button>
+                                </div>
+                                {gwError && <div style={{ color: '#ef4444', fontSize: '0.85rem' }}>{gwError}</div>}
+                                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    {gatewayTargets.map((t) => (
+                                        <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '0.5rem', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 600 }}>{t.route_key} · {t.provider}</div>
+                                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.base_url}</div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>prio {t.priority} · timeout {t.timeout_ms}ms · kind {t.target_kind}</div>
+                                            </div>
+                                            <button className="btn btn-ghost btn-sm" onClick={() => toggleEnable(t)} title="Abilita/Disabilita">
+                                                {t.enabled ? <ToggleRight size={18} color="#10b981" /> : <ToggleLeft size={18} color="#ef4444" />}
+                                            </button>
+                                            <button className="btn btn-ghost btn-sm" onClick={() => removeTarget(t.id)} title="Elimina">
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {gatewayTargets.length === 0 && !gwLoading && (
+                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nessun target configurato.</div>
+                                    )}
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', alignItems: 'center' }}>
+                                    <select className="form-select" value={gwForm.route_key} onChange={(e) => setGwForm({ ...gwForm, route_key: e.target.value })}>
+                                        <option value="tender">tender</option>
+                                        <option value="opencode">opencode</option>
+                                    </select>
+                                    <input className="form-input" placeholder="Base URL" value={gwForm.base_url || ''} onChange={(e) => setGwForm({ ...gwForm, base_url: e.target.value })} />
+                                    <input className="form-input" placeholder="Provider (llama/openai/anthropic)" value={gwForm.provider || ''} onChange={(e) => setGwForm({ ...gwForm, provider: e.target.value })} />
+                                    <input className="form-input" placeholder="Modello (opzionale)" value={gwForm.model_name || ''} onChange={(e) => setGwForm({ ...gwForm, model_name: e.target.value })} />
+                                    <input type="number" className="form-input" placeholder="Priorità" value={gwForm.priority ?? 1} onChange={(e) => setGwForm({ ...gwForm, priority: Number(e.target.value) })} />
+                                    <input type="number" className="form-input" placeholder="Timeout ms" value={gwForm.timeout_ms ?? 30000} onChange={(e) => setGwForm({ ...gwForm, timeout_ms: Number(e.target.value) })} />
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
+                                        <input type="checkbox" checked={gwForm.enabled ?? true} onChange={(e) => setGwForm({ ...gwForm, enabled: e.target.checked })} />
+                                        Enabled
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
+                                        <input type="checkbox" checked={gwForm.use_anonymizer ?? false} onChange={(e) => setGwForm({ ...gwForm, use_anonymizer: e.target.checked })} />
+                                        Usa anonymizer
+                                    </label>
+                                    <button className="btn btn-primary btn-sm" onClick={handleAddTarget} style={{ gridColumn: 'span 2', justifySelf: 'flex-start' }}>
+                                        <Plus size={14} /> Aggiungi target
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

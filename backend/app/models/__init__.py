@@ -271,3 +271,21 @@ class TenderPermission(Base):
     tender = relationship("Tender", back_populates="permissions")
     user = relationship("User", back_populates="tender_permissions", foreign_keys=[user_id])
     granted_by_user = relationship("User", foreign_keys=[granted_by])
+
+
+class AIGatewayTarget(Base):
+    __tablename__ = "ai_gateway_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    route_key = Column(String(50), nullable=False)  # tender | opencode
+    target_kind = Column(String(50), nullable=False, default="docker")  # docker|dmz|cloud
+    provider = Column(String(50), nullable=False, default="llama")
+    base_url = Column(String(500), nullable=False)
+    model_name = Column(String(200))
+    enabled = Column(Boolean, default=True)
+    priority = Column(Integer, default=1)
+    timeout_ms = Column(Integer, default=30000)
+    use_anonymizer = Column(Boolean, default=False)
+    metadata_json = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
