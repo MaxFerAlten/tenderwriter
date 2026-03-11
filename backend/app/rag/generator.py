@@ -188,7 +188,7 @@ class Generator:
         template: str,
         variables: dict,
         temperature: float = 0.3,
-        max_tokens: int = 512,  # Reduced for faster CPU inference
+        max_tokens: int = 256  # Reduced for CPU/memory safety
     ) -> GenerationResult:
         """
         Generate text using a prompt template and Ollama.
@@ -303,7 +303,7 @@ class Generator:
         template: str,
         variables: dict,
         temperature: float = 0.3,
-        max_tokens: int = 512,  # Reduced for faster CPU inference
+        max_tokens: int = 256  # Reduced for CPU/memory safety
     ) -> AsyncIterator[str]:
         """
         Generate text with streaming response.
