@@ -87,16 +87,21 @@ async def _proxy_request(
         via_anonymizer = bool(candidate.get("via_anonymizer"))
         anonymizer_url = candidate.get("anonymizer_url")
         api_key = candidate.get("api_key")
+        provider = (candidate.get("provider") or "llama").lower()
+
+        target_path = path
+        if path == "/completion" and provider in {"openai", "anthropic"}:
+            target_path = "/v1/completions"
 
         # Build target URL and headers
-        target_url = base.rstrip("/") + path
+        target_url = base.rstrip("/") + target_path
         outbound_headers = dict(headers)
         if api_key:
             outbound_headers["authorization"] = f"Bearer {api_key}"
 
         url_to_call = target_url
         if via_anonymizer and anonymizer_url:
-            url_to_call = anonymizer_url.rstrip("/") + "/" + path.lstrip("/")
+            url_to_call = anonymizer_url.rstrip("/") + "/" + target_path.lstrip("/")
             outbound_headers["x-target-url"] = target_url
 
         try:
@@ -133,6 +138,11 @@ async def _proxy_request(
     return Response(content=content, status_code=status, media_type="text/plain")
 
 
+import time
+
+_cache = {}
+_CACHE_TTL = 5.0
+
 def _make_app(route_kind: str) -> FastAPI:
     """Factory to build a FastAPI app bound to a specific route."""
     settings = Settings()
@@ -145,10 +155,51 @@ def _make_app(route_kind: str) -> FastAPI:
         else settings.opencode_dmz_upstream
     )
 
-    def build_candidates() -> list[dict]:
+    async def build_candidates() -> list[dict]:
         """Compose the ordered list of upstream targets for this route."""
-        cands: list[dict] = [
-            {"base": upstream, "via_anonymizer": False, "anonymizer_url": None, "api_key": None}
+        now = time.time()
+        cands = []
+        
+        # Try fetching dynamic config from backend
+        dynamic_targets_raw = None
+        if route_kind in _cache:
+            cached_time, cached_data = _cache[route_kind]
+            if now - cached_time < _CACHE_TTL:
+                dynamic_targets_raw = cached_data
+                
+        if dynamic_targets_raw is None:
+            try:
+                # 2 second timeout to not block the gateway for too long
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    resp = await client.get(f"http://tw-backend:8000/api/gateway/active-targets?route={route_kind}")
+                    if resp.status_code == 200:
+                        dynamic_targets_raw = resp.json()
+                        _cache[route_kind] = (now, dynamic_targets_raw)
+            except Exception:
+                pass
+
+        if dynamic_targets_raw:
+            for t in dynamic_targets_raw:
+                provider = (t.get("provider") or "").lower()
+                api_key = None
+                if provider == "openai":
+                    api_key = settings.openai_api_key
+                elif provider == "anthropic":
+                    api_key = settings.anthropic_api_key
+                    
+                cands.append({
+                    "base": t.get("base_url"),
+                    "provider": (t.get("provider") or "llama").lower(),
+                    "via_anonymizer": bool(t.get("use_anonymizer")) and settings.anonymizer_url is not None,
+                    "anonymizer_url": settings.anonymizer_url,
+                    "api_key": api_key,
+                })
+            if cands:
+                return cands
+
+        # Fallback to env variables if no dynamic targets
+        cands = [
+            {"base": upstream, "via_anonymizer": False, "anonymizer_url": None, "api_key": None, "provider": "llama"}
         ]
         if dmz_upstream:
             cands.append(
@@ -165,6 +216,7 @@ def _make_app(route_kind: str) -> FastAPI:
                 cands.append(
                     {
                         "base": settings.openai_base_url,
+                        "provider": "openai",
                         "via_anonymizer": settings.anonymizer_url is not None,
                         "anonymizer_url": settings.anonymizer_url,
                         "api_key": settings.openai_api_key,
@@ -174,6 +226,7 @@ def _make_app(route_kind: str) -> FastAPI:
                 cands.append(
                     {
                         "base": settings.anthropic_base_url,
+                        "provider": "anthropic",
                         "via_anonymizer": settings.anonymizer_url is not None,
                         "anonymizer_url": settings.anonymizer_url,
                         "api_key": settings.anthropic_api_key,
@@ -197,6 +250,8 @@ def _make_app(route_kind: str) -> FastAPI:
                 cloud_base = settings.openai_base_url
             elif (provider or "").lower() == "anthropic" and settings.anthropic_api_key:
                 cloud_base = settings.anthropic_base_url
+        cands = await build_candidates()
+        
         return {
             "status": "ok",
             "route": route_kind,
@@ -205,6 +260,7 @@ def _make_app(route_kind: str) -> FastAPI:
             "anonymizer": settings.anonymizer_url,
             "cloud_provider": provider,
             "cloud_base": cloud_base,
+            "dynamic_candidates": len(cands) if cands else 0,
         }
 
     @app.get("/v1/models")
@@ -213,7 +269,7 @@ def _make_app(route_kind: str) -> FastAPI:
             "/v1/models",
             request,
             settings.gateway_timeout,
-            candidates=build_candidates(),
+            candidates=await build_candidates(),
         )
 
     @app.post("/completion")
@@ -223,7 +279,7 @@ def _make_app(route_kind: str) -> FastAPI:
             "/completion",
             request,
             settings.gateway_timeout,
-            candidates=build_candidates(),
+            candidates=await build_candidates(),
         )
 
     @app.post("/v1/chat/completions")
@@ -232,7 +288,7 @@ def _make_app(route_kind: str) -> FastAPI:
             "/v1/chat/completions",
             request,
             settings.gateway_timeout,
-            candidates=build_candidates(),
+            candidates=await build_candidates(),
         )
 
     return app

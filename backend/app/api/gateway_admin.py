@@ -20,6 +20,11 @@ def _require_admin(current_user: UserResponse):
         )
 
 
+def _normalize_url(url: str) -> str:
+    """Ensure consistent comparison to avoid duplicate targets."""
+    return url.rstrip("/")
+
+
 class TargetCreate(BaseModel):
     route_key: str = Field(pattern="^(tender|opencode)$")
     target_kind: str = Field(default="docker")
@@ -34,6 +39,7 @@ class TargetCreate(BaseModel):
 
 
 class TargetUpdate(TargetCreate):
+    route_key: str | None = Field(None, pattern="^(tender|opencode)$")
     enabled: bool | None = None
     priority: int | None = None
     timeout_ms: int | None = None
@@ -72,6 +78,19 @@ async def list_targets(
     return items
 
 
+@router.get("/active-targets", response_model=list[TargetOut])
+async def list_active_targets(
+    route: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Internal endpoint for the gateway container to fetch live routing config."""
+    stmt = select(AIGatewayTarget).where(AIGatewayTarget.enabled == True).order_by(AIGatewayTarget.priority)
+    if route:
+        stmt = stmt.where(AIGatewayTarget.route_key == route)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 @router.post("/targets", response_model=TargetOut, status_code=201)
 async def create_target(
     data: TargetCreate,
@@ -79,11 +98,24 @@ async def create_target(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(current_user)
+    normalized_base = _normalize_url(data.base_url)
+    dup_query = await db.execute(
+        select(AIGatewayTarget).where(
+            AIGatewayTarget.route_key == data.route_key,
+            AIGatewayTarget.base_url == normalized_base,
+            AIGatewayTarget.provider == data.provider,
+        )
+    )
+    if dup_query.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A target with the same route, provider and base_url already exists.",
+        )
     target = AIGatewayTarget(
         route_key=data.route_key,
         target_kind=data.target_kind,
         provider=data.provider,
-        base_url=data.base_url,
+        base_url=normalized_base,
         model_name=data.model_name,
         enabled=data.enabled,
         priority=data.priority,
@@ -112,7 +144,28 @@ async def update_target(
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    if "base_url" in payload and payload["base_url"]:
+        payload["base_url"] = _normalize_url(payload["base_url"])
+
+    new_route = payload.get("route_key", target.route_key)
+    new_provider = payload.get("provider", target.provider)
+    new_base = payload.get("base_url", target.base_url)
+    dup_query = await db.execute(
+        select(AIGatewayTarget).where(
+            AIGatewayTarget.route_key == new_route,
+            AIGatewayTarget.provider == new_provider,
+            AIGatewayTarget.base_url == new_base,
+            AIGatewayTarget.id != target_id,
+        )
+    )
+    if dup_query.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A target with the same route, provider and base_url already exists.",
+        )
+
+    for field, value in payload.items():
         setattr(target, field, value)
 
     await db.flush()
@@ -135,4 +188,5 @@ async def delete_target(
         raise HTTPException(status_code=404, detail="Target not found")
 
     await db.delete(target)
-    return Response(status_code=204)
+    await db.commit()
+    return None
