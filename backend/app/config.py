@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     llama_server_url: str = "http://llama-tender:8080/v1"
     llama_model: str = "qwen2.5-coder-7b"
     llama_timeout: int = 300  # 5 minutes for slow CPU inference
+    llama_max_tokens: int = 256
+    llama_temperature: float = 0.3
+    llama_stop_tokens: str = "</s>,<|im_end|>,<|endoftext|>"
 
     # --- Embeddings ---
     embedding_model: str = "BAAI/bge-base-en-v1.5"

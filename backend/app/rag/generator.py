@@ -187,8 +187,8 @@ class Generator:
         self,
         template: str,
         variables: dict,
-        temperature: float = 0.3,
-        max_tokens: int = 256  # Reduced for CPU/memory safety
+        temperature: float | None = None,
+        max_tokens: int | None = None
     ) -> GenerationResult:
         """
         Generate text using a prompt template and Ollama.
@@ -233,7 +233,7 @@ class Generator:
                 "prompt": prompt,
                 "n_predict": max_tokens,
                 "temperature": temperature,
-                "stop": ["</s>", "<|im_end|>", "<|endoftext|>"],
+                "stop": stop_tokens,
             }
             
             logger.debug("Sending request to llama server", 
@@ -302,8 +302,8 @@ class Generator:
         self,
         template: str,
         variables: dict,
-        temperature: float = 0.3,
-        max_tokens: int = 256  # Reduced for CPU/memory safety
+        temperature: float | None = None,
+        max_tokens: int | None = None
     ) -> AsyncIterator[str]:
         """
         Generate text with streaming response.
@@ -334,7 +334,7 @@ class Generator:
                         "n_predict": max_tokens,
                         "temperature": temperature,
                         "stream": True,
-                        "stop": ["</s>", "<|im_end|>", "<|endoftext|>"],
+                        "stop": stop_tokens,
                     },
                 ) as response:
                     response.raise_for_status()
