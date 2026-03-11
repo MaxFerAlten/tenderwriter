@@ -80,6 +80,7 @@ const Settings: FC = () => {
         checkHealth();
         if (user?.role === 'admin') {
             loadGatewayTargets();
+            loadLlmSettings();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.role]);
