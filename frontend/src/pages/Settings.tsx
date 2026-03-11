@@ -377,6 +377,30 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                 </label>
                             </div>
 
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>LLM Settings (tender)</h3>
+                                    <button className="btn btn-ghost btn-sm" onClick={saveLlmSettings} disabled={llmSaving}>
+                                        {llmSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Salva
+                                    </button>
+                                </div>
+                                {llmError && <div style={{ color: '#ef4444', fontSize: '0.85rem' }}>{llmError}</div>}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Max tokens</label>
+                                        <input type="number" className="form-input" value={llmMaxTokens} onChange={(e) => setLlmMaxTokens(e.target.value === '' ? '' : Number(e.target.value))} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Temperature</label>
+                                        <input type="number" step="0.01" className="form-input" value={llmTemperature} onChange={(e) => setLlmTemperature(e.target.value === '' ? '' : Number(e.target.value))} />
+                                    </div>
+                                    <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                                        <label className="form-label">Stop tokens (comma-separated)</label>
+                                        <input className="form-input" value={llmStopTokens} onChange={(e) => setLlmStopTokens(e.target.value)} />
+                                    </div>
+                                </div>
+                            </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>AI Gateway Targets</h3>
