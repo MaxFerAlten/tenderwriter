@@ -9,6 +9,7 @@ tenderwriter_architettura_completa.drawio
 tenderwriter_presentazione_manageriale_tecnica.pptx
 
 # --- Virtual environments ---
+.codex/
 venv/
 .venv/
 env/
