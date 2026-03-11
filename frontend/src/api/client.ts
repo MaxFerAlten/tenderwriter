@@ -362,3 +362,9 @@ export interface TenderPermissionOverview {
     owner_name: string | null;
     permissions: TenderPermissionEntry[];
 }
+
+// LLM Settings
+export const llmSettingsApi = {
+    get: () => request<{ id?: number | null; max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }>("/gateway/llm-settings"),
+    update: (data: { max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }) => request('/gateway/llm-settings', { method: 'PUT', body: data }),
+};
