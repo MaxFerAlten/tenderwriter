@@ -15,7 +15,7 @@ import {
     ToggleRight,
     ToggleLeft,
 } from 'lucide-react';
-import { ragApi, systemApi, gatewayApi, GatewayTarget } from '../api/client';
+import { ragApi, systemApi, gatewayApi, llmSettingsApi, GatewayTarget } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
@@ -45,6 +45,12 @@ const Settings: FC = () => {
     const [gatewayTargets, setGatewayTargets] = useState<GatewayTarget[]>([]);
     const [gwLoading, setGwLoading] = useState(false);
     const [gwError, setGwError] = useState<string | null>(null);
+
+    const [llmMaxTokens, setLlmMaxTokens] = useState<number | ''>(256);
+    const [llmTemperature, setLlmTemperature] = useState<number | ''>(0.3);
+    const [llmStopTokens, setLlmStopTokens] = useState<string>('');
+    const [llmSaving, setLlmSaving] = useState(false);
+    const [llmError, setLlmError] = useState<string | null>(null);
     const [gwForm, setGwForm] = useState<Partial<Omit<GatewayTarget, 'id'>>>({
         route_key: 'tender',
         target_kind: 'docker',
@@ -88,6 +94,34 @@ const Settings: FC = () => {
             setGwError('Impossibile caricare le configurazioni del gateway.');
         } finally {
             setGwLoading(false);
+        }
+    };
+
+
+    const loadLlmSettings = async () => {
+        try {
+            const res = await llmSettingsApi.get();
+            setLlmMaxTokens(res.max_tokens ?? '');
+            setLlmTemperature(res.temperature ?? '');
+            setLlmStopTokens(res.stop_tokens ?? '');
+        } catch (err) {
+            setLlmError('Impossibile caricare le impostazioni LLM');
+        }
+    };
+
+    const saveLlmSettings = async () => {
+        try {
+            setLlmSaving(true);
+            setLlmError(null);
+            await llmSettingsApi.update({
+                max_tokens: llmMaxTokens === '' ? null : Number(llmMaxTokens),
+                temperature: llmTemperature === '' ? null : Number(llmTemperature),
+                stop_tokens: llmStopTokens || null,
+            });
+        } catch (err) {
+            setLlmError('Errore nel salvataggio delle impostazioni LLM');
+        } finally {
+            setLlmSaving(false);
         }
     };
 
