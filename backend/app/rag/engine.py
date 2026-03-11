@@ -254,7 +254,28 @@ class HybridRAGEngine:
             )
 
         # ─── Step 5: Generate response ───
-        generation_result = await self._generate(rag_query, context)
+        try:
+            generation_result = await self._generate(rag_query, context)
+        except Exception as e:
+            logger.error(
+                "Generation failed",
+                mode=rag_query.mode.value,
+                error=str(e),
+            )
+            if rag_query.mode == QueryMode.QA:
+                fallback_answer = "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
+                generation_result = GenerationResult(
+                    text=fallback_answer,
+                    model=self.generator.model if self.generator else "unknown",
+                    template_used="fallback_unavailable",
+                )
+                return RAGResponse(
+                    answer=fallback_answer,
+                    sources=sources,
+                    mode=rag_query.mode,
+                    generation_result=generation_result,
+                )
+            raise
 
         return RAGResponse(
             answer=generation_result.text,

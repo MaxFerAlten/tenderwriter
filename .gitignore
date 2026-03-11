@@ -24,6 +24,8 @@ __pypackages__/
 
 # --- Specific tracked pycache artifacts to ignore ---
 backend/app/api/__pycache__/
+backend/app/ingestion/__pycache__/__init__.cpython-311.pyc
+backend/app/ingestion/__pycache__/pipeline.cpython-311.pyc
 
 # --- Build / packaging ---
 build/

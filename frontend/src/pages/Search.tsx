@@ -27,6 +27,18 @@ interface HistoryItem {
     created_at: string;
 }
 
+function normalizeMatchScore(score: number): number {
+    if (!Number.isFinite(score)) return 0;
+
+    let normalized = score;
+    if (score < 0 || score > 1) {
+        // Cross-encoder scores are often raw logits and can be negative.
+        normalized = 1 / (1 + Math.exp(-score));
+    }
+
+    return Math.max(0, Math.min(1, normalized));
+}
+
 function SourceBadge({ source }: { source: string }) {
     const config: Record<string, { icon: typeof FileText; label: string; color: string }> = {
         dense: { icon: Database, label: 'Vector', color: 'var(--accent-blue)' },
@@ -103,7 +115,7 @@ export default function RAGSearch() {
             setResults(
                 data.sources.map((s) => ({
                     text: s.text,
-                    score: s.score,
+                    score: normalizeMatchScore(s.score),
                     sources: inferSources(s.metadata),
                     metadata: s.metadata,
                 }))

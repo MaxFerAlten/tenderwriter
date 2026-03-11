@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Callable
 
 import httpx
@@ -88,6 +89,8 @@ async def _proxy_request(
         anonymizer_url = candidate.get("anonymizer_url")
         api_key = candidate.get("api_key")
         provider = (candidate.get("provider") or "llama").lower()
+        timeout_sec = float(candidate.get("timeout_sec") or timeout)
+        max_attempts = int(candidate.get("max_attempts") or 2)
 
         target_path = path
         if path == "/completion" and provider in {"openai", "anthropic"}:
@@ -104,31 +107,45 @@ async def _proxy_request(
             url_to_call = anonymizer_url.rstrip("/") + "/" + target_path.lstrip("/")
             outbound_headers["x-target-url"] = target_url
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.request(
-                    request.method,
-                    url_to_call,
-                    content=body,
-                    params=request.query_params,
-                    headers=outbound_headers,
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                    resp = await client.request(
+                        request.method,
+                        url_to_call,
+                        content=body,
+                        params=request.query_params,
+                        headers=outbound_headers,
+                    )
+
+                last_response = resp
+
+                if resp.status_code in {502, 503, 504}:
+                    # Retry same target before falling back to next candidate
+                    if attempt < max_attempts:
+                        await asyncio.sleep(0.4 * attempt)
+                        continue
+                    break
+
+                filtered_headers = {
+                    k: v
+                    for k, v in resp.headers.items()
+                    if k.lower() in {"content-type", "content-length"}
+                }
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    headers=filtered_headers,
                 )
-            last_response = resp
-            if resp.status_code in {502, 503, 504} and idx < len(candidates) - 1:
-                continue
-            filtered_headers = {
-                k: v
-                for k, v in resp.headers.items()
-                if k.lower() in {"content-type", "content-length"}
-            }
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                headers=filtered_headers,
-            )
-        except (httpx.TimeoutException, httpx.TransportError):
-            # try next candidate
-            continue
+            except (httpx.TimeoutException, httpx.TransportError):
+                # Retry same target before moving to next candidate
+                if attempt < max_attempts:
+                    await asyncio.sleep(0.4 * attempt)
+                    continue
+                break
+
+        # try next candidate
+        continue
 
     # If we reach here, all attempts failed
     status = last_response.status_code if last_response else 502
@@ -193,13 +210,15 @@ def _make_app(route_kind: str) -> FastAPI:
                     "via_anonymizer": bool(t.get("use_anonymizer")) and settings.anonymizer_url is not None,
                     "anonymizer_url": settings.anonymizer_url,
                     "api_key": api_key,
+                    "timeout_sec": max(5.0, float((t.get("timeout_ms") or 30000)) / 1000.0),
+                    "max_attempts": 2,
                 })
             if cands:
                 return cands
 
         # Fallback to env variables if no dynamic targets
         cands = [
-            {"base": upstream, "via_anonymizer": False, "anonymizer_url": None, "api_key": None, "provider": "llama"}
+            {"base": upstream, "via_anonymizer": False, "anonymizer_url": None, "api_key": None, "provider": "llama", "timeout_sec": settings.gateway_timeout, "max_attempts": 2}
         ]
         if dmz_upstream:
             cands.append(
@@ -208,6 +227,8 @@ def _make_app(route_kind: str) -> FastAPI:
                     "via_anonymizer": settings.anonymizer_url is not None,
                     "anonymizer_url": settings.anonymizer_url,
                     "api_key": None,
+                    "timeout_sec": settings.gateway_timeout,
+                    "max_attempts": 2,
                 }
             )
         if route_kind == "tender":
@@ -220,6 +241,8 @@ def _make_app(route_kind: str) -> FastAPI:
                         "via_anonymizer": settings.anonymizer_url is not None,
                         "anonymizer_url": settings.anonymizer_url,
                         "api_key": settings.openai_api_key,
+                        "timeout_sec": settings.gateway_timeout,
+                        "max_attempts": 2,
                     }
                 )
             elif provider == "anthropic" and settings.anthropic_api_key:
@@ -230,6 +253,8 @@ def _make_app(route_kind: str) -> FastAPI:
                         "via_anonymizer": settings.anonymizer_url is not None,
                         "anonymizer_url": settings.anonymizer_url,
                         "api_key": settings.anthropic_api_key,
+                        "timeout_sec": settings.gateway_timeout,
+                        "max_attempts": 2,
                     }
                 )
         return cands
