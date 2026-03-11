@@ -289,3 +289,5 @@ class AIGatewayTarget(Base):
     metadata_json = Column(JSONB, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+from app.models.llm_settings import LLMSettings

@@ -224,6 +224,12 @@ class Generator:
 
         logger.debug("Generating with LLM", model=self.model, template=template_name)
 
+        # Resolve runtime params from settings overrides
+        max_tokens = max_tokens or getattr(settings, "llama_max_tokens", 256)
+        temperature = temperature if temperature is not None else getattr(settings, "llama_temperature", 0.3)
+        stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
+        stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+
         # Check if using llama.cpp (OpenAI-compatible) or Ollama
         if "/v1" in self.base_url:
             # llama.cpp server - use /completion endpoint (not /v1/chat/completions due to parsing bug)

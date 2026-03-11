@@ -1,0 +1,15 @@
+from datetime import datetime
+
+from sqlalchemy import Column, Integer, Float, String, DateTime
+
+from app.db.database import Base
+
+
+class LLMSettings(Base):
+    __tablename__ = "llm_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    max_tokens = Column(Integer, nullable=True)
+    temperature = Column(Float, nullable=True)
+    stop_tokens = Column(String, nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

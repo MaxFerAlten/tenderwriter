@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user, UserResponse
 from app.db.database import get_db
-from app.models import AIGatewayTarget
+from app.models import AIGatewayTarget, LLMSettings
 
 router = APIRouter()
 
@@ -24,6 +24,16 @@ def _normalize_url(url: str) -> str:
     """Ensure consistent comparison to avoid duplicate targets."""
     return url.rstrip("/")
 
+
+
+
+class LLMSettingsPayload(BaseModel):
+    max_tokens: int | None = None
+    temperature: float | None = None
+    stop_tokens: str | None = None
+
+class LLMSettingsOut(LLMSettingsPayload):
+    id: int | None = None
 
 class TargetCreate(BaseModel):
     route_key: str = Field(pattern="^(tender|opencode)$")
@@ -66,6 +76,44 @@ class TargetOut(BaseModel):
     class Config:
         orm_mode = True
 
+
+
+@router.get("/llm-settings", response_model=LLMSettingsOut)
+async def get_llm_settings(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    result = await db.execute(select(LLMSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if row:
+        return {"id": row.id, "max_tokens": row.max_tokens, "temperature": row.temperature, "stop_tokens": row.stop_tokens}
+    from app.config import settings
+    return {
+        "id": None,
+        "max_tokens": getattr(settings, "llama_max_tokens", None),
+        "temperature": getattr(settings, "llama_temperature", None),
+        "stop_tokens": getattr(settings, "llama_stop_tokens", None),
+    }
+
+
+@router.put("/llm-settings", response_model=LLMSettingsOut)
+async def update_llm_settings(
+    payload: LLMSettingsPayload,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    result = await db.execute(select(LLMSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if not row:
+        row = LLMSettings()
+        db.add(row)
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(row, k, v)
+    await db.flush()
+    await db.refresh(row)
+    return {"id": row.id, "max_tokens": row.max_tokens, "temperature": row.temperature, "stop_tokens": row.stop_tokens}
 
 @router.get("/targets", response_model=list[TargetOut])
 async def list_targets(
