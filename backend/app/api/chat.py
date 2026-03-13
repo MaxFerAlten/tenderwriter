@@ -1,7 +1,8 @@
-"""Tender chat API endpoints (room, messages, attachments, realtime websocket)."""
+"""Tender chat API endpoints (room, messages, attachments, retrospective, realtime websocket)."""
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -28,7 +29,16 @@ from sqlalchemy.orm import selectinload
 from app.api.auth import ALGORITHM, UserResponse, get_current_user
 from app.config import settings
 from app.db.database import async_session_factory, get_db
-from app.models import ChatAttachment, ChatMember, ChatMessage, ChatMessageType, ChatRoom, Tender, User
+from app.models import (
+    ChatAttachment,
+    ChatEvent,
+    ChatMember,
+    ChatMessage,
+    ChatMessageType,
+    ChatRoom,
+    Tender,
+    User,
+)
 from app.services.chat import (
     ensure_official_chat_room,
     log_chat_message_sent,
@@ -117,6 +127,40 @@ class ChatMessageListResponse(BaseModel):
     next_before_id: int | None = None
 
 
+class ChatParticipantResponse(BaseModel):
+    user_id: int
+    user_name: str | None
+    user_email: str | None
+    role: str
+    source: str
+    is_active: bool
+    joined_at: datetime | None
+    left_at: datetime | None
+
+
+class ChatRetrospectiveTimelineItem(BaseModel):
+    kind: str
+    created_at: datetime | None
+    message: ChatMessageResponse | None = None
+    event_id: int | None = None
+    event_type: str | None = None
+    actor_id: int | None = None
+    actor_name: str | None = None
+    payload: dict | None = None
+
+
+class ChatRetrospectiveResponse(BaseModel):
+    room: ChatRoomResponse
+    participants: list[ChatParticipantResponse]
+    message_count: int
+    attachment_count: int
+    event_count: int
+    first_message_at: datetime | None
+    last_message_at: datetime | None
+    generated_at: datetime
+    timeline: list[ChatRetrospectiveTimelineItem]
+
+
 async def _get_user_from_ws_token(token: str, db: AsyncSession) -> UserResponse | None:
     try:
         payload = jwt.decode(token, settings.app_secret_key, algorithms=[ALGORITHM])
@@ -158,6 +202,13 @@ async def _check_tender_chat_access(
     raise HTTPException(status_code=404, detail="Tender not found")
 
 
+def _resolve_message_text(message: ChatMessage) -> str:
+    text = read_chat_message_text(message.text_bucket, message.text_object_key)
+    if text is None:
+        return message.text_preview or ""
+    return text
+
+
 def _build_attachment_response(attachment: ChatAttachment) -> ChatAttachmentResponse:
     return ChatAttachmentResponse(
         id=attachment.id,
@@ -187,6 +238,31 @@ def _build_message_response(
     )
 
 
+def _build_room_response(room: ChatRoom, participant_count: int) -> ChatRoomResponse:
+    return ChatRoomResponse(
+        id=room.id,
+        tender_id=room.tender_id,
+        is_official=bool(room.is_official),
+        status=room.status.value,
+        opened_at=room.opened_at,
+        created_at=room.created_at,
+        participant_count=participant_count,
+    )
+
+
+def _build_participant_response(member: ChatMember) -> ChatParticipantResponse:
+    return ChatParticipantResponse(
+        user_id=member.user_id,
+        user_name=member.user.name if member.user else None,
+        user_email=member.user.email if member.user else None,
+        role=member.role or "viewer",
+        source=member.source or "permission",
+        is_active=bool(member.is_active),
+        joined_at=member.joined_at,
+        left_at=member.left_at,
+    )
+
+
 @router.get("/{tender_id}/chat/room", response_model=ChatRoomResponse)
 async def get_official_chat_room(
     tender_id: int,
@@ -211,15 +287,7 @@ async def get_official_chat_room(
     )
     participant_count = count_result.scalar() or 0
 
-    return ChatRoomResponse(
-        id=room.id,
-        tender_id=room.tender_id,
-        is_official=bool(room.is_official),
-        status=room.status.value,
-        opened_at=room.opened_at,
-        created_at=room.created_at,
-        participant_count=participant_count,
-    )
+    return _build_room_response(room, participant_count)
 
 
 @router.get("/{tender_id}/chat/messages", response_model=ChatMessageListResponse)
@@ -263,14 +331,10 @@ async def list_chat_messages(
 
     items: list[ChatMessageResponse] = []
     for msg in reversed(messages_desc):
-        text = read_chat_message_text(msg.text_bucket, msg.text_object_key)
-        if text is None:
-            text = msg.text_preview or ""
-
         items.append(
             _build_message_response(
                 message=msg,
-                text=text,
+                text=_resolve_message_text(msg),
                 sender_name=msg.sender.name if msg.sender else None,
             )
         )
@@ -496,6 +560,271 @@ async def download_chat_attachment(
     return Response(
         content=raw,
         media_type=attachment.mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(len(raw)),
+        },
+    )
+
+
+@router.get("/{tender_id}/chat/retrospective", response_model=ChatRetrospectiveResponse)
+async def get_chat_retrospective(
+    tender_id: int,
+    timeline_limit: int = Query(default=200, ge=10, le=2000),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_tender_chat_access(tender_id, current_user, db)
+
+    room = await ensure_official_chat_room(
+        db,
+        tender_id=tender_id,
+        actor_id=current_user.id,
+        open_now=False,
+    )
+    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+
+    participants_result = await db.execute(
+        select(ChatMember)
+        .where(ChatMember.chat_room_id == room.id)
+        .options(selectinload(ChatMember.user))
+        .order_by(ChatMember.joined_at.asc(), ChatMember.id.asc())
+    )
+    participants = participants_result.scalars().all()
+
+    participant_count = len([p for p in participants if p.is_active])
+
+    message_count_result = await db.execute(
+        select(func.count(ChatMessage.id)).where(
+            ChatMessage.chat_room_id == room.id,
+            ChatMessage.deleted_at.is_(None),
+        )
+    )
+    message_count = message_count_result.scalar() or 0
+
+    attachment_count_result = await db.execute(
+        select(func.count(ChatAttachment.id))
+        .join(ChatAttachment.message)
+        .where(
+            ChatMessage.chat_room_id == room.id,
+            ChatMessage.deleted_at.is_(None),
+        )
+    )
+    attachment_count = attachment_count_result.scalar() or 0
+
+    event_count_result = await db.execute(
+        select(func.count(ChatEvent.id)).where(ChatEvent.chat_room_id == room.id)
+    )
+    event_count = event_count_result.scalar() or 0
+
+    first_last_result = await db.execute(
+        select(func.min(ChatMessage.created_at), func.max(ChatMessage.created_at)).where(
+            ChatMessage.chat_room_id == room.id,
+            ChatMessage.deleted_at.is_(None),
+        )
+    )
+    first_message_at, last_message_at = first_last_result.one()
+
+    messages_result = await db.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.chat_room_id == room.id,
+            ChatMessage.deleted_at.is_(None),
+        )
+        .options(selectinload(ChatMessage.sender), selectinload(ChatMessage.attachments))
+        .order_by(ChatMessage.id.desc())
+        .limit(timeline_limit)
+    )
+    messages = list(reversed(messages_result.scalars().all()))
+
+    events_result = await db.execute(
+        select(ChatEvent)
+        .where(ChatEvent.chat_room_id == room.id)
+        .options(selectinload(ChatEvent.actor))
+        .order_by(ChatEvent.id.desc())
+        .limit(timeline_limit)
+    )
+    events = list(reversed(events_result.scalars().all()))
+
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    timeline: list[ChatRetrospectiveTimelineItem] = []
+
+    for message in messages:
+        timeline.append(
+            ChatRetrospectiveTimelineItem(
+                kind="message",
+                created_at=message.created_at,
+                message=_build_message_response(
+                    message=message,
+                    text=_resolve_message_text(message),
+                    sender_name=message.sender.name if message.sender else None,
+                ),
+            )
+        )
+
+    for event in events:
+        timeline.append(
+            ChatRetrospectiveTimelineItem(
+                kind="event",
+                created_at=event.created_at,
+                event_id=event.id,
+                event_type=event.event_type,
+                actor_id=event.actor_id,
+                actor_name=event.actor.name if event.actor else None,
+                payload=event.payload_json or {},
+            )
+        )
+
+    timeline.sort(
+        key=lambda item: (
+            item.created_at or epoch,
+            0 if item.kind == "event" else 1,
+            item.event_id or (item.message.id if item.message else 0),
+        )
+    )
+    if len(timeline) > timeline_limit:
+        timeline = timeline[-timeline_limit:]
+
+    return ChatRetrospectiveResponse(
+        room=_build_room_response(room, participant_count),
+        participants=[_build_participant_response(member) for member in participants],
+        message_count=message_count,
+        attachment_count=attachment_count,
+        event_count=event_count,
+        first_message_at=first_message_at,
+        last_message_at=last_message_at,
+        generated_at=datetime.now(timezone.utc),
+        timeline=timeline,
+    )
+
+
+@router.get("/{tender_id}/chat/retrospective/export")
+async def export_chat_retrospective(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_tender_chat_access(tender_id, current_user, db)
+
+    room = await ensure_official_chat_room(
+        db,
+        tender_id=tender_id,
+        actor_id=current_user.id,
+        open_now=False,
+    )
+    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+
+    participants_result = await db.execute(
+        select(ChatMember)
+        .where(ChatMember.chat_room_id == room.id)
+        .options(selectinload(ChatMember.user))
+        .order_by(ChatMember.joined_at.asc(), ChatMember.id.asc())
+    )
+    participants = participants_result.scalars().all()
+
+    messages_result = await db.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.chat_room_id == room.id,
+            ChatMessage.deleted_at.is_(None),
+        )
+        .options(selectinload(ChatMessage.sender), selectinload(ChatMessage.attachments))
+        .order_by(ChatMessage.id.asc())
+    )
+    messages = messages_result.scalars().all()
+
+    events_result = await db.execute(
+        select(ChatEvent)
+        .where(ChatEvent.chat_room_id == room.id)
+        .options(selectinload(ChatEvent.actor))
+        .order_by(ChatEvent.id.asc())
+    )
+    events = events_result.scalars().all()
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "tender_id": tender_id,
+        "room": {
+            "id": room.id,
+            "status": room.status.value,
+            "is_official": bool(room.is_official),
+            "opened_at": room.opened_at.isoformat() if room.opened_at else None,
+            "created_at": room.created_at.isoformat() if room.created_at else None,
+        },
+        "participants": [
+            {
+                "user_id": member.user_id,
+                "user_name": member.user.name if member.user else None,
+                "user_email": member.user.email if member.user else None,
+                "role": member.role,
+                "source": member.source,
+                "is_active": bool(member.is_active),
+                "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+                "left_at": member.left_at.isoformat() if member.left_at else None,
+            }
+            for member in participants
+        ],
+        "message_count": len(messages),
+        "attachment_count": sum(len(message.attachments or []) for message in messages),
+        "event_count": len(events),
+        "messages": [
+            {
+                "id": message.id,
+                "chat_room_id": message.chat_room_id,
+                "sender_id": message.sender_id,
+                "sender_name": message.sender.name if message.sender else None,
+                "message_type": message.message_type.value,
+                "text": _resolve_message_text(message),
+                "created_at": message.created_at.isoformat() if message.created_at else None,
+                "text_storage": {
+                    "bucket": message.text_bucket,
+                    "object_key": message.text_object_key,
+                    "sha256": message.text_sha256,
+                    "size": message.text_size,
+                },
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "filename": attachment.filename,
+                        "mime_type": attachment.mime_type,
+                        "size_bytes": attachment.size_bytes,
+                        "sha256": attachment.sha256,
+                        "created_at": attachment.created_at.isoformat() if attachment.created_at else None,
+                        "storage": {
+                            "bucket": attachment.bucket,
+                            "object_key": attachment.object_key,
+                        },
+                    }
+                    for attachment in sorted((message.attachments or []), key=lambda item: item.id)
+                ],
+            }
+            for message in messages
+        ],
+        "events": [
+            {
+                "id": event.id,
+                "event_type": event.event_type,
+                "actor_id": event.actor_id,
+                "actor_name": event.actor.name if event.actor else None,
+                "payload": event.payload_json or {},
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in events
+        ],
+    }
+
+    raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+    now = datetime.now(timezone.utc)
+    filename = f"tender_{tender_id}_chat_retrospective_{now:%Y%m%d_%H%M%S}.json"
+    content_disposition = (
+        f"attachment; filename=\"{filename}\"; "
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+    return Response(
+        content=raw,
+        media_type="application/json",
         headers={
             "Content-Disposition": content_disposition,
             "Content-Length": str(len(raw)),

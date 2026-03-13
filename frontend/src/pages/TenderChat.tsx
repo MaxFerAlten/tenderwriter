@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
     ArrowLeft,
     Download,
+    History,
     MessageSquare,
     Paperclip,
     RefreshCw,
@@ -17,6 +18,7 @@ import {
     tenderApi,
     type ChatAttachment,
     type ChatMessage,
+    type ChatRetrospective,
     type ChatRoom,
     type Tender,
 } from '../api/client';
@@ -70,6 +72,8 @@ export default function TenderChat() {
     const [tender, setTender] = useState<Tender | null>(null);
     const [room, setRoom] = useState<ChatRoom | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [retrospective, setRetrospective] = useState<ChatRetrospective | null>(null);
+
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +87,10 @@ export default function TenderChat() {
     const [pendingAttachment, setPendingAttachment] = useState<{ file: File; caption: string } | null>(null);
     const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<number | null>(null);
 
+    const [retrospectiveLoading, setRetrospectiveLoading] = useState(false);
+    const [retrospectiveError, setRetrospectiveError] = useState<string | null>(null);
+    const [exportingRetrospective, setExportingRetrospective] = useState(false);
+
     const [wsConnected, setWsConnected] = useState(false);
     const [connectionError, setConnectionError] = useState<string | null>(null);
     const [infoMessage, setInfoMessage] = useState<string | null>(null);
@@ -90,6 +98,11 @@ export default function TenderChat() {
     const totalAttachments = useMemo(
         () => messages.reduce((acc, msg) => acc + (msg.attachments?.length ?? 0), 0),
         [messages]
+    );
+
+    const activeParticipants = useMemo(
+        () => retrospective?.participants?.filter((item) => item.is_active).length ?? room?.participant_count ?? 0,
+        [retrospective, room]
     );
 
     const fetchMessages = useCallback(async (silent = false) => {
@@ -101,6 +114,27 @@ export default function TenderChat() {
         } catch (err) {
             if (!silent) {
                 setError(err instanceof Error ? err.message : 'Failed to load chat messages');
+            }
+        }
+    }, [tenderId]);
+
+    const fetchRetrospective = useCallback(async (silent = false) => {
+        if (!Number.isFinite(tenderId) || tenderId <= 0) return;
+
+        try {
+            if (!silent) {
+                setRetrospectiveLoading(true);
+                setRetrospectiveError(null);
+            }
+            const data = await chatApi.getRetrospective(tenderId, { timeline_limit: 200 });
+            setRetrospective(data);
+        } catch (err) {
+            if (!silent) {
+                setRetrospectiveError(err instanceof Error ? err.message : 'Failed to load retrospective');
+            }
+        } finally {
+            if (!silent) {
+                setRetrospectiveLoading(false);
             }
         }
     }, [tenderId]);
@@ -123,12 +157,13 @@ export default function TenderChat() {
             setTender(tenderData);
             setRoom(roomData);
             setMessages(messageData.items || []);
+            void fetchRetrospective(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load chat');
         } finally {
             setLoading(false);
         }
-    }, [tenderId]);
+    }, [fetchRetrospective, tenderId]);
 
     useEffect(() => {
         loadChatContext();
@@ -163,6 +198,7 @@ export default function TenderChat() {
                 if (payload?.type === 'message_created' && payload?.message) {
                     const incoming = payload.message as ChatMessage;
                     setMessages((prev) => upsertMessage(prev, incoming));
+                    void fetchRetrospective(true);
                 }
             } catch {
                 // Ignore malformed payloads to keep stream resilient.
@@ -190,7 +226,7 @@ export default function TenderChat() {
                 // Ignore close errors during unmount.
             }
         };
-    }, [tenderId]);
+    }, [fetchRetrospective, tenderId]);
 
     useEffect(() => {
         if (!wsConnected) return;
@@ -225,6 +261,7 @@ export default function TenderChat() {
             const created = await chatApi.sendMessage(tenderId, { text });
             setMessages((prev) => upsertMessage(prev, created));
             setDraft('');
+            void fetchRetrospective(true);
         } catch (err) {
             setSendError(err instanceof Error ? err.message : 'Failed to send message');
         } finally {
@@ -252,6 +289,7 @@ export default function TenderChat() {
                 setDraft('');
             }
             setPendingAttachment(null);
+            void fetchRetrospective(true);
         } catch (err) {
             setUploadError(err instanceof Error ? err.message : 'Failed to upload attachment');
             setPendingAttachment({ file, caption });
@@ -299,6 +337,21 @@ export default function TenderChat() {
         }
     };
 
+    const handleExportRetrospective = async () => {
+        if (!Number.isFinite(tenderId) || tenderId <= 0) return;
+
+        try {
+            setExportingRetrospective(true);
+            setInfoMessage(null);
+            await chatApi.exportRetrospective(tenderId);
+            setInfoMessage('Retrospective export completed');
+        } catch (err) {
+            setInfoMessage(err instanceof Error ? err.message : 'Failed to export retrospective');
+        } finally {
+            setExportingRetrospective(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="loading-spinner" style={{ padding: '3rem 0' }}>
@@ -341,6 +394,12 @@ export default function TenderChat() {
                 </div>
             )}
 
+            {retrospectiveError && (
+                <div className="card" style={{ borderColor: '#f59e0b', marginBottom: '1rem', color: '#f59e0b' }}>
+                    {retrospectiveError}
+                </div>
+            )}
+
             {uploadingAttachment && (
                 <div className="card" style={{ borderColor: '#3b82f6', marginBottom: '1rem', color: '#93c5fd' }}>
                     Uploading attachment{uploadProgress !== null ? ` (${uploadProgress}%)` : ''}...
@@ -365,7 +424,7 @@ export default function TenderChat() {
                 </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: '1rem' }}>
                 <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: '70vh', padding: 0, overflow: 'hidden' }}>
                     <div style={{ borderBottom: '1px solid var(--border-default)', padding: '0.9rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -375,10 +434,16 @@ export default function TenderChat() {
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <span className="badge">
                                 <Users size={12} />
-                                {room?.participant_count ?? 0}
+                                {activeParticipants}
                             </span>
-                            <button className="btn btn-ghost btn-sm" onClick={() => void fetchMessages(false)}>
-                                <RefreshCw size={12} />
+                            <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => {
+                                    void fetchMessages(false);
+                                    void fetchRetrospective(false);
+                                }}
+                            >
+                                <RefreshCw size={12} className={retrospectiveLoading ? 'spin' : ''} />
                                 Refresh
                             </button>
                         </div>
@@ -497,20 +562,57 @@ export default function TenderChat() {
                 </div>
 
                 <div className="card" style={{ height: 'fit-content' }}>
-                    <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Chat Details</h3>
+                    <h3 style={{ marginTop: 0, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <History size={16} />
+                        Retrospective
+                    </h3>
+
                     <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
                         Room status: <strong>{room?.status || 'unknown'}</strong>
                     </p>
                     <p style={{ color: 'var(--text-muted)' }}>
                         Opened at: <strong>{formatMessageTime(room?.opened_at || null)}</strong>
                     </p>
+
                     <hr style={{ borderColor: 'var(--border-default)', margin: '0.8rem 0' }} />
-                    <h4 style={{ marginBottom: '0.35rem' }}>Attachments</h4>
+
                     <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        Total files shared: <strong>{totalAttachments}</strong>
+                        Messages: <strong>{retrospective?.message_count ?? messages.length}</strong>
                     </p>
+                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                        Attachments: <strong>{retrospective?.attachment_count ?? totalAttachments}</strong>
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                        Events: <strong>{retrospective?.event_count ?? 0}</strong>
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                        First message: <strong>{formatMessageTime(retrospective?.first_message_at ?? null)}</strong>
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                        Last message: <strong>{formatMessageTime(retrospective?.last_message_at ?? null)}</strong>
+                    </p>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem' }}>
+                        <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => void fetchRetrospective(false)}
+                            disabled={retrospectiveLoading}
+                        >
+                            <RefreshCw size={12} className={retrospectiveLoading ? 'spin' : ''} />
+                            Refresh
+                        </button>
+                        <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => void handleExportRetrospective()}
+                            disabled={exportingRetrospective}
+                        >
+                            <Download size={12} />
+                            {exportingRetrospective ? 'Exporting...' : 'Export JSON'}
+                        </button>
+                    </div>
+
                     {pendingAttachment && (
-                        <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                        <p style={{ color: 'var(--text-muted)', marginTop: '0.8rem' }}>
                             Pending retry: <strong>{pendingAttachment.file.name}</strong>
                         </p>
                     )}

@@ -96,6 +96,16 @@ export const chatApi = {
             : '';
         return request<ChatMessageList>(`/tenders/${tenderId}/chat/messages${query}`);
     },
+    getRetrospective: (tenderId: number, params?: { timeline_limit?: number }) => {
+        const query = params
+            ? '?' + new URLSearchParams(
+                Object.entries(params)
+                    .filter(([, value]) => value !== undefined && value !== null)
+                    .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+            ).toString()
+            : '';
+        return request<ChatRetrospective>(`/tenders/${tenderId}/chat/retrospective${query}`);
+    },
     sendMessage: (tenderId: number, data: { text: string }) =>
         request<ChatMessage>(`/tenders/${tenderId}/chat/messages`, { method: 'POST', body: data }),
     uploadAttachment: (
@@ -163,6 +173,44 @@ export const chatApi = {
         const link = document.createElement('a');
         link.href = url;
         link.download = attachment.filename || `attachment-${attachment.id}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    },
+    exportRetrospective: async (tenderId: number) => {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE}/tenders/${tenderId}/chat/retrospective/export`, {
+            method: 'GET',
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Export error' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        const disposition = response.headers.get('content-disposition') || '';
+        let filename = `tender-${tenderId}-chat-retrospective.json`;
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match && utf8Match[1]) {
+            try {
+                filename = decodeURIComponent(utf8Match[1]);
+            } catch {
+                filename = utf8Match[1];
+            }
+        } else {
+            const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+            if (plainMatch && plainMatch[1]) {
+                filename = plainMatch[1];
+            }
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -485,10 +533,45 @@ export interface ChatMessageList {
     items: ChatMessage[];
     next_before_id: number | null;
 }
+
+export interface ChatParticipant {
+    user_id: number;
+    user_name: string | null;
+    user_email: string | null;
+    role: string;
+    source: string;
+    is_active: boolean;
+    joined_at: string | null;
+    left_at: string | null;
+}
+
+export interface ChatRetrospectiveTimelineItem {
+    kind: string;
+    created_at: string | null;
+    message: ChatMessage | null;
+    event_id: number | null;
+    event_type: string | null;
+    actor_id: number | null;
+    actor_name: string | null;
+    payload: Record<string, unknown> | null;
+}
+
+export interface ChatRetrospective {
+    room: ChatRoom;
+    participants: ChatParticipant[];
+    message_count: number;
+    attachment_count: number;
+    event_count: number;
+    first_message_at: string | null;
+    last_message_at: string | null;
+    generated_at: string;
+    timeline: ChatRetrospectiveTimelineItem[];
+}
 // LLM Settings
 export const llmSettingsApi = {
     get: () => request<{ id?: number | null; max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }>("/gateway/llm-settings"),
     update: (data: { max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }) => request('/gateway/llm-settings', { method: 'PUT', body: data }),
 };
+
 
 
