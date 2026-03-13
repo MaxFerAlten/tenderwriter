@@ -207,11 +207,10 @@ export default function Dashboard() {
             if (form.description) payload.description = form.description;
             if (form.deadline) payload.deadline = new Date(form.deadline).toISOString();
             if (form.category) payload.category = form.category;
-            const created = await tenderApi.create(payload);
+            await tenderApi.create(payload);
             setForm({ ...EMPTY_FORM });
             setShowNewTender(false);
             await loadTenders();
-            navigate(`/tenders/${created.id}/chat`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to create tender');
         } finally {
@@ -585,4 +584,3 @@ export default function Dashboard() {
         </div>
     );
 }
-
