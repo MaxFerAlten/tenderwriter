@@ -24,6 +24,27 @@ from app.models import (
     Tender,
 )
 
+DEFAULT_CHAT_BUCKET = "tenderwriter-chat"
+_S3_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+_S3_BUCKET_IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def resolve_chat_bucket_name() -> str:
+    candidate = (settings.minio_chat_bucket or "").strip().lower()
+    if not candidate:
+        return DEFAULT_CHAT_BUCKET
+
+    if (
+        not _S3_BUCKET_RE.match(candidate)
+        or ".." in candidate
+        or ".-" in candidate
+        or "-." in candidate
+        or _S3_BUCKET_IP_RE.match(candidate)
+    ):
+        return DEFAULT_CHAT_BUCKET
+
+    return candidate
+
 
 def get_chat_minio_client() -> Minio:
     return Minio(
@@ -36,11 +57,10 @@ def get_chat_minio_client() -> Minio:
 
 def ensure_chat_bucket(minio_client: Minio | None = None) -> str:
     client = minio_client or get_chat_minio_client()
-    bucket = settings.minio_chat_bucket
+    bucket = resolve_chat_bucket_name()
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     return bucket
-
 
 def sanitize_attachment_filename(filename: str | None) -> str:
     if not filename:

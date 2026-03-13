@@ -48,6 +48,7 @@ from app.services.chat import (
     store_chat_attachment_blob,
     store_chat_message_text,
     sync_chat_members_from_tender_permissions,
+    resolve_chat_bucket_name,
 )
 
 router = APIRouter()
@@ -224,8 +225,14 @@ def _build_message_response(
     message: ChatMessage,
     text: str,
     sender_name: str | None,
+    attachments: list[ChatAttachment] | None = None,
 ) -> ChatMessageResponse:
-    attachments = sorted((message.attachments or []), key=lambda item: item.id)
+    raw_attachments = attachments
+    if raw_attachments is None:
+        # Avoid async lazy-load here: use relationship only if already loaded.
+        raw_attachments = list(message.__dict__.get("attachments") or [])
+
+    ordered_attachments = sorted(raw_attachments, key=lambda item: item.id)
     return ChatMessageResponse(
         id=message.id,
         chat_room_id=message.chat_room_id,
@@ -233,7 +240,7 @@ def _build_message_response(
         sender_name=sender_name,
         message_type=message.message_type.value,
         text=text,
-        attachments=[_build_attachment_response(item) for item in attachments],
+        attachments=[_build_attachment_response(item) for item in ordered_attachments],
         created_at=message.created_at,
     )
 
@@ -397,6 +404,7 @@ async def send_chat_message(
         message=message,
         text=text,
         sender_name=current_user.name,
+        attachments=[],
     )
     await chat_connections.broadcast(
         room.id,
@@ -471,7 +479,7 @@ async def upload_chat_attachment(
 
     attachment = ChatAttachment(
         message_id=message.id,
-        bucket=settings.minio_chat_bucket,
+        bucket=resolve_chat_bucket_name(),
         object_key=f"pending/{message.id}",
         filename=safe_filename,
         mime_type=file.content_type or "application/octet-stream",
