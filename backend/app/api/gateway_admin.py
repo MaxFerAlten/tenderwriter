@@ -73,8 +73,7 @@ class TargetOut(BaseModel):
     use_anonymizer: bool
     metadata_json: dict | None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 
@@ -238,3 +237,4 @@ async def delete_target(
     await db.delete(target)
     await db.commit()
     return None
+

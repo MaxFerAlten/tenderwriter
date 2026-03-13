@@ -17,6 +17,11 @@ from sqlalchemy.orm import selectinload
 from app.db.database import get_db
 from app.models import User, Tender, TenderPermission
 from app.api.auth import get_current_user, UserResponse
+from app.services.chat import (
+    deactivate_chat_member_for_tender,
+    sync_chat_members_from_tender_permissions,
+    upsert_chat_member_for_tender,
+)
 
 router = APIRouter()
 
@@ -226,6 +231,20 @@ async def grant_tender_permission(
     await db.flush()
     await db.refresh(perm)
 
+    await upsert_chat_member_for_tender(
+        db,
+        tender_id=tender_id,
+        user_id=data.user_id,
+        role=data.permission or "viewer",
+        source="permission",
+        actor_id=current_user.id,
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=tender_id,
+        actor_id=current_user.id,
+    )
+
     return PermissionResponse(
         id=perm.id,
         tender_id=perm.tender_id,
@@ -259,3 +278,17 @@ async def revoke_tender_permission(
         raise HTTPException(status_code=404, detail="Permission not found")
 
     await db.delete(perm)
+    await db.flush()
+
+    await deactivate_chat_member_for_tender(
+        db,
+        tender_id=tender_id,
+        user_id=user_id,
+        actor_id=current_user.id,
+        reason="permission_revoked",
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=tender_id,
+        actor_id=current_user.id,
+    )

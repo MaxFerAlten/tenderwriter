@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.db.database import get_db
 from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission, TenderStatus
 from app.api.auth import get_current_user, UserResponse
+from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
 
 router = APIRouter()
 
@@ -227,6 +228,18 @@ async def create_proposal(
         db.add(section)
 
     await db.flush()
+
+    await ensure_official_chat_room(
+        db,
+        tender_id=data.tender_id,
+        actor_id=current_user.id,
+        open_now=True,
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=data.tender_id,
+        actor_id=current_user.id,
+    )
 
     return ProposalResponse(
         id=proposal.id,
