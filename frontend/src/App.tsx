@@ -26,6 +26,7 @@ import Components from './pages/Components';
 import Developments from './pages/Developments';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import TenderChat from './pages/TenderChat';
 import { useAuth } from './contexts/AuthContext';
 
 const navItems = [
@@ -133,6 +134,7 @@ function App() {
                             <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
                             <Route path="/developments" element={user?.role === 'admin' ? <Developments /> : <Navigate to="/" />} />
                             <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
+                            <Route path="/tenders/:id/chat" element={<TenderChat />} />
                         </Routes>
                     </motion.div>
                 </AnimatePresence>
@@ -142,3 +144,4 @@ function App() {
 }
 
 export default App;
+

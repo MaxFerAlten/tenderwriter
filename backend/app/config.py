@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = ""
     minio_bucket: str = "tenderwriter"
+    minio_chat_bucket: str = "tenderwriter-chat"
     minio_secure: bool = False
 
     # --- Redis ---

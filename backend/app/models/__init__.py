@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -65,6 +66,17 @@ class IngestionStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ChatRoomStatus(str, enum.Enum):
+    PROVISIONED = "provisioned"
+    OPEN = "open"
+    ARCHIVED = "archived"
+
+
+class ChatMessageType(str, enum.Enum):
+    TEXT = "text"
+    SYSTEM = "system"
+
+
 # ──────────────────────────────────────────────
 # Models
 # ──────────────────────────────────────────────
@@ -87,8 +99,29 @@ class User(Base):
     tenders = relationship("Tender", back_populates="created_by_user")
     proposals = relationship("Proposal", back_populates="created_by_user")
     otp_tokens = relationship("OTPToken", back_populates="user", cascade="all, delete")
-    search_history = relationship("SearchHistory", back_populates="user", cascade="all, delete", order_by="desc(SearchHistory.created_at)")
-    tender_permissions = relationship("TenderPermission", back_populates="user", foreign_keys="TenderPermission.user_id", cascade="all, delete")
+    search_history = relationship(
+        "SearchHistory",
+        back_populates="user",
+        cascade="all, delete",
+        order_by="desc(SearchHistory.created_at)",
+    )
+    tender_permissions = relationship(
+        "TenderPermission",
+        back_populates="user",
+        foreign_keys="TenderPermission.user_id",
+        cascade="all, delete",
+    )
+    chat_memberships = relationship("ChatMember", back_populates="user", cascade="all, delete")
+    chat_messages_sent = relationship(
+        "ChatMessage",
+        back_populates="sender",
+        foreign_keys="ChatMessage.sender_id",
+    )
+    chat_events = relationship(
+        "ChatEvent",
+        back_populates="actor",
+        foreign_keys="ChatEvent.actor_id",
+    )
 
 
 class OTPToken(Base):
@@ -142,6 +175,7 @@ class Tender(Base):
     requirements = relationship("TenderRequirement", back_populates="tender", cascade="all, delete")
     proposals = relationship("Proposal", back_populates="tender", cascade="all, delete")
     permissions = relationship("TenderPermission", back_populates="tender", cascade="all, delete")
+    chat_room = relationship("ChatRoom", back_populates="tender", uselist=False, cascade="all, delete")
 
 
 class TenderRequirement(Base):
@@ -271,6 +305,101 @@ class TenderPermission(Base):
     tender = relationship("Tender", back_populates="permissions")
     user = relationship("User", back_populates="tender_permissions", foreign_keys=[user_id])
     granted_by_user = relationship("User", foreign_keys=[granted_by])
+
+
+class ChatRoom(Base):
+    __tablename__ = "chat_rooms"
+    __table_args__ = (UniqueConstraint("tender_id", name="uq_chat_rooms_tender_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False)
+    is_official = Column(Boolean, default=True, nullable=False)
+    status = Column(Enum(ChatRoomStatus), default=ChatRoomStatus.PROVISIONED, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    tender = relationship("Tender", back_populates="chat_room")
+    creator = relationship("User", foreign_keys=[created_by])
+    members = relationship("ChatMember", back_populates="chat_room", cascade="all, delete")
+    messages = relationship("ChatMessage", back_populates="chat_room", cascade="all, delete")
+    events = relationship("ChatEvent", back_populates="chat_room", cascade="all, delete")
+
+
+class ChatMember(Base):
+    __tablename__ = "chat_members"
+    __table_args__ = (
+        UniqueConstraint("chat_room_id", "user_id", name="uq_chat_members_room_user"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_room_id = Column(Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(50), default="viewer")
+    source = Column(String(50), default="permission")
+    is_active = Column(Boolean, default=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+    left_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    chat_room = relationship("ChatRoom", back_populates="members")
+    user = relationship("User", back_populates="chat_memberships")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_room_id = Column(Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    message_type = Column(Enum(ChatMessageType), default=ChatMessageType.TEXT, index=True)
+    text_bucket = Column(String(255), nullable=True)
+    text_object_key = Column(String(1000), nullable=True)
+    text_preview = Column(Text, nullable=True)
+    text_sha256 = Column(String(64), nullable=True)
+    text_size = Column(Integer, nullable=True)
+    reply_to_message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    chat_room = relationship("ChatRoom", back_populates="messages")
+    sender = relationship("User", back_populates="chat_messages_sent", foreign_keys=[sender_id])
+    reply_to = relationship("ChatMessage", remote_side=[id], foreign_keys=[reply_to_message_id])
+    attachments = relationship("ChatAttachment", back_populates="message", cascade="all, delete")
+
+
+class ChatAttachment(Base):
+    __tablename__ = "chat_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    bucket = Column(String(255), nullable=False)
+    object_key = Column(String(1000), nullable=False)
+    filename = Column(String(500), nullable=False)
+    mime_type = Column(String(100), nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    sha256 = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    message = relationship("ChatMessage", back_populates="attachments")
+
+
+class ChatEvent(Base):
+    __tablename__ = "chat_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_room_id = Column(Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    payload_json = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    chat_room = relationship("ChatRoom", back_populates="events")
+    actor = relationship("User", back_populates="chat_events", foreign_keys=[actor_id])
 
 
 class AIGatewayTarget(Base):

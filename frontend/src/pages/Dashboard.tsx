@@ -11,6 +11,7 @@ import {
     Upload,
     Check,
     FileEdit,
+    MessageSquare,
     X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -31,7 +32,7 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void> }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
@@ -125,6 +126,15 @@ function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal,
                         </button>
                     </>
                 )}
+
+                <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', gap: '0.25rem' }}
+                    onClick={() => onOpenChat(tender.id)}
+                >
+                    <MessageSquare size={12} />
+                    Open Chat
+                </button>
             </div>
 
             <div className="tender-card-footer">
@@ -197,10 +207,11 @@ export default function Dashboard() {
             if (form.description) payload.description = form.description;
             if (form.deadline) payload.deadline = new Date(form.deadline).toISOString();
             if (form.category) payload.category = form.category;
-            await tenderApi.create(payload);
+            const created = await tenderApi.create(payload);
             setForm({ ...EMPTY_FORM });
             setShowNewTender(false);
             await loadTenders();
+            navigate(`/tenders/${created.id}/chat`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to create tender');
         } finally {
@@ -233,6 +244,7 @@ export default function Dashboard() {
             await tenderApi.uploadDocument(id, file);
             // Refresh to see status change from DRAFT -> ACTIVE
             await loadTenders();
+            navigate(`/tenders/${id}/chat`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to upload document');
             throw err;
@@ -241,6 +253,10 @@ export default function Dashboard() {
 
     const handleEditProposal = (proposalId: number) => {
         navigate('/proposals', { state: { proposalId } });
+    };
+
+    const handleOpenChat = (id: number) => {
+        navigate(`/tenders/${id}/chat`);
     };
 
     const handleSubmitTender = async (id: number) => {
@@ -372,7 +388,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} onOpenChat={handleOpenChat} />
                                     ))
                                 )}
                             </div>
@@ -569,3 +585,4 @@ export default function Dashboard() {
         </div>
     );
 }
+

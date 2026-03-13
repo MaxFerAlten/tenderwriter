@@ -82,6 +82,94 @@ export const tenderApi = {
     },
 };
 
+// ── Chat ──
+
+export const chatApi = {
+    getRoom: (tenderId: number) => request<ChatRoom>(`/tenders/${tenderId}/chat/room`),
+    listMessages: (tenderId: number, params?: { before_id?: number; limit?: number }) => {
+        const query = params
+            ? '?' + new URLSearchParams(
+                Object.entries(params)
+                    .filter(([, value]) => value !== undefined && value !== null)
+                    .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+            ).toString()
+            : '';
+        return request<ChatMessageList>(`/tenders/${tenderId}/chat/messages${query}`);
+    },
+    sendMessage: (tenderId: number, data: { text: string }) =>
+        request<ChatMessage>(`/tenders/${tenderId}/chat/messages`, { method: 'POST', body: data }),
+    uploadAttachment: (
+        tenderId: number,
+        params: { file: File; text?: string; onProgress?: (percent: number) => void }
+    ) => {
+        return new Promise<ChatMessage>((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file', params.file);
+            if (params.text && params.text.trim()) {
+                formData.append('text', params.text.trim());
+            }
+
+            const token = localStorage.getItem('token');
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${API_BASE}/tenders/${tenderId}/chat/attachments`);
+
+            if (token) {
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            }
+
+            xhr.upload.onprogress = (event) => {
+                if (!params.onProgress || !event.lengthComputable) return;
+                const percent = Math.round((event.loaded / event.total) * 100);
+                params.onProgress(percent);
+            };
+
+            xhr.onerror = () => reject(new Error('Attachment upload failed'));
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        resolve(JSON.parse(xhr.responseText) as ChatMessage);
+                    } catch {
+                        reject(new Error('Invalid attachment upload response'));
+                    }
+                    return;
+                }
+
+                try {
+                    const err = JSON.parse(xhr.responseText);
+                    reject(new Error(err.detail || `HTTP ${xhr.status}`));
+                } catch {
+                    reject(new Error(`HTTP ${xhr.status}`));
+                }
+            };
+
+            xhr.send(formData);
+        });
+    },
+    downloadAttachment: async (tenderId: number, attachment: ChatAttachment) => {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE}/tenders/${tenderId}/chat/attachments/${attachment.id}/download`, {
+            method: 'GET',
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Download error' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = attachment.filename || `attachment-${attachment.id}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    },
+};
+
 // ── Proposals ──
 
 export const proposalApi = {
@@ -363,8 +451,44 @@ export interface TenderPermissionOverview {
     permissions: TenderPermissionEntry[];
 }
 
+export interface ChatRoom {
+    id: number;
+    tender_id: number;
+    is_official: boolean;
+    status: string;
+    opened_at: string | null;
+    created_at: string | null;
+    participant_count: number;
+}
+
+export interface ChatAttachment {
+    id: number;
+    message_id: number;
+    filename: string;
+    mime_type: string | null;
+    size_bytes: number | null;
+    created_at: string | null;
+}
+
+export interface ChatMessage {
+    id: number;
+    chat_room_id: number;
+    sender_id: number | null;
+    sender_name: string | null;
+    message_type: string;
+    text: string;
+    attachments: ChatAttachment[];
+    created_at: string | null;
+}
+
+export interface ChatMessageList {
+    items: ChatMessage[];
+    next_before_id: number | null;
+}
 // LLM Settings
 export const llmSettingsApi = {
     get: () => request<{ id?: number | null; max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }>("/gateway/llm-settings"),
     update: (data: { max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }) => request('/gateway/llm-settings', { method: 'PUT', body: data }),
 };
+
+

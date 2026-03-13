@@ -21,7 +21,8 @@ from app.config import settings
 from app.db.database import get_db
 from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus, TenderPermission
 from app.api.auth import get_current_user, UserResponse
-from app.utils.naming import get_structured_minio_path, get_tender_upload_path
+from app.utils.naming import get_tender_upload_path
+from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
 
 router = APIRouter()
 
@@ -242,6 +243,18 @@ async def create_tender(
     await db.flush()
     await db.refresh(tender)
 
+    await ensure_official_chat_room(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        open_now=False,
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
+
     return _tender_to_response(tender)
 
 
@@ -286,6 +299,18 @@ async def update_tender(
 
     await db.flush()
     await db.refresh(tender)
+
+    await ensure_official_chat_room(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        open_now=False,
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
 
     return _tender_to_response(tender)
 
@@ -387,6 +412,20 @@ async def import_tender_document(
         tender.status = TenderStatus.ACTIVE
         await db.flush()
         await db.refresh(tender)
+
+    # 4. Ensure official tender chat is open once the tender has started
+    if tender.status in [TenderStatus.ACTIVE, TenderStatus.IN_PROGRESS]:
+        await ensure_official_chat_room(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            open_now=True,
+        )
+        await sync_chat_members_from_tender_permissions(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+        )
 
     return {
         "message": "Document uploaded and ingested successfully",
