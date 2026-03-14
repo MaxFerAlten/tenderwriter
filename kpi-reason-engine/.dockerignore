@@ -1,0 +1,11 @@
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+dist
+build
+tenderwriter_kpi_reason_engine.egg-info
