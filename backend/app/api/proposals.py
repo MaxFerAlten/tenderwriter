@@ -19,6 +19,13 @@ from app.db.database import get_db
 from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission, TenderStatus
 from app.api.auth import get_current_user, UserResponse
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.services.kpi_reason_engine import (
+    build_proposal_created_event_payload,
+    build_proposal_section_updated_event_payload,
+    build_tender_submitted_event_payload,
+    publish_tender_sync,
+    sync_tender_and_publish_event,
+)
 
 router = APIRouter()
 
@@ -241,6 +248,17 @@ async def create_proposal(
         actor_id=current_user.id,
     )
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=data.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_created",
+        event_payload=build_proposal_created_event_payload(
+            proposal=proposal,
+            section_count=len(default_sections),
+        ),
+    )
+
     return ProposalResponse(
         id=proposal.id,
         tender_id=proposal.tender_id,
@@ -306,6 +324,7 @@ async def update_proposal(
     """Update proposal metadata. RBAC-checked via tender."""
     result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
     proposal = result.scalar_one_or_none()
+    previous_status = proposal.status if proposal else None
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
@@ -323,6 +342,24 @@ async def update_proposal(
 
     await db.flush()
     await db.refresh(proposal)
+
+    if proposal.status == ProposalStatus.SUBMITTED and proposal.status != previous_status:
+        await sync_tender_and_publish_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type="tender_submitted",
+            event_payload=build_tender_submitted_event_payload(
+                submitted_at=datetime.utcnow(),
+                channel="proposal_status_update",
+            ),
+        )
+    else:
+        await publish_tender_sync(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+        )
 
     return ProposalResponse(
         id=proposal.id,
@@ -438,6 +475,7 @@ async def update_section(
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
+    changed_fields = list(data.model_dump(exclude_unset=True).keys())
     for key, value in data.model_dump(exclude_unset=True).items():
         if key == 'content' and isinstance(value, str):
             setattr(section, key, value)
@@ -446,6 +484,18 @@ async def update_section(
 
     await db.flush()
     await db.refresh(section)
+
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_section_updated",
+        event_payload=build_proposal_section_updated_event_payload(
+            section=section,
+            change_type="section_updated",
+            changed_fields=changed_fields,
+        ),
+    )
 
     return SectionResponse(
         id=section.id,
@@ -485,6 +535,18 @@ async def add_section(
     await db.flush()
     await db.refresh(section)
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_section_updated",
+        event_payload=build_proposal_section_updated_event_payload(
+            section=section,
+            change_type="section_created",
+            changed_fields=["title", "content", "order", "status"],
+        ),
+    )
+
     return SectionResponse(
         id=section.id,
         title=section.title,
@@ -495,3 +557,6 @@ async def add_section(
         created_at=section.created_at,
         updated_at=section.updated_at,
     )
+
+
+

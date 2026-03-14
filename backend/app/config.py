@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
     backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
 
+    # --- KPI Reason Engine ---
+    kpi_reason_engine_base_url: str = "http://tw-kpi-reason-engine:8010"
+    kpi_reason_engine_service_token: str = ""
+    kpi_reason_engine_timeout: float = 10.0
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @model_validator(mode='before')
@@ -147,3 +152,5 @@ class Settings(BaseSettings):
 
 # Singleton settings instance
 settings = Settings()
+
+

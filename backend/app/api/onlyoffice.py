@@ -32,6 +32,10 @@ from app.db.redis import redis_client
 from app.models import Proposal, ProposalSection, ContentBlock
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import sanitize_name, get_structured_minio_path
+from app.services.kpi_reason_engine import (
+    build_proposal_section_updated_event_payload,
+    sync_tender_and_publish_event,
+)
 
 logger = structlog.get_logger()
 
@@ -636,7 +640,24 @@ async def onlyoffice_callback(
                 if section:
                     section.content = _text_to_tiptap_content(extracted_text)
                     await db.flush()
-                    
+
+                    proposal_result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
+                    proposal = proposal_result.scalar_one_or_none()
+                    if proposal:
+                        await sync_tender_and_publish_event(
+                            db,
+                            tender_id=proposal.tender_id,
+                            actor_id=None,
+                            source="onlyoffice_callback",
+                            event_type="proposal_section_updated",
+                            event_payload=build_proposal_section_updated_event_payload(
+                                section=section,
+                                change_type="section_content_saved",
+                                changed_fields=["content"],
+                                source="onlyoffice",
+                            ),
+                        )
+
                     logger.info("Section content updated from OnlyOffice", section_id=section_id)
                 
                 # Index into RAG
@@ -771,5 +792,7 @@ async def force_save(
     except Exception as e:
         logger.error("Force save failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Force save failed: {str(e)}")
+
+
 
 

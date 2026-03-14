@@ -77,6 +77,11 @@ class ChatMessageType(str, enum.Enum):
     SYSTEM = "system"
 
 
+class KpiEventDeliveryStatus(str, enum.Enum):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+
 # ──────────────────────────────────────────────
 # Models
 # ──────────────────────────────────────────────
@@ -402,6 +407,30 @@ class ChatEvent(Base):
     actor = relationship("User", back_populates="chat_events", foreign_keys=[actor_id])
 
 
+class KpiDomainEvent(Base):
+    __tablename__ = "kpi_domain_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    source = Column(String(100), nullable=False, default="tw-backend")
+    external_tender_id = Column(String(100), nullable=False, index=True)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    payload_json = Column(JSONB, default={})
+    delivery_status = Column(Enum(KpiEventDeliveryStatus), default=KpiEventDeliveryStatus.PENDING, index=True)
+    delivery_attempts = Column(Integer, default=0)
+    response_status_code = Column(Integer, nullable=True)
+    response_json = Column(JSONB, default={})
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    tender = relationship("Tender")
+    actor = relationship("User", foreign_keys=[actor_id])
+
+
 class AIGatewayTarget(Base):
     __tablename__ = "ai_gateway_targets"
 
@@ -421,3 +450,5 @@ class AIGatewayTarget(Base):
 
 from app.models.llm_settings import LLMSettings
 from app.models.app_settings import AppSettings
+
+

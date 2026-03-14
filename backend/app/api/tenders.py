@@ -23,6 +23,13 @@ from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.services.kpi_reason_engine import (
+    build_tender_created_event_payload,
+    build_tender_document_ingested_event_payload,
+    build_tender_outcome_recorded_event_payload,
+    publish_tender_sync,
+    sync_tender_and_publish_event,
+)
 
 router = APIRouter()
 
@@ -255,6 +262,14 @@ async def create_tender(
         actor_id=current_user.id,
     )
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="tender_created",
+        event_payload=build_tender_created_event_payload(tender),
+    )
+
     return _tender_to_response(tender)
 
 
@@ -292,6 +307,7 @@ async def update_tender(
 ):
     """Update a tender. RBAC-checked."""
     tender = await check_tender_access(tender_id, current_user, db)
+    previous_status = tender.status
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -311,6 +327,24 @@ async def update_tender(
         tender_id=tender.id,
         actor_id=current_user.id,
     )
+
+    if tender.status in [TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED] and tender.status != previous_status:
+        await sync_tender_and_publish_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type="tender_outcome_recorded",
+            event_payload=build_tender_outcome_recorded_event_payload(
+                outcome=tender.status.value,
+                recorded_at=datetime.utcnow(),
+            ),
+        )
+    else:
+        await publish_tender_sync(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+        )
 
     return _tender_to_response(tender)
 
@@ -427,9 +461,24 @@ async def import_tender_document(
             actor_id=current_user.id,
         )
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="tender_document_ingested",
+        event_payload=build_tender_document_ingested_event_payload(
+            document_id=object_name,
+            filename=file.filename or "uploaded-document",
+            stats=stats,
+        ),
+    )
+
     return {
         "message": "Document uploaded and ingested successfully",
         "tender_id": tender_id,
         "filename": file.filename,
         "stats": stats,
     }
+
+
+
