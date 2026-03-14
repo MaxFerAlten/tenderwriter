@@ -63,7 +63,12 @@ class KpiReasonEngineClient:
             headers["X-Service-Token"] = token
         return headers
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> KpiClientResult:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> KpiClientResult:
         if not self.base_url:
             return KpiClientResult(
                 delivered=False,
@@ -72,13 +77,17 @@ class KpiReasonEngineClient:
                 error_message="KPI reason engine base URL is not configured.",
             )
 
+        request_kwargs: dict[str, Any] = {"headers": self._headers()}
+        if payload is not None:
+            request_kwargs["json"] = payload
+
         try:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout,
                 transport=self.transport,
             ) as client:
-                response = await client.post(path, json=payload, headers=self._headers())
+                response = await client.request(method, path, **request_kwargs)
         except httpx.HTTPError as exc:
             return KpiClientResult(
                 delivered=False,
@@ -97,6 +106,12 @@ class KpiReasonEngineClient:
             error_message=error_message,
         )
 
+    async def _post(self, path: str, payload: dict[str, Any]) -> KpiClientResult:
+        return await self._request("POST", path, payload)
+
+    async def _get(self, path: str) -> KpiClientResult:
+        return await self._request("GET", path)
+
     async def sync_tender(self, payload: dict[str, Any]) -> KpiClientResult:
         return await self._post("/v1/tenders", payload)
 
@@ -106,6 +121,21 @@ class KpiReasonEngineClient:
         payload: dict[str, Any],
     ) -> KpiClientResult:
         return await self._post(f"/v1/tenders/{external_tender_id}/events", payload)
+
+    async def get_portfolio_overview(self) -> KpiClientResult:
+        return await self._get("/v1/admin/portfolio/overview")
+
+    async def get_portfolio_bottlenecks(self) -> KpiClientResult:
+        return await self._get("/v1/admin/portfolio/bottlenecks")
+
+    async def get_tender_snapshot(self, external_tender_id: str) -> KpiClientResult:
+        return await self._get(f"/v1/tenders/{external_tender_id}/snapshot")
+
+    async def get_tender_diagnostics(self, external_tender_id: str) -> KpiClientResult:
+        return await self._get(f"/v1/tenders/{external_tender_id}/diagnostics")
+
+    async def get_tender_forecast(self, external_tender_id: str) -> KpiClientResult:
+        return await self._get(f"/v1/tenders/{external_tender_id}/forecast")
 
 
 def _safe_response_json(response: httpx.Response) -> dict[str, Any]:
@@ -499,5 +529,6 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
+
 
 

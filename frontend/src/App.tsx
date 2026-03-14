@@ -1,18 +1,19 @@
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    LayoutDashboard,
-    FileText,
-    Library,
-    Search,
-    Settings,
-    Sparkles,
-    LogOut,
     Activity,
-    Shield,
-    Play,
-    Server,
+    BarChart3,
     Code,
+    FileText,
+    LayoutDashboard,
+    Library,
+    LogOut,
+    Play,
+    Search,
+    Server,
+    Settings,
+    Shield,
+    Sparkles,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import ProposalEditor from './pages/ProposalEditor';
@@ -24,6 +25,7 @@ import TenderPermissions from './pages/TenderPermissions';
 import TaskManager from './pages/TaskManager';
 import Components from './pages/Components';
 import Developments from './pages/Developments';
+import ObservabilityKPI from './pages/ObservabilityKPI';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import TenderChat from './pages/TenderChat';
@@ -35,6 +37,7 @@ const navItems = [
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
     { path: '/tasks', label: 'Task Manager', icon: Play },
+    { path: '/observability-kpi', label: 'Observability KPI', icon: BarChart3, adminOnly: true },
     { path: '/components', label: 'Components', icon: Server, adminOnly: true },
     { path: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
     { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
@@ -64,7 +67,6 @@ function App() {
 
     return (
         <div className="app-layout">
-            {/* Sidebar */}
             <aside className="sidebar">
                 <div className="sidebar-logo">
                     <Sparkles size={24} color="#60a5fa" />
@@ -78,9 +80,7 @@ function App() {
                             <NavLink
                                 key={item.path}
                                 to={item.path}
-                                className={({ isActive }) =>
-                                    `nav-item ${isActive ? 'active' : ''}`
-                                }
+                                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                                 end={item.path === '/'}
                             >
                                 <item.icon size={20} />
@@ -102,7 +102,7 @@ function App() {
                             cursor: 'pointer',
                             fontFamily: 'inherit',
                             fontSize: 'inherit',
-                            color: 'var(--text-secondary)'
+                            color: 'var(--text-secondary)',
                         }}
                     >
                         <LogOut />
@@ -111,7 +111,6 @@ function App() {
                 </div>
             </aside>
 
-            {/* Main Content */}
             <main className="main-content">
                 <AnimatePresence mode="wait">
                     <motion.div
@@ -129,6 +128,7 @@ function App() {
                             <Route path="/library" element={<ContentLibrary />} />
                             <Route path="/search" element={<RAGSearch />} />
                             <Route path="/tasks" element={<TaskManager />} />
+                            <Route path="/observability-kpi" element={user?.role === 'admin' ? <ObservabilityKPI /> : <Navigate to="/" />} />
                             <Route path="/components" element={user?.role === 'admin' ? <Components /> : <Navigate to="/" />} />
                             <Route path="/settings" element={user?.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                             <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
@@ -144,4 +144,3 @@ function App() {
 }
 
 export default App;
-

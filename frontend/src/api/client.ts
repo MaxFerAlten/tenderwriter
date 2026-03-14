@@ -304,6 +304,14 @@ export const adminApi = {
         request(`/admin/tenders/${tenderId}/permissions/${userId}`, { method: 'DELETE' }),
 };
 
+export const kpiAdminApi = {
+    getPortfolioOverview: () => request<KpiPortfolioOverview>('/admin/kpi/portfolio/overview'),
+    getPortfolioBottlenecks: () => request<KpiPortfolioBottlenecks>('/admin/kpi/portfolio/bottlenecks'),
+    getTenderSnapshot: (tenderId: number) => request<KpiTenderSnapshot>(`/admin/kpi/tenders/${tenderId}/snapshot`),
+    getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
+    getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
+};
+
 // ── Gateway Admin ──
 
 export interface GatewayTarget {
@@ -358,6 +366,7 @@ export interface Tender {
     created_at: string;
     created_by: number | null;
     created_by_name: string | null;
+    requirement_count?: number;
 }
 
 export interface TenderDetail extends Tender {
@@ -511,6 +520,68 @@ export interface TenderPermissionOverview {
     permissions: TenderPermissionEntry[];
 }
 
+export interface KpiScore {
+    kpi_code: string;
+    value: number | null;
+    label: string | null;
+    health: string;
+    provenance: string;
+    confidence: number | null;
+    evidence: string[];
+}
+
+export interface KpiTenderSnapshot {
+    status: string;
+    external_tender_id: string;
+    analytical_phase: string | null;
+    health: string;
+    generated_at: string | null;
+    kpis: KpiScore[];
+    notes: string[];
+}
+
+export interface KpiDiagnostics {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    summary: string;
+    findings: string[];
+}
+
+export interface KpiForecastScenario {
+    name: string;
+    probability: number | null;
+    description: string | null;
+}
+
+export interface KpiForecast {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    scenarios: KpiForecastScenario[];
+}
+
+export interface KpiPortfolioOverview {
+    status: string;
+    generated_at: string | null;
+    portfolio_health: string;
+    total_tenders: number;
+    tenders_by_health: Record<string, number>;
+}
+
+export interface KpiBottleneckItem {
+    external_tender_id: string;
+    bottleneck_type: string;
+    summary: string;
+    health: string;
+}
+
+export interface KpiPortfolioBottlenecks {
+    status: string;
+    generated_at: string | null;
+    items: KpiBottleneckItem[];
+}
+
 export interface ChatRoom {
     id: number;
     tender_id: number;
@@ -584,6 +655,8 @@ export const llmSettingsApi = {
     get: () => request<{ id?: number | null; max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }>("/gateway/llm-settings"),
     update: (data: { max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }) => request('/gateway/llm-settings', { method: 'PUT', body: data }),
 };
+
+
 
 
 

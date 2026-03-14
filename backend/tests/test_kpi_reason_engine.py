@@ -199,6 +199,7 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         observed: dict[str, object] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
             observed["path"] = request.url.path
             observed["auth"] = request.headers.get("Authorization")
             observed["service_token"] = request.headers.get("X-Service-Token")
@@ -215,6 +216,7 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.delivered)
         self.assertEqual(result.status_code, 202)
+        self.assertEqual(observed["method"], "POST")
         self.assertEqual(observed["path"], "/v1/tenders")
         self.assertEqual(observed["auth"], "Bearer service-token-123")
         self.assertEqual(observed["service_token"], "service-token-123")
@@ -224,6 +226,7 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         observed: dict[str, object] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
             observed["path"] = request.url.path
             observed["payload"] = json.loads(request.content.decode("utf-8"))
             return httpx.Response(202, json={"status": "accepted", "event_type": "proposal_created"})
@@ -236,8 +239,52 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         result = await client.publish_event("7", {"event_type": "proposal_created"})
 
         self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "POST")
         self.assertEqual(observed["path"], "/v1/tenders/7/events")
         self.assertEqual(observed["payload"], {"event_type": "proposal_created"})
+
+    async def test_get_tender_snapshot_queries_expected_endpoint(self) -> None:
+        observed: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
+            observed["path"] = request.url.path
+            observed["auth"] = request.headers.get("Authorization")
+            return httpx.Response(200, json={"external_tender_id": "7", "status": "not_ready"})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            service_token="service-token-123",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await client.get_tender_snapshot("7")
+
+        self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "GET")
+        self.assertEqual(observed["path"], "/v1/tenders/7/snapshot")
+        self.assertEqual(observed["auth"], "Bearer service-token-123")
+        self.assertEqual(result.response_json["external_tender_id"], "7")
+
+    async def test_get_portfolio_overview_queries_expected_endpoint(self) -> None:
+        observed: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
+            observed["path"] = request.url.path
+            return httpx.Response(200, json={"total_tenders": 2, "status": "not_ready"})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await client.get_portfolio_overview()
+
+        self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "GET")
+        self.assertEqual(observed["path"], "/v1/admin/portfolio/overview")
+        self.assertEqual(result.response_json["total_tenders"], 2)
 
 
 class DeliveryStateTests(unittest.TestCase):
