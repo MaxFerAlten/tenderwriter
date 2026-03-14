@@ -21,12 +21,25 @@ for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
 from app.models import (
+    AttendanceRecord,
+    AttendanceStatus,
+    CallSession,
+    ComplianceGate,
+    ComplianceGateStatus,
     ComplianceStatus,
+    ContributionRequest,
+    ContributionRequestStatus,
+    ContributionUnit,
+    ContributionUnitStatus,
     KpiDomainEvent,
     KpiEventDeliveryStatus,
     Proposal,
     ProposalSection,
     ProposalStatus,
+    ReviewCycle,
+    ReviewCycleStatus,
+    ReworkAction,
+    ReworkStatus,
     SectionStatus,
     Tender,
     TenderRequirement,
@@ -36,9 +49,20 @@ from app.services.kpi_reason_engine import (
     KpiClientResult,
     KpiReasonEngineClient,
     apply_delivery_result,
+    build_call_attendance_recorded_event_payload,
+    build_call_scheduled_event_payload,
+    build_compliance_gate_decision_event_payload,
+    build_compliance_gate_opened_event_payload,
+    build_contribution_due_date_set_event_payload,
+    build_contribution_received_event_payload,
+    build_contribution_request_created_event_payload,
+    build_contribution_review_completed_event_payload,
     build_domain_event_payload,
     build_proposal_section_updated_event_payload,
     build_requirements_extracted_event_payload,
+    build_review_cycle_started_event_payload,
+    build_rework_requested_event_payload,
+    build_rework_resolved_event_payload,
     build_tender_created_event_payload,
     build_tender_document_ingested_event_payload,
     build_tender_sync_payload,
@@ -347,3 +371,109 @@ class DeliveryStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OperationalPayloadBuilderTests(unittest.TestCase):
+    def test_contribution_operational_payloads_keep_expected_shape(self) -> None:
+        contribution = ContributionUnit(
+            id=201,
+            tender_id=7,
+            proposal_section_id=90,
+            owner_user_id=14,
+            department_name="legal",
+            title="Collect compliance annex",
+            due_at=datetime(2026, 3, 18, 9, 0, tzinfo=timezone.utc),
+            status=ContributionUnitStatus.REQUESTED,
+        )
+        request_row = ContributionRequest(
+            id=301,
+            contribution_unit_id=201,
+            requested_to_user_id=18,
+            requested_to_label="Legal team",
+            request_channel="chat",
+            requested_at=datetime(2026, 3, 15, 9, 0, tzinfo=timezone.utc),
+            due_at=datetime(2026, 3, 17, 9, 0, tzinfo=timezone.utc),
+            sla_target_hours=8,
+            sla_max_hours=24,
+            response_received_at=datetime(2026, 3, 15, 15, 0, tzinfo=timezone.utc),
+            response_summary="Draft annex delivered",
+            status=ContributionRequestStatus.RECEIVED,
+        )
+        review = ReviewCycle(
+            id=401,
+            contribution_unit_id=201,
+            reviewer_id=21,
+            stage_name="quality_review",
+            started_at=datetime(2026, 3, 15, 16, 0, tzinfo=timezone.utc),
+            completed_at=datetime(2026, 3, 16, 10, 0, tzinfo=timezone.utc),
+            outcome="approved",
+            notes="Looks good",
+            status=ReviewCycleStatus.COMPLETED,
+        )
+        rework = ReworkAction(
+            id=501,
+            contribution_unit_id=201,
+            review_cycle_id=401,
+            assigned_to_user_id=18,
+            severity="high",
+            is_blocking=True,
+            reason="Missing signature",
+            requested_at=datetime(2026, 3, 15, 17, 0, tzinfo=timezone.utc),
+            resolved_at=datetime(2026, 3, 15, 20, 0, tzinfo=timezone.utc),
+            resolution_notes="Signed version uploaded",
+            status=ReworkStatus.RESOLVED,
+        )
+        gate = ComplianceGate(
+            id=601,
+            tender_id=7,
+            contribution_unit_id=201,
+            owner_user_id=21,
+            gate_name="Compliance approval",
+            due_at=datetime(2026, 3, 18, 12, 0, tzinfo=timezone.utc),
+            evaluated_at=datetime(2026, 3, 18, 11, 0, tzinfo=timezone.utc),
+            decision_notes="Approved",
+            status=ComplianceGateStatus.PASSED,
+        )
+        call = CallSession(
+            id=701,
+            tender_id=7,
+            title="Bid coordination",
+            scheduled_at=datetime(2026, 3, 16, 9, 0, tzinfo=timezone.utc),
+        )
+        attendance = AttendanceRecord(
+            id=801,
+            call_session_id=701,
+            user_id=18,
+            attendee_label="Legal team",
+            attendance_status=AttendanceStatus.ATTENDED,
+            recorded_at=datetime(2026, 3, 16, 9, 5, tzinfo=timezone.utc),
+            notes="Joined on time",
+        )
+
+        request_payload = build_contribution_request_created_event_payload(request=request_row, contribution=contribution)
+        due_payload = build_contribution_due_date_set_event_payload(request=request_row, contribution=contribution)
+        received_payload = build_contribution_received_event_payload(request=request_row, contribution=contribution)
+        review_started_payload = build_review_cycle_started_event_payload(review=review, contribution=contribution)
+        review_completed_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
+        rework_requested_payload = build_rework_requested_event_payload(rework=rework, contribution=contribution)
+        rework_resolved_payload = build_rework_resolved_event_payload(rework=rework, contribution=contribution)
+        gate_opened_payload = build_compliance_gate_opened_event_payload(gate=gate)
+        gate_decision_payload = build_compliance_gate_decision_event_payload(gate=gate)
+        call_payload = build_call_scheduled_event_payload(call=call)
+        attendance_payload = build_call_attendance_recorded_event_payload(record=attendance, call=call)
+
+        self.assertEqual(request_payload["external_request_id"], "301")
+        self.assertEqual(request_payload["external_contribution_id"], "201")
+        self.assertEqual(request_payload["sla_target_hours"], 8)
+        self.assertEqual(due_payload["due_at"], "2026-03-17T09:00:00+00:00")
+        self.assertEqual(received_payload["response_time_hours"], 6.0)
+        self.assertTrue(received_payload["within_sla_target"])
+        self.assertEqual(review_started_payload["external_review_cycle_id"], "401")
+        self.assertEqual(review_completed_payload["cycle_time_hours"], 18.0)
+        self.assertEqual(rework_requested_payload["severity"], "high")
+        self.assertEqual(rework_resolved_payload["resolution_time_hours"], 3.0)
+        self.assertEqual(gate_opened_payload["external_gate_id"], "601")
+        self.assertEqual(gate_decision_payload["status"], "passed")
+        self.assertEqual(call_payload["external_call_session_id"], "701")
+        self.assertEqual(attendance_payload["attendance_status"], "attended")
+

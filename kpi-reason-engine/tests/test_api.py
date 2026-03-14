@@ -357,3 +357,192 @@ class KpiReasonEngineApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._client_cm.__exit__(None, None, None)
+
+    def setUp(self) -> None:
+        self.client.app.state.store.clear_all()
+
+    @staticmethod
+    def _auth_headers() -> dict[str, str]:
+        return {
+            "Authorization": "Bearer test-kpi-token",
+            "X-Service-Token": "test-kpi-token",
+        }
+
+    def test_operational_snapshot_scores_b1_b4_and_e(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-OPS",
+                "title": "Operational Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal", "sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "fully_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "approved",
+                    }
+                ],
+                "metadata": {"priority": "high"},
+            },
+        )
+        seed_events = [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "contribution_request_created",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C1",
+                    "external_request_id": "R1",
+                    "requested_at": "2026-03-15T08:00:00Z",
+                    "due_at": "2026-03-16T08:00:00Z",
+                    "sla_target_hours": 8,
+                    "sla_max_hours": 24,
+                },
+            },
+            {
+                "event_type": "contribution_received",
+                "occurred_at": "2026-03-15T14:00:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C1",
+                    "external_request_id": "R1",
+                    "requested_at": "2026-03-15T08:00:00Z",
+                    "received_at": "2026-03-15T14:00:00Z",
+                    "due_at": "2026-03-16T08:00:00Z",
+                    "response_time_hours": 6,
+                    "lateness_hours": 0,
+                },
+            },
+            {
+                "event_type": "contribution_request_created",
+                "occurred_at": "2026-03-15T08:20:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C2",
+                    "external_request_id": "R2",
+                    "requested_at": "2026-03-15T08:00:00Z",
+                    "due_at": "2026-03-16T08:00:00Z",
+                    "sla_target_hours": 8,
+                    "sla_max_hours": 24,
+                },
+            },
+            {
+                "event_type": "contribution_received",
+                "occurred_at": "2026-03-16T20:00:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C2",
+                    "external_request_id": "R2",
+                    "requested_at": "2026-03-15T08:00:00Z",
+                    "received_at": "2026-03-16T20:00:00Z",
+                    "due_at": "2026-03-16T08:00:00Z",
+                    "response_time_hours": 36,
+                    "lateness_hours": 12,
+                },
+            },
+            {
+                "event_type": "rework_requested",
+                "occurred_at": "2026-03-16T22:00:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C2",
+                    "external_rework_id": "RW1",
+                    "requested_at": "2026-03-16T22:00:00Z",
+                    "severity": "high",
+                    "is_blocking": True,
+                },
+            },
+            {
+                "event_type": "call_scheduled",
+                "occurred_at": "2026-03-15T07:00:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_call_session_id": "CALL1",
+                    "scheduled_at": "2026-03-15T09:00:00Z",
+                },
+            },
+            {
+                "event_type": "call_attendance_recorded",
+                "occurred_at": "2026-03-15T09:05:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_call_session_id": "CALL1",
+                    "attendance_record_id": "A1",
+                    "attendee_label": "Legal team",
+                    "attendance_status": "attended",
+                },
+            },
+            {
+                "event_type": "call_attendance_recorded",
+                "occurred_at": "2026-03-15T09:05:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_call_session_id": "CALL1",
+                    "attendance_record_id": "A2",
+                    "attendee_label": "Sales team",
+                    "attendance_status": "absent",
+                },
+            },
+        ]
+        for payload in seed_events:
+            response = self.client.post(
+                "/v1/tenders/TEN-OPS/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        snapshot_response = self.client.get(
+            "/v1/tenders/TEN-OPS/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        snapshot = snapshot_response.json()
+        scores = {item["kpi_code"]: item for item in snapshot["kpis"]}
+        self.assertEqual(snapshot["analytical_phase"], "S6")
+        self.assertEqual(snapshot["health"], "red")
+        self.assertEqual(scores["B1"]["value"], 85.0)
+        self.assertEqual(scores["B2"]["value"], 57.5)
+        self.assertEqual(scores["B3"]["value"], 50.0)
+        self.assertEqual(scores["B4"]["value"], 84.0)
+        self.assertEqual(scores["E"]["value"], 71.2)
+        self.assertEqual(scores["B1"]["provenance"], "measured")
+        self.assertEqual(scores["B4"]["health"], "green")

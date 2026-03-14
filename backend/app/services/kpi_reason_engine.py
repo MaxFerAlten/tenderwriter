@@ -381,6 +381,192 @@ def build_tender_outcome_recorded_event_payload(*, outcome: str, recorded_at: da
     }
 
 
+def _duration_hours(start: datetime | None, end: datetime | None) -> float | None:
+    normalized_start = _as_utc(start)
+    normalized_end = _as_utc(end)
+    if normalized_start is None or normalized_end is None:
+        return None
+    return round((normalized_end - normalized_start).total_seconds() / 3600, 2)
+
+
+def build_contribution_request_created_event_payload(
+    *,
+    request: ContributionRequest,
+    contribution: ContributionUnit,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_request_id": str(request.id),
+            "title": contribution.title,
+            "department_name": contribution.department_name,
+            "owner_user_id": contribution.owner_user_id,
+            "requested_to_user_id": request.requested_to_user_id,
+            "requested_to_label": request.requested_to_label,
+            "request_channel": request.request_channel,
+            "requested_at": _datetime_to_iso(request.requested_at),
+            "due_at": _datetime_to_iso(request.due_at or contribution.due_at),
+            "sla_target_hours": request.sla_target_hours,
+            "sla_max_hours": request.sla_max_hours,
+            "proposal_section_id": contribution.proposal_section_id,
+        }
+    )
+
+
+def build_contribution_due_date_set_event_payload(
+    *,
+    request: ContributionRequest,
+    contribution: ContributionUnit,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_request_id": str(request.id),
+            "due_at": _datetime_to_iso(request.due_at or contribution.due_at),
+        }
+    )
+
+
+def build_contribution_received_event_payload(
+    *,
+    request: ContributionRequest,
+    contribution: ContributionUnit,
+) -> dict[str, Any]:
+    due_at = request.due_at or contribution.due_at
+    response_received_at = request.response_received_at
+    response_time_hours = _duration_hours(request.requested_at, response_received_at)
+    lateness_hours = None
+    if _as_utc(due_at) is not None and _as_utc(response_received_at) is not None:
+        lateness_hours = round(max(0.0, (_as_utc(response_received_at) - _as_utc(due_at)).total_seconds() / 3600), 2)
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_request_id": str(request.id),
+            "requested_at": _datetime_to_iso(request.requested_at),
+            "received_at": _datetime_to_iso(response_received_at),
+            "due_at": _datetime_to_iso(due_at),
+            "response_time_hours": response_time_hours,
+            "lateness_hours": lateness_hours,
+            "within_deadline": lateness_hours is None or lateness_hours <= 0,
+            "within_sla_target": response_time_hours is not None and request.sla_target_hours is not None and response_time_hours <= request.sla_target_hours,
+            "within_sla_max": response_time_hours is not None and request.sla_max_hours is not None and response_time_hours <= request.sla_max_hours,
+            "response_summary": request.response_summary,
+        }
+    )
+
+
+def build_review_cycle_started_event_payload(*, review: ReviewCycle, contribution: ContributionUnit) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_review_cycle_id": str(review.id),
+            "stage_name": review.stage_name,
+            "reviewer_id": review.reviewer_id,
+            "started_at": _datetime_to_iso(review.started_at),
+        }
+    )
+
+
+def build_contribution_review_completed_event_payload(
+    *,
+    review: ReviewCycle,
+    contribution: ContributionUnit,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_review_cycle_id": str(review.id),
+            "stage_name": review.stage_name,
+            "reviewer_id": review.reviewer_id,
+            "started_at": _datetime_to_iso(review.started_at),
+            "completed_at": _datetime_to_iso(review.completed_at),
+            "cycle_time_hours": _duration_hours(review.started_at, review.completed_at),
+            "outcome": review.outcome,
+            "notes": review.notes,
+        }
+    )
+
+
+def build_rework_requested_event_payload(*, rework: ReworkAction, contribution: ContributionUnit) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_rework_id": str(rework.id),
+            "external_review_cycle_id": str(rework.review_cycle_id) if rework.review_cycle_id else None,
+            "assigned_to_user_id": rework.assigned_to_user_id,
+            "severity": rework.severity,
+            "is_blocking": rework.is_blocking,
+            "reason": rework.reason,
+            "due_at": _datetime_to_iso(rework.due_at),
+            "requested_at": _datetime_to_iso(rework.requested_at),
+        }
+    )
+
+
+def build_rework_resolved_event_payload(*, rework: ReworkAction, contribution: ContributionUnit) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": str(contribution.id),
+            "external_rework_id": str(rework.id),
+            "resolved_at": _datetime_to_iso(rework.resolved_at),
+            "requested_at": _datetime_to_iso(rework.requested_at),
+            "resolution_time_hours": _duration_hours(rework.requested_at, rework.resolved_at),
+            "resolution_notes": rework.resolution_notes,
+            "severity": rework.severity,
+            "is_blocking": rework.is_blocking,
+        }
+    )
+
+
+def build_compliance_gate_opened_event_payload(*, gate: ComplianceGate) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_gate_id": str(gate.id),
+            "external_contribution_id": str(gate.contribution_unit_id) if gate.contribution_unit_id else None,
+            "gate_name": gate.gate_name,
+            "owner_user_id": gate.owner_user_id,
+            "due_at": _datetime_to_iso(gate.due_at),
+        }
+    )
+
+
+def build_compliance_gate_decision_event_payload(*, gate: ComplianceGate) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_gate_id": str(gate.id),
+            "external_contribution_id": str(gate.contribution_unit_id) if gate.contribution_unit_id else None,
+            "gate_name": gate.gate_name,
+            "status": _enum_value(gate.status),
+            "evaluated_at": _datetime_to_iso(gate.evaluated_at),
+            "decision_notes": gate.decision_notes,
+        }
+    )
+
+
+def build_call_scheduled_event_payload(*, call: CallSession) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_call_session_id": str(call.id),
+            "title": call.title,
+            "scheduled_at": _datetime_to_iso(call.scheduled_at),
+        }
+    )
+
+
+def build_call_attendance_recorded_event_payload(*, record: AttendanceRecord, call: CallSession) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_call_session_id": str(call.id),
+            "attendance_record_id": str(record.id),
+            "user_id": record.user_id,
+            "attendee_label": record.attendee_label,
+            "attendance_status": _enum_value(record.attendance_status),
+            "recorded_at": _datetime_to_iso(record.recorded_at),
+            "scheduled_at": _datetime_to_iso(call.scheduled_at),
+        }
+    )
+
+
 def apply_delivery_result(event: KpiDomainEvent, result: KpiClientResult) -> KpiDomainEvent:
     """Update a persisted KPI event row with the outbound delivery result."""
 
@@ -529,6 +715,7 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
+
 
 
 

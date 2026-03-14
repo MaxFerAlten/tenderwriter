@@ -111,7 +111,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, auth, chat, content_library, gateway_admin, kpi_admin, onlyoffice, proposals, rag, system, tenders
+    from app.api import admin, auth, chat, content_library, gateway_admin, kpi_admin, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -135,3 +135,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+

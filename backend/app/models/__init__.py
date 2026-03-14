@@ -448,6 +448,22 @@ class AIGatewayTarget(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+from app.models.operational_observability import (
+    AttendanceRecord,
+    AttendanceStatus,
+    CallSession,
+    CallSessionStatus,
+    ComplianceGate,
+    ComplianceGateStatus,
+    ContributionRequest,
+    ContributionRequestStatus,
+    ContributionUnit,
+    ContributionUnitStatus,
+    ReworkAction,
+    ReworkStatus,
+    ReviewCycle,
+    ReviewCycleStatus,
+)
 from app.models.llm_settings import LLMSettings
 from app.models.app_settings import AppSettings
 
