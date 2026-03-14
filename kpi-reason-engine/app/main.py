@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 import logging
 
 import structlog
-from fastapi import FastAPI, status
+from fastapi import Depends, FastAPI, Request, status
 
+from app.auth import require_internal_service
 from app.config import settings
 from app.schemas import (
     AcceptedResponse,
@@ -28,6 +29,7 @@ from app.schemas import (
     TransitionItem,
     TransitionsResponse,
 )
+from app.store import SqliteStore
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO), format="%(message)s")
 structlog.configure(
@@ -43,14 +45,21 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    store = SqliteStore(settings.database_path)
+    store.open()
+    app.state.store = store
     logger.info(
         "service.starting",
         service=settings.app_name,
         version=settings.app_version,
         base_url=settings.public_base_url,
+        database_path=settings.database_path,
     )
-    yield
-    logger.info("service.stopping", service=settings.app_name, version=settings.app_version)
+    try:
+        yield
+    finally:
+        store.close()
+        logger.info("service.stopping", service=settings.app_name, version=settings.app_version)
 
 
 app = FastAPI(
@@ -59,6 +68,10 @@ app = FastAPI(
     debug=settings.app_debug,
     lifespan=lifespan,
 )
+
+
+def get_store(request: Request) -> SqliteStore:
+    return request.app.state.store
 
 
 def _accepted_message(action: str) -> str:
@@ -70,6 +83,17 @@ def _placeholder_scores() -> list[KpiScore]:
     return [KpiScore(kpi_code=code, label=f"{code} placeholder") for code in codes]
 
 
+def _base_notes(external_tender_id: str, store: SqliteStore) -> list[str]:
+    event_count = store.count_domain_events(external_tender_id)
+    document_count = store.count_document_contexts(external_tender_id)
+    job_count = store.count_analysis_jobs(external_tender_id)
+    return [
+        f"Stored events: {event_count}.",
+        f"Stored document contexts: {document_count}.",
+        f"Queued analysis jobs: {job_count}.",
+    ]
+
+
 @app.get("/health", response_model=ServiceHealthResponse)
 async def health() -> ServiceHealthResponse:
     return ServiceHealthResponse(service=settings.app_name, version=settings.app_version)
@@ -79,8 +103,13 @@ async def health() -> ServiceHealthResponse:
     "/v1/tenders",
     response_model=AcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_internal_service)],
 )
-async def sync_tender(payload: TenderSyncRequest) -> AcceptedResponse:
+async def sync_tender(
+    payload: TenderSyncRequest,
+    store: SqliteStore = Depends(get_store),
+) -> AcceptedResponse:
+    store.upsert_tender(payload.model_dump(mode="json"))
     return AcceptedResponse(
         message=_accepted_message("Tender sync"),
         external_tender_id=payload.external_tender_id,
@@ -91,11 +120,14 @@ async def sync_tender(payload: TenderSyncRequest) -> AcceptedResponse:
     "/v1/tenders/{external_tender_id}/events",
     response_model=EventAcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_internal_service)],
 )
 async def ingest_event(
     external_tender_id: str,
     payload: DomainEventRequest,
+    store: SqliteStore = Depends(get_store),
 ) -> EventAcceptedResponse:
+    store.insert_domain_event(external_tender_id, payload.model_dump(mode="json"))
     return EventAcceptedResponse(
         message=_accepted_message("Domain event ingestion"),
         external_tender_id=external_tender_id,
@@ -107,11 +139,14 @@ async def ingest_event(
     "/v1/tenders/{external_tender_id}/documents/context",
     response_model=AcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_internal_service)],
 )
 async def ingest_document_context(
     external_tender_id: str,
     payload: DocumentContextRequest,
+    store: SqliteStore = Depends(get_store),
 ) -> AcceptedResponse:
+    store.store_document_context(external_tender_id, payload.model_dump(mode="json"))
     return AcceptedResponse(
         message=_accepted_message(f"Document context ingestion for {payload.document_id}"),
         external_tender_id=external_tender_id,
@@ -122,11 +157,14 @@ async def ingest_document_context(
     "/v1/tenders/{external_tender_id}/analysis-jobs",
     response_model=AnalysisJobAcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_internal_service)],
 )
 async def request_analysis_job(
     external_tender_id: str,
     payload: AnalysisJobRequest,
+    store: SqliteStore = Depends(get_store),
 ) -> AnalysisJobAcceptedResponse:
+    store.enqueue_analysis_job(external_tender_id, payload.model_dump(mode="json"))
     return AnalysisJobAcceptedResponse(
         message=_accepted_message("Analysis job"),
         external_tender_id=external_tender_id,
@@ -134,74 +172,149 @@ async def request_analysis_job(
     )
 
 
-@app.get("/v1/tenders/{external_tender_id}/snapshot", response_model=TenderSnapshotResponse)
-async def get_snapshot(external_tender_id: str) -> TenderSnapshotResponse:
+@app.get(
+    "/v1/tenders/{external_tender_id}/snapshot",
+    response_model=TenderSnapshotResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_snapshot(
+    external_tender_id: str,
+    store: SqliteStore = Depends(get_store),
+) -> TenderSnapshotResponse:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        return TenderSnapshotResponse(
+            external_tender_id=external_tender_id,
+            generated_at=datetime.now(timezone.utc),
+            kpis=_placeholder_scores(),
+            notes=["Tender not synchronized yet."],
+        )
+
+    notes = [
+        f"Tender mirror synchronized at {tender['last_synced_at']}.",
+        *_base_notes(external_tender_id, store),
+    ]
     return TenderSnapshotResponse(
         external_tender_id=external_tender_id,
+        analytical_phase=tender.get("analytical_phase"),
+        health=tender.get("health", "unknown"),
         generated_at=datetime.now(timezone.utc),
         kpis=_placeholder_scores(),
-        notes=["Sprint 1 freezes the API contract; analytical computation starts in Sprint 2."],
+        notes=notes,
     )
 
 
-@app.get("/v1/tenders/{external_tender_id}/diagnostics", response_model=DiagnosticsResponse)
-async def get_diagnostics(external_tender_id: str) -> DiagnosticsResponse:
+@app.get(
+    "/v1/tenders/{external_tender_id}/diagnostics",
+    response_model=DiagnosticsResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_diagnostics(
+    external_tender_id: str,
+    store: SqliteStore = Depends(get_store),
+) -> DiagnosticsResponse:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        return DiagnosticsResponse(
+            external_tender_id=external_tender_id,
+            generated_at=datetime.now(timezone.utc),
+            summary="Tender not synchronized yet.",
+            findings=[],
+        )
+
     return DiagnosticsResponse(
         external_tender_id=external_tender_id,
         generated_at=datetime.now(timezone.utc),
+        summary=(
+            "Analytical computation is not ready yet, but the tender mirror and base event telemetry "
+            "are available."
+        ),
+        findings=_base_notes(external_tender_id, store),
     )
 
 
-@app.get("/v1/tenders/{external_tender_id}/transitions", response_model=TransitionsResponse)
-async def get_transitions(external_tender_id: str) -> TransitionsResponse:
-    return TransitionsResponse(
-        external_tender_id=external_tender_id,
-        generated_at=datetime.now(timezone.utc),
-        items=[
+@app.get(
+    "/v1/tenders/{external_tender_id}/transitions",
+    response_model=TransitionsResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_transitions(
+    external_tender_id: str,
+    store: SqliteStore = Depends(get_store),
+) -> TransitionsResponse:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        items: list[TransitionItem] = []
+    else:
+        items = [
             TransitionItem(
                 from_state="S0",
                 to_state="S0",
-                cause="Sprint 1 placeholder response",
+                cause=f"Current workflow status: {tender.get('current_status') or 'unknown'}.",
                 confidence=1.0,
             )
-        ],
+        ]
+    return TransitionsResponse(
+        external_tender_id=external_tender_id,
+        generated_at=datetime.now(timezone.utc),
+        items=items,
     )
 
 
-@app.get("/v1/tenders/{external_tender_id}/forecast", response_model=ForecastResponse)
-async def get_forecast(external_tender_id: str) -> ForecastResponse:
+@app.get(
+    "/v1/tenders/{external_tender_id}/forecast",
+    response_model=ForecastResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_forecast(
+    external_tender_id: str,
+    store: SqliteStore = Depends(get_store),
+) -> ForecastResponse:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        description = "Forecasting is blocked until the tender is synchronized."
+    else:
+        description = (
+            "Forecasting will be introduced after KPI scoring is enabled; base telemetry is already persisted."
+        )
     return ForecastResponse(
         external_tender_id=external_tender_id,
         generated_at=datetime.now(timezone.utc),
         scenarios=[
             ForecastScenario(
                 name="not_ready",
-                description="Forecasting will be introduced after the first telemetry increments.",
+                description=description,
             )
         ],
     )
 
 
-@app.get("/v1/admin/portfolio/overview", response_model=PortfolioOverviewResponse)
-async def get_portfolio_overview() -> PortfolioOverviewResponse:
+@app.get(
+    "/v1/admin/portfolio/overview",
+    response_model=PortfolioOverviewResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_portfolio_overview(
+    store: SqliteStore = Depends(get_store),
+) -> PortfolioOverviewResponse:
+    overview = store.get_portfolio_overview()
     return PortfolioOverviewResponse(
         generated_at=datetime.now(timezone.utc),
-        tenders_by_health={"unknown": 0},
+        portfolio_health=overview["portfolio_health"],
+        total_tenders=overview["total_tenders"],
+        tenders_by_health=overview["tenders_by_health"],
     )
 
 
 @app.get(
     "/v1/admin/portfolio/bottlenecks",
     response_model=PortfolioBottlenecksResponse,
+    dependencies=[Depends(require_internal_service)],
 )
-async def get_portfolio_bottlenecks() -> PortfolioBottlenecksResponse:
+async def get_portfolio_bottlenecks(
+    store: SqliteStore = Depends(get_store),
+) -> PortfolioBottlenecksResponse:
     return PortfolioBottlenecksResponse(
         generated_at=datetime.now(timezone.utc),
-        items=[
-            BottleneckItem(
-                external_tender_id="placeholder",
-                bottleneck_type="not_ready",
-                summary="Portfolio bottlenecks will be populated starting from Sprint 2 telemetry.",
-            )
-        ],
+        items=[BottleneckItem(**item) for item in store.list_bottlenecks()],
     )

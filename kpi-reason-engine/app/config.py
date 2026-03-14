@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
     service_token: str = "changeme-kpi-service-token"
     public_base_url: str = "http://tw-kpi-reason-engine:8010"
+    database_path: str = "/app/data/kpi_reason_engine.db"
 
     model_config = SettingsConfigDict(
         env_prefix="KPI_REASON_ENGINE_",

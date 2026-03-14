@@ -9,3 +9,5 @@ venv
 dist
 build
 tenderwriter_kpi_reason_engine.egg-info
+data/
+
