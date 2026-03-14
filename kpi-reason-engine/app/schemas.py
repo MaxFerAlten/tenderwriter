@@ -31,6 +31,9 @@ class RequirementContext(BaseModel):
     external_requirement_id: str
     reference: str | None = None
     summary: str | None = None
+    priority: str | None = None
+    compliance_status: str | None = None
+    mapped_section_id: str | None = None
 
 
 class SectionContext(BaseModel):

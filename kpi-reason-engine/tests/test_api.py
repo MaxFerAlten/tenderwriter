@@ -82,6 +82,8 @@ class KpiReasonEngineApiTests(unittest.TestCase):
                         "external_requirement_id": "REQ-1",
                         "reference": "1.2",
                         "summary": "Need ISO certification",
+                        "priority": "high",
+                        "compliance_status": "not_addressed",
                     }
                 ],
                 "section_contexts": [
@@ -107,6 +109,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(snapshot["status"], "not_ready")
         self.assertEqual(snapshot["external_tender_id"], "TEN-001")
         self.assertEqual(snapshot["health"], "unknown")
+        self.assertEqual(snapshot["analytical_phase"], "S0")
         self.assertIn("Tender mirror synchronized", snapshot["notes"][0])
         stored = self.client.app.state.store.get_tender("TEN-001")
         self.assertEqual(stored["title"], "Large Framework Tender")
@@ -209,6 +212,102 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "not_ready")
         self.assertEqual(response.json()["notes"], ["Tender not synchronized yet."])
+
+    def test_partial_snapshot_scores_a1_and_a4_after_requirements_and_section_updates(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-777",
+                "title": "Regional Tender",
+                "customer_name": "Northwind",
+                "due_at": "2026-04-30T10:00:00Z",
+                "current_status": "active",
+                "departments": ["sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide ISO 27001 evidence",
+                        "priority": "high",
+                        "compliance_status": "fully_addressed",
+                        "mapped_section_id": "SEC-1",
+                    },
+                    {
+                        "external_requirement_id": "REQ-2",
+                        "reference": "1.2",
+                        "summary": "Include continuity plan",
+                        "priority": "medium",
+                        "compliance_status": "not_addressed",
+                    },
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Security",
+                        "owner_department": "sales",
+                        "status": "approved",
+                    },
+                    {
+                        "external_section_id": "SEC-2",
+                        "title": "Operations",
+                        "owner_department": "sales",
+                        "status": "in_progress",
+                    },
+                ],
+                "metadata": {"priority": "high"},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-777/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-14T09:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-777/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-14T09:01:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 2},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-777/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "proposal_section_updated",
+                "occurred_at": "2026-03-14T09:02:00Z",
+                "source": "tw-backend",
+                "payload": {"external_section_id": "SEC-2"},
+            },
+        )
+
+        snapshot_response = self.client.get(
+            "/v1/tenders/TEN-777/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        snapshot = snapshot_response.json()
+        a1 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A1")
+        a4 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A4")
+        self.assertEqual(snapshot["analytical_phase"], "S4")
+        self.assertEqual(snapshot["health"], "amber")
+        self.assertEqual(a1["value"], 67.5)
+        self.assertEqual(a1["health"], "amber")
+        self.assertEqual(a1["provenance"], "measured")
+        self.assertEqual(a4["value"], 65.5)
+        self.assertEqual(a4["health"], "amber")
+        stored = self.client.app.state.store.get_tender("TEN-777")
+        self.assertEqual(stored["health"], "amber")
+        self.assertEqual(stored["analytical_phase"], "S4")
 
     def test_admin_portfolio_endpoints_reflect_persisted_tenders(self) -> None:
         self.client.post(

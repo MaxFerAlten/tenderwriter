@@ -184,6 +184,9 @@ def build_tender_sync_payload(tender: Tender) -> dict[str, Any]:
                     "external_requirement_id": str(requirement.id),
                     "reference": requirement.category,
                     "summary": requirement.requirement_text,
+                    "priority": requirement.priority,
+                    "compliance_status": _enum_value(requirement.compliance_status),
+                    "mapped_section_id": str(requirement.proposal_section_id) if requirement.proposal_section_id else None,
                 }
             )
             for requirement in requirements
@@ -259,6 +262,49 @@ def build_tender_document_ingested_event_payload(
             "ingestion_status": stats.get("status"),
             "chunks": stats.get("chunks"),
             "entities": stats.get("entities"),
+        }
+    )
+
+
+def build_requirements_extracted_event_payload(
+    *,
+    document_id: str,
+    filename: str,
+    extracted_candidates: Sequence[dict[str, Any]],
+    created_requirements: Sequence[TenderRequirement],
+) -> dict[str, Any]:
+    priority_breakdown: dict[str, int] = {}
+    references: list[str] = []
+    sample_requirements: list[str] = []
+    for candidate in extracted_candidates:
+        priority = str(candidate.get("priority") or "medium").strip().casefold()
+        if priority not in {"high", "medium", "low"}:
+            priority = "medium"
+        priority_breakdown[priority] = priority_breakdown.get(priority, 0) + 1
+
+        reference = candidate.get("reference") or candidate.get("section") or candidate.get("source_section")
+        if reference is not None:
+            references.append(str(reference))
+
+        summary = str(candidate.get("summary") or "").strip()
+        if summary and len(sample_requirements) < 5:
+            sample_requirements.append(summary)
+
+    unique_references = list(dict.fromkeys(references))
+    return _compact_dict(
+        {
+            "document_id": document_id,
+            "document_type": "tender",
+            "filename": filename,
+            "requirement_count": len(extracted_candidates),
+            "new_requirement_count": len(created_requirements),
+            "created_requirement_ids": [
+                str(requirement.id) for requirement in created_requirements if getattr(requirement, "id", None) is not None
+            ],
+            "priority_breakdown": priority_breakdown,
+            "references": unique_references[:10],
+            "sample_requirements": sample_requirements,
+            "extraction_method": "heuristic_v1",
         }
     )
 
@@ -453,4 +499,5 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
+
 

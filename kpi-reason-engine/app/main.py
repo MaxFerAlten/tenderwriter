@@ -7,6 +7,7 @@ import logging
 import structlog
 from fastapi import Depends, FastAPI, Request, status
 
+from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
 from app.auth import require_internal_service
 from app.config import settings
 from app.schemas import (
@@ -78,9 +79,10 @@ def _accepted_message(action: str) -> str:
     return f"{action} accepted for asynchronous processing."
 
 
-def _placeholder_scores() -> list[KpiScore]:
+def _placeholder_scores(exclude: set[str] | None = None) -> list[KpiScore]:
+    exclude = exclude or set()
     codes = ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "Q", "E"]
-    return [KpiScore(kpi_code=code, label=f"{code} placeholder") for code in codes]
+    return [KpiScore(kpi_code=code, label=f"{code} placeholder") for code in codes if code not in exclude]
 
 
 def _base_notes(external_tender_id: str, store: SqliteStore) -> list[str]:
@@ -92,6 +94,21 @@ def _base_notes(external_tender_id: str, store: SqliteStore) -> list[str]:
         f"Stored document contexts: {document_count}.",
         f"Queued analysis jobs: {job_count}.",
     ]
+
+
+def _build_analysis(store: SqliteStore, external_tender_id: str) -> tuple[dict[str, object] | None, AnalysisSnapshot | None]:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        return None, None
+
+    analysis = compute_analysis_snapshot(tender, store.list_domain_events(external_tender_id))
+    store.update_tender_analysis(
+        external_tender_id,
+        health=analysis.health,
+        analytical_phase=analysis.analytical_phase,
+    )
+    tender = store.get_tender(external_tender_id)
+    return tender, analysis
 
 
 @app.get("/health", response_model=ServiceHealthResponse)
@@ -110,6 +127,7 @@ async def sync_tender(
     store: SqliteStore = Depends(get_store),
 ) -> AcceptedResponse:
     store.upsert_tender(payload.model_dump(mode="json"))
+    _build_analysis(store, payload.external_tender_id)
     return AcceptedResponse(
         message=_accepted_message("Tender sync"),
         external_tender_id=payload.external_tender_id,
@@ -128,6 +146,7 @@ async def ingest_event(
     store: SqliteStore = Depends(get_store),
 ) -> EventAcceptedResponse:
     store.insert_domain_event(external_tender_id, payload.model_dump(mode="json"))
+    _build_analysis(store, external_tender_id)
     return EventAcceptedResponse(
         message=_accepted_message("Domain event ingestion"),
         external_tender_id=external_tender_id,
@@ -181,8 +200,8 @@ async def get_snapshot(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> TenderSnapshotResponse:
-    tender = store.get_tender(external_tender_id)
-    if tender is None:
+    tender, analysis = _build_analysis(store, external_tender_id)
+    if tender is None or analysis is None:
         return TenderSnapshotResponse(
             external_tender_id=external_tender_id,
             generated_at=datetime.now(timezone.utc),
@@ -192,14 +211,16 @@ async def get_snapshot(
 
     notes = [
         f"Tender mirror synchronized at {tender['last_synced_at']}.",
+        *analysis.notes,
         *_base_notes(external_tender_id, store),
     ]
+    concrete_codes = {score.kpi_code for score in analysis.kpis}
     return TenderSnapshotResponse(
         external_tender_id=external_tender_id,
-        analytical_phase=tender.get("analytical_phase"),
-        health=tender.get("health", "unknown"),
+        analytical_phase=analysis.analytical_phase,
+        health=analysis.health,
         generated_at=datetime.now(timezone.utc),
-        kpis=_placeholder_scores(),
+        kpis=[*analysis.kpis, *_placeholder_scores(concrete_codes)],
         notes=notes,
     )
 
@@ -213,8 +234,8 @@ async def get_diagnostics(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> DiagnosticsResponse:
-    tender = store.get_tender(external_tender_id)
-    if tender is None:
+    tender, analysis = _build_analysis(store, external_tender_id)
+    if tender is None or analysis is None:
         return DiagnosticsResponse(
             external_tender_id=external_tender_id,
             generated_at=datetime.now(timezone.utc),
@@ -222,14 +243,17 @@ async def get_diagnostics(
             findings=[],
         )
 
+    findings = [*analysis.notes]
+    for score in analysis.kpis:
+        if score.value is not None:
+            findings.append(f"{score.kpi_code}: {score.value} ({score.health}).")
+        findings.extend(score.evidence[:2])
+    findings.extend(_base_notes(external_tender_id, store))
     return DiagnosticsResponse(
         external_tender_id=external_tender_id,
         generated_at=datetime.now(timezone.utc),
-        summary=(
-            "Analytical computation is not ready yet, but the tender mirror and base event telemetry "
-            "are available."
-        ),
-        findings=_base_notes(external_tender_id, store),
+        summary=analysis.summary,
+        findings=findings,
     )
 
 
@@ -242,16 +266,17 @@ async def get_transitions(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> TransitionsResponse:
-    tender = store.get_tender(external_tender_id)
-    if tender is None:
+    tender, analysis = _build_analysis(store, external_tender_id)
+    if tender is None or analysis is None or analysis.analytical_phase is None:
         items: list[TransitionItem] = []
     else:
+        current_phase = analysis.analytical_phase
         items = [
             TransitionItem(
-                from_state="S0",
-                to_state="S0",
-                cause=f"Current workflow status: {tender.get('current_status') or 'unknown'}.",
-                confidence=1.0,
+                from_state="S0" if current_phase != "S0" else current_phase,
+                to_state=current_phase,
+                cause=analysis.summary,
+                confidence=0.68,
             )
         ]
     return TransitionsResponse(
@@ -270,12 +295,13 @@ async def get_forecast(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> ForecastResponse:
-    tender = store.get_tender(external_tender_id)
-    if tender is None:
+    tender, analysis = _build_analysis(store, external_tender_id)
+    if tender is None or analysis is None:
         description = "Forecasting is blocked until the tender is synchronized."
     else:
         description = (
-            "Forecasting will be introduced after KPI scoring is enabled; base telemetry is already persisted."
+            "Forecasting will remain rule-based in a later sprint; current partial snapshot "
+            f"reports {analysis.health} health in {analysis.analytical_phase or 'unknown phase'}."
         )
     return ForecastResponse(
         external_tender_id=external_tender_id,

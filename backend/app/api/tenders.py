@@ -24,12 +24,15 @@ from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
 from app.services.kpi_reason_engine import (
+    build_requirements_extracted_event_payload,
     build_tender_created_event_payload,
     build_tender_document_ingested_event_payload,
     build_tender_outcome_recorded_event_payload,
+    publish_domain_event,
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
+from app.services.tender_requirements import apply_extracted_requirement_candidates
 
 router = APIRouter()
 
@@ -479,6 +482,7 @@ async def import_tender_document(
         "filename": file.filename,
         "stats": stats,
     }
+
 
 
 

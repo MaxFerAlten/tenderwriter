@@ -1,4 +1,4 @@
-"""Unit tests for the Sprint 2 KPI reason engine backend integration."""
+"""Unit tests for the KPI reason engine backend integration and payload helpers."""
 
 import json
 import os
@@ -21,6 +21,7 @@ for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
 from app.models import (
+    ComplianceStatus,
     KpiDomainEvent,
     KpiEventDeliveryStatus,
     Proposal,
@@ -37,6 +38,7 @@ from app.services.kpi_reason_engine import (
     apply_delivery_result,
     build_domain_event_payload,
     build_proposal_section_updated_event_payload,
+    build_requirements_extracted_event_payload,
     build_tender_created_event_payload,
     build_tender_document_ingested_event_payload,
     build_tender_sync_payload,
@@ -73,6 +75,8 @@ class TenderSyncPayloadTests(unittest.TestCase):
                 requirement_text="Must provide ISO 27001 evidence",
                 category="1.2",
                 priority="high",
+                compliance_status=ComplianceStatus.NOT_ADDRESSED,
+                proposal_section_id=202,
             )
         ]
 
@@ -119,6 +123,9 @@ class TenderSyncPayloadTests(unittest.TestCase):
         self.assertEqual(payload["current_status"], "active")
         self.assertEqual(payload["metadata"]["proposal_id"], 11)
         self.assertEqual(payload["requirement_contexts"][0]["external_requirement_id"], "41")
+        self.assertEqual(payload["requirement_contexts"][0]["priority"], "high")
+        self.assertEqual(payload["requirement_contexts"][0]["compliance_status"], "not_addressed")
+        self.assertEqual(payload["requirement_contexts"][0]["mapped_section_id"], "202")
         self.assertEqual(payload["section_contexts"][0]["external_section_id"], "202")
         self.assertEqual(payload["section_contexts"][0]["status"], "in_progress")
 
@@ -152,6 +159,22 @@ class TenderSyncPayloadTests(unittest.TestCase):
             filename="source.pdf",
             stats={"status": "completed", "chunks": 8, "entities": 0},
         )
+        requirement_payload = build_requirements_extracted_event_payload(
+            document_id="tenders/tender_3/source.pdf",
+            filename="source.pdf",
+            extracted_candidates=[
+                {"summary": "Must provide ISO 27001 evidence", "reference": "1.2", "priority": "high"},
+                {"summary": "Include continuity plan", "reference": "1.3", "priority": "medium"},
+            ],
+            created_requirements=[
+                TenderRequirement(
+                    id=44,
+                    requirement_text="Must provide ISO 27001 evidence",
+                    category="1.2",
+                    priority="high",
+                )
+            ],
+        )
         section_payload = build_proposal_section_updated_event_payload(
             section=section,
             change_type="section_content_saved",
@@ -162,6 +185,10 @@ class TenderSyncPayloadTests(unittest.TestCase):
         self.assertEqual(created_payload["status"], "draft")
         self.assertEqual(document_payload["document_id"], "tenders/tender_3/source.pdf")
         self.assertEqual(document_payload["chunks"], 8)
+        self.assertEqual(requirement_payload["requirement_count"], 2)
+        self.assertEqual(requirement_payload["new_requirement_count"], 1)
+        self.assertEqual(requirement_payload["created_requirement_ids"], ["44"])
+        self.assertEqual(requirement_payload["priority_breakdown"], {"high": 1, "medium": 1})
         self.assertEqual(section_payload["external_section_id"], "90")
         self.assertEqual(section_payload["source"], "onlyoffice")
         self.assertEqual(section_payload["changed_fields"], ["content"])
@@ -273,4 +300,3 @@ class DeliveryStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

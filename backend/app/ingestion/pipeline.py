@@ -11,11 +11,55 @@ Processes uploaded documents (PDF, DOCX, PPTX) through:
 
 from __future__ import annotations
 
+import re
+
 import structlog
 
 from app.config import settings
 
 logger = structlog.get_logger()
+_REQUIREMENT_SECTION_KEYWORDS = (
+    "requirements",
+    "requirement",
+    "mandatory",
+    "eligibility",
+    "compliance",
+    "technical specification",
+    "technical requirements",
+    "requisiti",
+    "requisito",
+    "obblighi",
+    "conformita",
+    "conformita'",
+)
+_REQUIREMENT_LINE_KEYWORDS = (
+    " must ",
+    " shall ",
+    " mandatory",
+    " required",
+    " requirement",
+    " provide",
+    " include",
+    " comply",
+    " certification",
+    "deve",
+    "dovra",
+    "dovranno",
+    "obbligatorio",
+    "richiesto",
+    "fornire",
+    "includere",
+    "conforme",
+)
+_HIGH_PRIORITY_KEYWORDS = (
+    "must",
+    "shall",
+    "mandatory",
+    "required",
+    "deve",
+    "dovra",
+    "obbligatorio",
+)
 
 
 class IngestionPipeline:
@@ -63,10 +107,13 @@ class IngestionPipeline:
         elements = self._parse_document(file_path)
         if not elements:
             logger.warning("No content extracted from document", file_path=file_path)
-            return {"status": "empty", "chunks": 0, "entities": 0}
+            return {"status": "empty", "chunks": 0, "entities": 0, "requirements_detected": 0}
 
         # Step 2: Build structured text from elements
         full_text, section_texts = self._structure_elements(elements)
+        requirement_candidates: list[dict] = []
+        if doc_type == "tender":
+            requirement_candidates = self.extract_requirement_candidates(elements, section_texts)
 
         # Step 3: Chunk the text
         from app.rag.chunker import ChunkMetadata
@@ -97,10 +144,98 @@ class IngestionPipeline:
             "chunks": len(chunks),
             "entities": entity_count,
             "point_ids": point_ids,
+            "requirements_detected": len(requirement_candidates),
+            "requirement_candidates": requirement_candidates,
+            "sections_detected": len(section_texts),
         }
 
         logger.info("Document ingestion complete", **stats)
         return stats
+
+    def extract_requirement_candidates(
+        self,
+        elements: list[dict],
+        section_texts: dict[str, str] | None = None,
+        *,
+        limit: int = 25,
+    ) -> list[dict]:
+        """Heuristically extract requirement candidates from a tender document."""
+
+        section_texts = section_texts or {}
+        candidates: list[dict] = []
+        seen: set[str] = set()
+
+        def add_candidate(text: str, reference: str | None = None) -> None:
+            cleaned = self._normalize_requirement_text(text)
+            if not cleaned or cleaned in seen:
+                return
+            seen.add(cleaned)
+            candidates.append(
+                {
+                    "summary": cleaned,
+                    "reference": reference,
+                    "priority": self._infer_requirement_priority(cleaned),
+                }
+            )
+
+        for section_title, section_text in section_texts.items():
+            if not self._looks_like_requirement_section(section_title):
+                continue
+            for line in self._candidate_lines(section_text):
+                if self._looks_like_requirement_line(line, force=True):
+                    add_candidate(line, section_title)
+                    if len(candidates) >= limit:
+                        return candidates
+
+        for element in elements:
+            text = str(element.get("text") or "").strip()
+            if not text:
+                continue
+            metadata = element.get("metadata") or {}
+            reference = metadata.get("section") or metadata.get("page_number")
+            for line in self._candidate_lines(text):
+                if self._looks_like_requirement_line(line):
+                    add_candidate(line, str(reference) if reference is not None else None)
+                    if len(candidates) >= limit:
+                        return candidates
+
+        return candidates
+
+    def _candidate_lines(self, text: str) -> list[str]:
+        cleaned_text = text.replace("\r", "\n")
+        fragments = re.split(r"\n+|(?<=[.;:])\s{2,}", cleaned_text)
+        return [fragment.strip() for fragment in fragments if fragment and fragment.strip()]
+
+    def _looks_like_requirement_section(self, title: str | None) -> bool:
+        normalized = str(title or "").strip().casefold()
+        return any(keyword in normalized for keyword in _REQUIREMENT_SECTION_KEYWORDS)
+
+    def _looks_like_requirement_line(self, text: str, *, force: bool = False) -> bool:
+        cleaned = self._normalize_requirement_text(text)
+        if len(cleaned) < 18 or len(cleaned) > 280:
+            return False
+
+        normalized = f" {cleaned.casefold()} "
+        keyword_hit = any(keyword in normalized for keyword in _REQUIREMENT_LINE_KEYWORDS)
+        if force and len(cleaned.split()) >= 4:
+            return True
+        if keyword_hit:
+            return True
+        return False
+
+    def _infer_requirement_priority(self, text: str) -> str:
+        normalized = str(text or "").casefold()
+        if any(keyword in normalized for keyword in _HIGH_PRIORITY_KEYWORDS):
+            return "high"
+        if "should" in normalized or "preferable" in normalized:
+            return "low"
+        return "medium"
+
+    def _normalize_requirement_text(self, text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", str(text or "").strip())
+        cleaned = re.sub(r"^[-•*\u2022\s]+", "", cleaned)
+        cleaned = re.sub(r"^(?:\d+|[A-Za-z])[\.)]\s+", "", cleaned)
+        return cleaned.strip(" .;")
 
     def _parse_document(self, file_path: str) -> list[dict]:
         """

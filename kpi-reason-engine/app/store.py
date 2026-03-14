@@ -223,6 +223,44 @@ class SqliteStore:
             "last_synced_at": row["last_synced_at"],
         }
 
+    def list_domain_events(self, external_tender_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                """
+                SELECT event_type, occurred_at, actor_id, source, schema_version, payload_json
+                FROM kpi_domain_events
+                WHERE external_tender_id = ?
+                ORDER BY occurred_at ASC, id ASC
+                """,
+                (external_tender_id,),
+            ).fetchall()
+
+        return [
+            {
+                "event_type": row["event_type"],
+                "occurred_at": row["occurred_at"],
+                "actor_id": row["actor_id"],
+                "source": row["source"],
+                "schema_version": row["schema_version"],
+                "payload": json.loads(row["payload_json"] or "{}"),
+            }
+            for row in rows
+        ]
+
+    def update_tender_analysis(self, external_tender_id: str, *, health: str, analytical_phase: str | None) -> None:
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """
+                UPDATE kpi_tenders
+                SET health = ?, analytical_phase = ?, updated_at = ?
+                WHERE external_tender_id = ?
+                """,
+                (health, analytical_phase, _utcnow_iso(), external_tender_id),
+            )
+            connection.commit()
+
     def count_domain_events(self, external_tender_id: str) -> int:
         with self._lock:
             connection = self._require_connection()
@@ -265,9 +303,18 @@ class SqliteStore:
         if not tenders_by_health:
             tenders_by_health = {"unknown": 0}
 
+        if tenders_by_health.get("red"):
+            portfolio_health = "red"
+        elif tenders_by_health.get("amber"):
+            portfolio_health = "amber"
+        elif tenders_by_health.get("green"):
+            portfolio_health = "green"
+        else:
+            portfolio_health = "unknown"
+
         return {
             "total_tenders": int(total_row["count"] or 0),
-            "portfolio_health": "unknown",
+            "portfolio_health": portfolio_health,
             "tenders_by_health": tenders_by_health,
         }
 
@@ -276,23 +323,35 @@ class SqliteStore:
             connection = self._require_connection()
             rows = connection.execute(
                 """
-                SELECT external_tender_id, title, current_status, health
+                SELECT external_tender_id, title, current_status, health, analytical_phase
                 FROM kpi_tenders
-                ORDER BY updated_at DESC
+                ORDER BY
+                    CASE health
+                        WHEN 'red' THEN 0
+                        WHEN 'amber' THEN 1
+                        WHEN 'green' THEN 2
+                        ELSE 3
+                    END,
+                    updated_at DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
 
-        return [
-            {
-                "external_tender_id": row["external_tender_id"],
-                "bottleneck_type": "analysis_pending",
-                "summary": f"{row['title']} is synchronized but analytical scoring is not ready yet.",
-                "health": row["health"] or "unknown",
-            }
-            for row in rows
-        ]
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            health = row["health"] or "unknown"
+            phase = row["analytical_phase"] or "analysis_pending"
+            bottleneck_type = "analysis_pending" if health == "unknown" else "analytical_risk"
+            items.append(
+                {
+                    "external_tender_id": row["external_tender_id"],
+                    "bottleneck_type": bottleneck_type,
+                    "summary": f"{row['title']} is tracked in {phase} with {health} KPI health.",
+                    "health": health,
+                }
+            )
+        return items
 
     def _require_connection(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -358,4 +417,3 @@ class SqliteStore:
             );
             """
         )
-        connection.commit()
