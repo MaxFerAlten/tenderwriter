@@ -50,6 +50,8 @@ export const authApi = {
     register: (data: Record<string, string>) => request<any>('/auth/register', { method: 'POST', body: data }),
     verifyOtp: (data: Record<string, string>) => request<AuthResponse>('/auth/verify-otp', { method: 'POST', body: data }),
     me: () => request<User>('/auth/me'),
+    updateProfile: (data: { name?: string; email?: string }) =>
+        request<User>('/auth/profile', { method: 'PUT', body: data }),
 };
 
 // ── Tenders ──
@@ -277,7 +279,17 @@ export const systemApi = {
     getLogs: (containerName: string, tail?: number) => request<{ logs: string }>(`/system/logs/${containerName}${tail ? `?tail=${tail}` : ''}`),
     getStats: (containerName: string) => request<any>(`/system/stats/${containerName}`),
     updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
+    getAppSettings: () => request<AppSettingsData>('/system/app-settings'),
+    updateAppSettings: (data: Partial<AppSettingsData>) => request<AppSettingsData>('/system/app-settings', { method: 'PUT', body: data }),
 };
+
+export interface AppSettingsData {
+    rag_model?: string;
+    nginx_read_timeout?: number;
+    nginx_connect_timeout?: number;
+    nginx_send_timeout?: number;
+    admin_enabled?: boolean;
+}
 
 // ── Admin ──
 

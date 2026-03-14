@@ -305,7 +305,39 @@ async def get_current_user(
     return UserResponse.model_validate(user)
 
 
+class ProfileUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+
+
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: UserResponse = Depends(get_current_user)):
     """Get current user profile."""
     return current_user
+
+
+@router.put("/profile", response_model=UserResponse)
+async def update_profile(
+    data: ProfileUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the current user's profile (name and/or email)."""
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if data.email is not None and data.email != user.email:
+        dup = await db.execute(select(User).where(User.email == data.email))
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already in use")
+        user.email = data.email
+
+    if data.name is not None:
+        user.name = data.name
+
+    await db.commit()
+    await db.refresh(user)
+    logger.info("Profile updated", user_id=user.id, email=mask_email(user.email))
+    return UserResponse.model_validate(user)

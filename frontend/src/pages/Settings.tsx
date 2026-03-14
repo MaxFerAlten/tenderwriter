@@ -1,4 +1,4 @@
-import { useState, useEffect, FC } from 'react';
+import { useState, useEffect, useRef, FC } from 'react';
 import { motion } from 'framer-motion';
 import {
     Save,
@@ -15,7 +15,7 @@ import {
     ToggleRight,
     ToggleLeft,
 } from 'lucide-react';
-import { ragApi, systemApi, gatewayApi, llmSettingsApi, GatewayTarget } from '../api/client';
+import { ragApi, systemApi, gatewayApi, llmSettingsApi, authApi, GatewayTarget } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
@@ -25,32 +25,35 @@ interface RAGHealth {
     [key: string]: unknown;
 }
 
+let tempIdCounter = -1;
+
 const Settings: FC = () => {
     const { user } = useAuth();
     const [health, setHealth] = useState<RAGHealth | null>(null);
     const [loadingHealth, setLoadingHealth] = useState(true);
     const [healthError, setHealthError] = useState<string | null>(null);
 
+    // ── All settings state ──
     const [profileName, setProfileName] = useState(user?.name || '');
     const [profileEmail, setProfileEmail] = useState(user?.email || '');
-
-    // Nginx Config State
+    const [ragModel, setRagModel] = useState('Llama 3 (8b)');
     const [readTimeout, setReadTimeout] = useState(300);
     const [connectTimeout, setConnectTimeout] = useState(300);
     const [sendTimeout, setSendTimeout] = useState(300);
-    const [isSavingNginx, setIsSavingNginx] = useState(false);
-    const [nginxResult, setNginxResult] = useState<{ success: boolean, message: string } | null>(null);
-
-    // Gateway targets (admin)
-    const [gatewayTargets, setGatewayTargets] = useState<GatewayTarget[]>([]);
-    const [gwLoading, setGwLoading] = useState(false);
-    const [gwError, setGwError] = useState<string | null>(null);
-
+    const [adminEnabled, setAdminEnabled] = useState(true);
     const [llmMaxTokens, setLlmMaxTokens] = useState<number | ''>(256);
     const [llmTemperature, setLlmTemperature] = useState<number | ''>(0.3);
     const [llmStopTokens, setLlmStopTokens] = useState<string>('');
-    const [llmSaving, setLlmSaving] = useState(false);
-    const [llmError, setLlmError] = useState<string | null>(null);
+
+    // ── Global save state ──
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
+
+    // ── Gateway targets (local state, saved globally) ──
+    const [gatewayTargets, setGatewayTargets] = useState<GatewayTarget[]>([]);
+    const savedTargetsRef = useRef<GatewayTarget[]>([]);  // snapshot of DB state
+    const [gwLoading, setGwLoading] = useState(false);
+    const [gwError, setGwError] = useState<string | null>(null);
     const [gwForm, setGwForm] = useState<Partial<Omit<GatewayTarget, 'id'>>>({
         route_key: 'tender',
         target_kind: 'docker',
@@ -62,6 +65,8 @@ const Settings: FC = () => {
         enabled: true,
         use_anonymizer: false,
     });
+
+    // ── Load functions ──
 
     const checkHealth = async () => {
         try {
@@ -76,115 +81,224 @@ const Settings: FC = () => {
         }
     };
 
-    useEffect(() => {
-        checkHealth();
-        if (user?.role === 'admin') {
-            loadGatewayTargets();
-            loadLlmSettings();
+    const loadAllSettings = async () => {
+        // Load profile
+        try {
+            const me = await authApi.me();
+            setProfileName(me.name || '');
+            setProfileEmail(me.email || '');
+        } catch {
+            // fallback to context user
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.role]);
+
+        // Load app settings
+        try {
+            const s = await systemApi.getAppSettings();
+            if (s.rag_model) setRagModel(s.rag_model);
+            if (s.nginx_read_timeout !== undefined) setReadTimeout(s.nginx_read_timeout);
+            if (s.nginx_connect_timeout !== undefined) setConnectTimeout(s.nginx_connect_timeout);
+            if (s.nginx_send_timeout !== undefined) setSendTimeout(s.nginx_send_timeout);
+            if (s.admin_enabled !== undefined) setAdminEnabled(s.admin_enabled);
+        } catch {
+            // defaults already set
+        }
+
+        // Load LLM settings (admin only)
+        if (user?.role === 'admin') {
+            try {
+                const res = await llmSettingsApi.get();
+                setLlmMaxTokens(res.max_tokens ?? '');
+                setLlmTemperature(res.temperature ?? '');
+                setLlmStopTokens(res.stop_tokens ?? '');
+            } catch {
+                // defaults
+            }
+        }
+    };
 
     const loadGatewayTargets = async () => {
         try {
             setGwLoading(true);
             setGwError(null);
             const items = await gatewayApi.listTargets();
-            setGatewayTargets(items.sort((a, b) => a.priority - b.priority));
-        } catch (err) {
+            const sorted = items.sort((a, b) => a.priority - b.priority);
+            setGatewayTargets(sorted);
+            savedTargetsRef.current = sorted.map((t) => ({ ...t })); // deep copy snapshot
+        } catch {
             setGwError('Impossibile caricare le configurazioni del gateway.');
         } finally {
             setGwLoading(false);
         }
     };
 
-
-    const loadLlmSettings = async () => {
-        try {
-            const res = await llmSettingsApi.get();
-            setLlmMaxTokens(res.max_tokens ?? '');
-            setLlmTemperature(res.temperature ?? '');
-            setLlmStopTokens(res.stop_tokens ?? '');
-        } catch (err) {
-            setLlmError('Impossibile caricare le impostazioni LLM');
+    useEffect(() => {
+        checkHealth();
+        loadAllSettings();
+        if (user?.role === 'admin') {
+            loadGatewayTargets();
         }
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.role]);
 
-    const saveLlmSettings = async () => {
-        try {
-            setLlmSaving(true);
-            setLlmError(null);
-            await llmSettingsApi.update({
-                max_tokens: llmMaxTokens === '' ? null : Number(llmMaxTokens),
-                temperature: llmTemperature === '' ? null : Number(llmTemperature),
-                stop_tokens: llmStopTokens || null,
-            });
-        } catch (err) {
-            setLlmError('Errore nel salvataggio delle impostazioni LLM');
-        } finally {
-            setLlmSaving(false);
-        }
-    };
+    // ── Gateway local-only operations ──
 
-    const handleAddTarget = async () => {
+    const handleAddTarget = () => {
         if (!gwForm.base_url) {
             setGwError('Base URL obbligatoria');
             return;
         }
-        try {
-            setGwError(null);
-            const created = await gatewayApi.createTarget({
-                route_key: gwForm.route_key || 'tender',
-                target_kind: gwForm.target_kind || 'docker',
-                provider: gwForm.provider || 'llama',
-                base_url: gwForm.base_url,
-                model_name: gwForm.model_name || '',
-                enabled: gwForm.enabled ?? true,
-                priority: gwForm.priority ?? 1,
-                timeout_ms: gwForm.timeout_ms ?? 30000,
-                use_anonymizer: gwForm.use_anonymizer ?? false,
-                metadata_json: {},
-            } as any);
-            setGatewayTargets((prev) => [...prev, created].sort((a, b) => a.priority - b.priority));
-            setGwForm((f) => ({ ...f, base_url: '' }));
-        } catch (err) {
-            setGwError('Errore nel salvataggio del target.');
-        }
+        setGwError(null);
+        const newTarget: GatewayTarget = {
+            id: tempIdCounter--,  // negative temporary ID
+            route_key: gwForm.route_key || 'tender',
+            target_kind: gwForm.target_kind || 'docker',
+            provider: gwForm.provider || 'llama',
+            base_url: gwForm.base_url,
+            model_name: gwForm.model_name || '',
+            enabled: gwForm.enabled ?? true,
+            priority: gwForm.priority ?? 1,
+            timeout_ms: gwForm.timeout_ms ?? 30000,
+            use_anonymizer: gwForm.use_anonymizer ?? false,
+            metadata_json: {},
+        };
+        setGatewayTargets((prev) => [...prev, newTarget].sort((a, b) => a.priority - b.priority));
+        setGwForm((f) => ({ ...f, base_url: '', model_name: '' }));
     };
 
-    const toggleEnable = async (t: GatewayTarget) => {
-        try {
-            const updated = await gatewayApi.updateTarget(t.id, { enabled: !t.enabled });
-            setGatewayTargets((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
-        } catch (err) {
-            setGwError('Errore nel salvataggio.');
-        }
+    const toggleEnable = (t: GatewayTarget) => {
+        setGatewayTargets((prev) =>
+            prev.map((x) => (x.id === t.id ? { ...x, enabled: !x.enabled } : x))
+        );
     };
 
-    const removeTarget = async (id: number) => {
-        try {
-            await gatewayApi.deleteTarget(id);
-            setGatewayTargets((prev) => prev.filter((x) => x.id !== id));
-        } catch (err) {
-            setGwError('Errore nella cancellazione.');
-        }
+    const removeTarget = (id: number) => {
+        setGatewayTargets((prev) => prev.filter((x) => x.id !== id));
     };
 
-    const handleSaveNginx = async () => {
-        setIsSavingNginx(true);
-        setNginxResult(null);
+    // ── Single global save ──
+
+    const handleSaveAll = async () => {
+        setIsSaving(true);
+        setSaveResult(null);
+        const errors: string[] = [];
+
+        // 1) Save profile
         try {
-            await systemApi.updateNginx({
-                read_timeout: readTimeout,
-                connect_timeout: connectTimeout,
-                send_timeout: sendTimeout
+            await authApi.updateProfile({ name: profileName, email: profileEmail });
+        } catch (err) {
+            errors.push(err instanceof Error ? err.message : 'Errore salvataggio profilo');
+        }
+
+        // 2) Save app settings
+        try {
+            await systemApi.updateAppSettings({
+                rag_model: ragModel,
+                nginx_read_timeout: readTimeout,
+                nginx_connect_timeout: connectTimeout,
+                nginx_send_timeout: sendTimeout,
+                admin_enabled: adminEnabled,
             });
-setNginxResult({ success: true, message: 'Nginx config updated successfully!' });
         } catch (err) {
-            setNginxResult({ success: false, message: 'Error updating Nginx.' });
-        } finally {
-            setIsSavingNginx(false);
+            errors.push(err instanceof Error ? err.message : 'Errore salvataggio impostazioni app');
         }
+
+        // 3) Save LLM settings (admin only)
+        if (user?.role === 'admin') {
+            try {
+                await llmSettingsApi.update({
+                    max_tokens: llmMaxTokens === '' ? null : Number(llmMaxTokens),
+                    temperature: llmTemperature === '' ? null : Number(llmTemperature),
+                    stop_tokens: llmStopTokens || null,
+                });
+            } catch (err) {
+                errors.push(err instanceof Error ? err.message : 'Errore salvataggio LLM settings');
+            }
+        }
+
+        // 4) Apply nginx hot-reload (best-effort)
+        if (user?.role === 'admin') {
+            try {
+                await systemApi.updateNginx({
+                    read_timeout: readTimeout,
+                    connect_timeout: connectTimeout,
+                    send_timeout: sendTimeout,
+                });
+            } catch {
+                // nginx hot-reload may fail, values are already persisted in step 2
+            }
+        }
+
+        // 5) Sync gateway targets
+        if (user?.role === 'admin') {
+            const saved = savedTargetsRef.current;
+            const current = gatewayTargets;
+            const savedIds = new Set(saved.map((t) => t.id));
+            const currentIds = new Set(current.map((t) => t.id));
+
+            // Delete: in saved but not in current
+            for (const t of saved) {
+                if (!currentIds.has(t.id)) {
+                    try {
+                        await gatewayApi.deleteTarget(t.id);
+                    } catch (err) {
+                        errors.push(`Errore cancellazione target ${t.base_url}`);
+                    }
+                }
+            }
+
+            // Create: in current with negative IDs (new)
+            for (const t of current) {
+                if (t.id < 0) {
+                    try {
+                        await gatewayApi.createTarget({
+                            route_key: t.route_key,
+                            target_kind: t.target_kind,
+                            provider: t.provider,
+                            base_url: t.base_url,
+                            model_name: t.model_name || '',
+                            enabled: t.enabled,
+                            priority: t.priority,
+                            timeout_ms: t.timeout_ms,
+                            use_anonymizer: t.use_anonymizer,
+                            metadata_json: {},
+                        } as any);
+                    } catch (err) {
+                        errors.push(`Errore creazione target ${t.base_url}`);
+                    }
+                }
+            }
+
+            // Update: in both but with changed enabled
+            for (const t of current) {
+                if (t.id > 0 && savedIds.has(t.id)) {
+                    const original = saved.find((s) => s.id === t.id);
+                    if (original && original.enabled !== t.enabled) {
+                        try {
+                            await gatewayApi.updateTarget(t.id, { enabled: t.enabled });
+                        } catch (err) {
+                            errors.push(`Errore aggiornamento target ${t.base_url}`);
+                        }
+                    }
+                }
+            }
+
+            // Reload gateway targets from DB to get real IDs
+            try {
+                const items = await gatewayApi.listTargets();
+                const sorted = items.sort((a, b) => a.priority - b.priority);
+                setGatewayTargets(sorted);
+                savedTargetsRef.current = sorted.map((t) => ({ ...t }));
+            } catch {
+                // ignore reload error
+            }
+        }
+
+        if (errors.length > 0) {
+            setSaveResult({ success: false, message: errors.join(' · ') });
+        } else {
+            setSaveResult({ success: true, message: 'Tutte le impostazioni sono state salvate con successo!' });
+        }
+        setIsSaving(false);
     };
 
     const statusIcon = (ok: boolean) =>
@@ -199,12 +313,40 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
             transition={{ duration: 0.3 }}
             style={{ maxWidth: '56rem', margin: '0 auto' }}
         >
-            <div className="page-header">
+            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                     <h1 className="page-title">Settings</h1>
                     <p className="page-subtitle">Manage your application preferences and configurations.</p>
                 </div>
+                <button
+                    className="btn btn-primary"
+                    onClick={handleSaveAll}
+                    disabled={isSaving}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '180px', justifyContent: 'center' }}
+                >
+                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                    {isSaving ? 'Salvataggio...' : 'Salva Impostazioni'}
+                </button>
             </div>
+
+            {/* Global save feedback */}
+            {saveResult && (
+                <div style={{
+                    padding: '0.75rem 1rem',
+                    borderRadius: 'var(--radius-sm)',
+                    background: saveResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    color: saveResult.success ? '#10b981' : '#ef4444',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    marginBottom: '1.5rem',
+                    border: `1px solid ${saveResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                }}>
+                    {saveResult.success ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+                    {saveResult.message}
+                </div>
+            )}
 
             <div style={{ display: 'grid', gap: '1.5rem' }}>
                 {/* System Status */}
@@ -255,7 +397,6 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                 ))
                             )}
 
-                            {/* Show raw health data if no components */}
                             {!health.components && (
                                 Object.entries(health)
                                     .filter(([key]) => key !== 'status')
@@ -295,9 +436,6 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                             />
                         </div>
                     </div>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-                        Profile updates will be available once authentication is fully integrated.
-                    </p>
                 </div>
 
                 {/* RAG Configuration */}
@@ -309,7 +447,12 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                 <h3 style={{ fontWeight: 500, fontSize: '0.9rem' }}>LLM Model</h3>
                                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Select the model used for text generation</p>
                             </div>
-                            <select className="form-select" style={{ maxWidth: 200 }} defaultValue="Llama 3 (8b)">
+                            <select
+                                className="form-select"
+                                style={{ maxWidth: 200 }}
+                                value={ragModel}
+                                onChange={(e) => setRagModel(e.target.value)}
+                            >
                                 <option>Llama 3 (8b)</option>
                                 <option>Mistral 7b</option>
                                 <option>Qwen 2.5</option>
@@ -330,6 +473,7 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                         </p>
 
                         <div style={{ display: 'grid', gap: '1.25rem' }}>
+                            {/* Nginx Timeouts */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                     <Clock size={16} />
@@ -349,44 +493,27 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                         <input type="number" className="form-input" value={sendTimeout} onChange={(e) => setSendTimeout(Number(e.target.value))} />
                                     </div>
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-                                    {nginxResult && (
-                                        <span style={{ fontSize: '0.8rem', color: nginxResult.success ? 'var(--accent-green)' : '#ef4444' }}>
-                                            {nginxResult.message}
-                                        </span>
-                                    )}
-                                    <button
-                                        className="btn btn-primary btn-sm"
-                                        onClick={handleSaveNginx}
-                                        disabled={isSavingNginx}
-                                        style={{ background: 'var(--accent-blue)' }}
-                                    >
-                                        {isSavingNginx ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                                        Applica a Caldo
-                                    </button>
-                                </div>
                             </div>
 
+                            {/* Admin Toggle */}
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
                                 <div>
                                     <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Utenza Tecnica Admin</h3>
                                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>Abilita o disabilita l'utenza admin/admin</p>
                                 </div>
                                 <label className="switch">
-                                    <input type="checkbox" defaultChecked />
+                                    <input
+                                        type="checkbox"
+                                        checked={adminEnabled}
+                                        onChange={(e) => setAdminEnabled(e.target.checked)}
+                                    />
                                     <span className="slider round"></span>
                                 </label>
                             </div>
 
-
+                            {/* LLM Settings */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>LLM Settings (tender)</h3>
-                                    <button className="btn btn-ghost btn-sm" onClick={saveLlmSettings} disabled={llmSaving}>
-                                        {llmSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Salva
-                                    </button>
-                                </div>
-                                {llmError && <div style={{ color: '#ef4444', fontSize: '0.85rem' }}>{llmError}</div>}
+                                <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>LLM Settings (tender)</h3>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                                     <div className="form-group">
                                         <label className="form-label">Max tokens</label>
@@ -402,6 +529,8 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Gateway Targets */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>AI Gateway Targets</h3>
@@ -412,9 +541,28 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                                 {gwError && <div style={{ color: '#ef4444', fontSize: '0.85rem' }}>{gwError}</div>}
                                 <div style={{ display: 'grid', gap: '0.5rem' }}>
                                     {gatewayTargets.map((t) => (
-                                        <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '0.5rem', alignItems: 'center', padding: '0.75rem', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-secondary)' }}>
+                                        <div
+                                            key={t.id}
+                                            style={{
+                                                display: 'grid',
+                                                gridTemplateColumns: '1fr auto auto',
+                                                gap: '0.5rem',
+                                                alignItems: 'center',
+                                                padding: '0.75rem',
+                                                border: `1px solid ${t.id < 0 ? 'rgba(59, 130, 246, 0.4)' : 'var(--border-default)'}`,
+                                                borderRadius: 'var(--radius-sm)',
+                                                background: t.id < 0 ? 'rgba(59, 130, 246, 0.05)' : 'var(--bg-secondary)',
+                                            }}
+                                        >
                                             <div>
-                                                <div style={{ fontWeight: 600 }}>{t.route_key} · {t.provider}</div>
+                                                <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    {t.route_key} · {t.provider}
+                                                    {t.id < 0 && (
+                                                        <span style={{ fontSize: '0.7rem', background: 'var(--accent-blue)', color: '#fff', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                                            nuovo
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.base_url}</div>
                                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>prio {t.priority} · timeout {t.timeout_ms}ms · kind {t.target_kind}</div>
                                             </div>
@@ -457,14 +605,16 @@ setNginxResult({ success: true, message: 'Nginx config updated successfully!' })
                     </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
+                {/* Bottom save button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.5rem', paddingBottom: '2rem' }}>
                     <button
                         className="btn btn-primary"
-                        disabled
-                        title="Save endpoint not yet available"
+                        onClick={handleSaveAll}
+                        disabled={isSaving}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '180px', justifyContent: 'center' }}
                     >
-                        <Save size={18} />
-                        Save Changes
+                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                        {isSaving ? 'Salvataggio...' : 'Salva Impostazioni'}
                     </button>
                 </div>
             </div>

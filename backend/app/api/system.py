@@ -10,7 +10,12 @@ import docker
 import structlog
 from typing import Dict, Any, List
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.auth import get_current_user, UserResponse
+from app.db.database import get_db
+from app.models.app_settings import AppSettings
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -114,17 +119,29 @@ async def get_container_stats(container_name: str):
 
 
 @router.post("/nginx-timeout", dependencies=[Depends(admin_required)])
-async def update_nginx_timeout(config: NginxConfigUpdate):
-    """Update Nginx timeouts dynamically and reload the service."""
+async def update_nginx_timeout(
+    config: NginxConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update Nginx timeouts dynamically, reload the service, and persist to DB."""
+    # Persist the timeout values in app_settings
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if not row:
+        row = AppSettings(data={})
+        db.add(row)
+    current_data = dict(row.data) if row.data else {}
+    current_data["nginx_read_timeout"] = config.read_timeout
+    current_data["nginx_connect_timeout"] = config.connect_timeout
+    current_data["nginx_send_timeout"] = config.send_timeout
+    row.data = current_data
+    await db.flush()
+
     if not docker_client:
         raise HTTPException(status_code=503, detail="Docker SDK not connected")
         
     try:
         frontend_container = docker_client.containers.get("tw-frontend")
-        
-        # Generate the Nginx config snippet to write inside the container
-        # Since tw-frontend uses a specific default.conf, we can overwrite it or use sed
-        # For a robust approach, we write a shell script to do the replacement inside the container
         
         commands = [
             f"sed -i -E 's/proxy_read_timeout [0-9]+;/proxy_read_timeout {config.read_timeout};/' /etc/nginx/conf.d/default.conf",
@@ -148,3 +165,64 @@ async def update_nginx_timeout(config: NginxConfigUpdate):
     except Exception as e:
         logger.error(f"Error updating nginx configuration: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── App Settings (generic key-value store) ──
+
+
+class AppSettingsPayload(BaseModel):
+    """Flexible payload — any key-value pair is accepted."""
+    rag_model: str | None = None
+    nginx_read_timeout: int | None = None
+    nginx_connect_timeout: int | None = None
+    nginx_send_timeout: int | None = None
+    admin_enabled: bool | None = None
+
+
+@router.get("/app-settings")
+async def get_app_settings(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all saved app settings."""
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if row and row.data:
+        return row.data
+    # Return defaults
+    return {
+        "rag_model": "Llama 3 (8b)",
+        "nginx_read_timeout": 300,
+        "nginx_connect_timeout": 300,
+        "nginx_send_timeout": 300,
+        "admin_enabled": True,
+    }
+
+
+@router.put("/app-settings")
+async def update_app_settings(
+    payload: AppSettingsPayload,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save app settings to the database."""
+    # Only admins can save settings
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if not row:
+        row = AppSettings(data={})
+        db.add(row)
+
+    current_data = dict(row.data) if row.data else {}
+    # Merge only non-None values from the payload
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if value is not None:
+            current_data[key] = value
+    row.data = current_data
+    await db.flush()
+    await db.refresh(row)
+    logger.info("App settings updated", data=row.data)
+    return row.data

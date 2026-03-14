@@ -420,3 +420,4 @@ class AIGatewayTarget(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 from app.models.llm_settings import LLMSettings
+from app.models.app_settings import AppSettings
