@@ -221,7 +221,7 @@ export const chatApi = {
 };
 
 
-const CHAT_CONTEXT_PREFETCH_TTL_MS = 45_000;
+const CHAT_PREFETCH_TTL_MS = 45_000;
 
 type TenderChatContextCacheEntry = {
     value: TenderChatContextSnapshot | null;
@@ -229,10 +229,21 @@ type TenderChatContextCacheEntry = {
     cached_at: number;
 };
 
+type TenderChatRetrospectiveCacheEntry = {
+    value: ChatRetrospective | null;
+    promise: Promise<ChatRetrospective> | null;
+    cached_at: number;
+};
+
 const tenderChatContextCache = new Map<number, TenderChatContextCacheEntry>();
+const tenderChatRetrospectiveCache = new Map<number, TenderChatRetrospectiveCacheEntry>();
 
 function isTenderChatContextFresh(entry: TenderChatContextCacheEntry | undefined): boolean {
-    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_CONTEXT_PREFETCH_TTL_MS);
+    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
+}
+
+function isTenderChatRetrospectiveFresh(entry: TenderChatRetrospectiveCacheEntry | undefined): boolean {
+    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
 }
 
 async function fetchTenderChatContext(tenderId: number): Promise<TenderChatContextSnapshot> {
@@ -248,6 +259,10 @@ async function fetchTenderChatContext(tenderId: number): Promise<TenderChatConte
         messages: messageData.items || [],
         prefetched_at: Date.now(),
     };
+}
+
+async function fetchTenderChatRetrospective(tenderId: number): Promise<ChatRetrospective> {
+    return chatApi.getRetrospective(tenderId, { timeline_limit: 200 });
 }
 
 export async function resolveTenderChatContext(tenderId: number, options: { preferCached?: boolean } = {}): Promise<TenderChatContextSnapshot> {
@@ -292,8 +307,54 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
     return promise;
 }
 
+export async function resolveTenderChatRetrospective(tenderId: number, options: { preferCached?: boolean } = {}): Promise<ChatRetrospective> {
+    if (!Number.isFinite(tenderId) || tenderId <= 0) {
+        throw new Error('Invalid tender id');
+    }
+
+    const preferCached = options.preferCached ?? true;
+    const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (preferCached && isTenderChatRetrospectiveFresh(existing)) {
+        if (existing?.value) {
+            return existing.value;
+        }
+        if (existing?.promise) {
+            return existing.promise;
+        }
+    }
+
+    const promise = fetchTenderChatRetrospective(tenderId)
+        .then((value) => {
+            tenderChatRetrospectiveCache.set(tenderId, {
+                value,
+                promise: null,
+                cached_at: Date.now(),
+            });
+            return value;
+        })
+        .catch((error) => {
+            const cached = tenderChatRetrospectiveCache.get(tenderId);
+            if (cached?.promise === promise) {
+                tenderChatRetrospectiveCache.delete(tenderId);
+            }
+            throw error;
+        });
+
+    tenderChatRetrospectiveCache.set(tenderId, {
+        value: null,
+        promise,
+        cached_at: Date.now(),
+    });
+
+    return promise;
+}
+
 export async function prefetchTenderChatContext(tenderId: number): Promise<void> {
     await resolveTenderChatContext(tenderId, { preferCached: true });
+}
+
+export async function prefetchTenderChatRetrospective(tenderId: number): Promise<void> {
+    await resolveTenderChatRetrospective(tenderId, { preferCached: true });
 }
 
 export function consumePrefetchedTenderChatContext(tenderId: number): TenderChatContextSnapshot | null {
@@ -306,8 +367,19 @@ export function consumePrefetchedTenderChatContext(tenderId: number): TenderChat
     return existing.value;
 }
 
+export function consumePrefetchedTenderChatRetrospective(tenderId: number): ChatRetrospective | null {
+    const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (!isTenderChatRetrospectiveFresh(existing) || !existing?.value) {
+        return null;
+    }
+
+    tenderChatRetrospectiveCache.delete(tenderId);
+    return existing.value;
+}
+
 export function resetTenderChatContextCacheForTest(): void {
     tenderChatContextCache.clear();
+    tenderChatRetrospectiveCache.clear();
 }
 
 // ── Proposals ──

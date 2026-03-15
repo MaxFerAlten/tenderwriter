@@ -16,7 +16,9 @@ import {
 import {
     chatApi,
     consumePrefetchedTenderChatContext,
+    consumePrefetchedTenderChatRetrospective,
     resolveTenderChatContext,
+    resolveTenderChatRetrospective,
     type ChatAttachment,
     type ChatMessage,
     type ChatRetrospective,
@@ -94,6 +96,22 @@ function ChatLoadingShell() {
     );
 }
 
+function RetrospectiveLoadingCard() {
+    return (
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {[0, 1, 2, 3, 4].map((item) => (
+                <div key={item} style={{ width: item === 4 ? '72%' : '100%', height: '14px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.16)' }} />
+            ))}
+            <div style={{ display: 'grid', gap: '0.5rem', marginTop: '0.2rem' }}>
+                {[0, 1, 2].map((item) => (
+                    <div key={item} style={{ width: '100%', height: '38px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)' }} />
+                ))}
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading retrospective summary and room timeline...</p>
+        </div>
+    );
+}
+
 export default function TenderChat() {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -154,22 +172,33 @@ export default function TenderChat() {
         }
     }, [tenderId]);
 
-    const fetchRetrospective = useCallback(async (silent = false) => {
+    const fetchRetrospective = useCallback(async (
+        silent = false,
+        options: { preferCached?: boolean; showLoading?: boolean } = {}
+    ) => {
         if (!Number.isFinite(tenderId) || tenderId <= 0) return;
 
+        const preferCached = options.preferCached ?? false;
+        const showLoading = options.showLoading ?? !silent;
+        const shouldSurfaceError = !silent || showLoading;
+
         try {
-            if (!silent) {
+            if (showLoading) {
                 setRetrospectiveLoading(true);
+            }
+            if (shouldSurfaceError) {
                 setRetrospectiveError(null);
             }
-            const data = await chatApi.getRetrospective(tenderId, { timeline_limit: 200 });
+            const data = preferCached
+                ? await resolveTenderChatRetrospective(tenderId, { preferCached: true })
+                : await chatApi.getRetrospective(tenderId, { timeline_limit: 200 });
             setRetrospective(data);
         } catch (err) {
-            if (!silent) {
+            if (shouldSurfaceError) {
                 setRetrospectiveError(err instanceof Error ? err.message : 'Failed to load retrospective');
             }
         } finally {
-            if (!silent) {
+            if (showLoading) {
                 setRetrospectiveLoading(false);
             }
         }
@@ -186,11 +215,18 @@ export default function TenderChat() {
             setLoading(true);
             setError(null);
             const prefetched = consumePrefetchedTenderChatContext(tenderId);
+            const prefetchedRetrospective = consumePrefetchedTenderChatRetrospective(tenderId);
             const context = prefetched || await resolveTenderChatContext(tenderId, { preferCached: true });
             setTender(context.tender);
             setRoom(context.room);
             setMessages(context.messages || []);
-            void fetchRetrospective(true);
+            if (prefetchedRetrospective) {
+                setRetrospective(prefetchedRetrospective);
+                setRetrospectiveLoading(false);
+                setRetrospectiveError(null);
+            } else {
+                void fetchRetrospective(true, { preferCached: true, showLoading: true });
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load chat');
         } finally {
@@ -604,21 +640,27 @@ export default function TenderChat() {
 
                     <hr style={{ borderColor: 'var(--border-default)', margin: '0.8rem 0' }} />
 
-                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        Messages: <strong>{retrospective?.message_count ?? messages.length}</strong>
-                    </p>
-                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        Attachments: <strong>{retrospective?.attachment_count ?? totalAttachments}</strong>
-                    </p>
-                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        Events: <strong>{retrospective?.event_count ?? 0}</strong>
-                    </p>
-                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        First message: <strong>{formatMessageTime(retrospective?.first_message_at ?? null)}</strong>
-                    </p>
-                    <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
-                        Last message: <strong>{formatMessageTime(retrospective?.last_message_at ?? null)}</strong>
-                    </p>
+                    {retrospectiveLoading && !retrospective ? (
+                        <RetrospectiveLoadingCard />
+                    ) : (
+                        <>
+                            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                                Messages: <strong>{retrospective?.message_count ?? messages.length}</strong>
+                            </p>
+                            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                                Attachments: <strong>{retrospective?.attachment_count ?? totalAttachments}</strong>
+                            </p>
+                            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                                Events: <strong>{retrospective?.event_count ?? 0}</strong>
+                            </p>
+                            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                                First message: <strong>{formatMessageTime(retrospective?.first_message_at ?? null)}</strong>
+                            </p>
+                            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>
+                                Last message: <strong>{formatMessageTime(retrospective?.last_message_at ?? null)}</strong>
+                            </p>
+                        </>
+                    )}
 
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem' }}>
                         <button

@@ -15,7 +15,7 @@ import {
     X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { prefetchTenderChatContext, tenderApi, proposalApi, type Tender, type TenderCreate } from '../api/client';
+import { prefetchTenderChatContext, prefetchTenderChatRetrospective, tenderApi, proposalApi, type Tender, type TenderCreate } from '../api/client';
 import { preloadRoute } from '../router/lazyRoutes';
 
 const PIPELINE_COLUMNS = [
@@ -245,8 +245,7 @@ export default function Dashboard() {
         try {
             setError(null);
             await tenderApi.uploadDocument(id, file);
-            void preloadRoute(`/tenders/${id}/chat`);
-            void prefetchTenderChatContext(id);
+            warmChatExperience(id);
             // Refresh to see status change from DRAFT -> ACTIVE
             await loadTenders();
             navigate(`/tenders/${id}/chat`);
@@ -260,14 +259,18 @@ export default function Dashboard() {
         navigate('/proposals', { state: { proposalId } });
     };
 
-    const handleWarmChat = (id: number) => {
+    const warmChatExperience = useCallback((id: number) => {
         void preloadRoute(`/tenders/${id}/chat`);
         void prefetchTenderChatContext(id);
+        void prefetchTenderChatRetrospective(id);
+    }, []);
+
+    const handleWarmChat = (id: number) => {
+        warmChatExperience(id);
     };
 
     const handleOpenChat = (id: number) => {
-        void preloadRoute(`/tenders/${id}/chat`);
-        void prefetchTenderChatContext(id);
+        warmChatExperience(id);
         navigate(`/tenders/${id}/chat`);
     };
 

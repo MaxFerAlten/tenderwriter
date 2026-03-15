@@ -4,8 +4,10 @@ import {
     kpiAdminApi,
     observabilityApi,
     prefetchTenderChatContext,
+    prefetchTenderChatRetrospective,
     resetTenderChatContextCacheForTest,
     resolveTenderChatContext,
+    resolveTenderChatRetrospective,
     tenderApi,
 } from './client';
 
@@ -174,6 +176,44 @@ describe('chat context prefetch', () => {
         expect(context.room.id).toBe(5);
         expect(context.messages).toHaveLength(1);
         expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+
+    it('reuses prefetched TenderChat retrospective without triggering duplicate requests', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                room: {
+                    id: 5,
+                    tender_id: 12,
+                    is_official: true,
+                    status: 'open',
+                    opened_at: '2026-03-15T09:50:00Z',
+                    created_at: '2026-03-15T09:45:00Z',
+                    participant_count: 3,
+                },
+                participants: [],
+                message_count: 6,
+                attachment_count: 2,
+                event_count: 4,
+                first_message_at: '2026-03-15T09:55:00Z',
+                last_message_at: '2026-03-15T10:15:00Z',
+                generated_at: '2026-03-15T10:16:00Z',
+                timeline: [],
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+        await prefetchTenderChatRetrospective(12);
+        const retrospective = await resolveTenderChatRetrospective(12, { preferCached: true });
+
+        expect(retrospective.message_count).toBe(6);
+        expect(retrospective.attachment_count).toBe(2);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/chat/retrospective?timeline_limit=200',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
     });
 });
 
