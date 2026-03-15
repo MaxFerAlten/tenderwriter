@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Request, status
 from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
 from app.transition_diagnostics import build_transition_snapshot
 from app.auth import require_internal_service
+from app.migrations import run_migrations
 from app.config import settings
 from app.schemas import (
     AcceptedResponse,
@@ -49,6 +50,7 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    run_migrations(settings.database_path)
     store = SqliteStore(settings.database_path)
     store.open()
     app.state.store = store
@@ -99,19 +101,39 @@ def _base_notes(external_tender_id: str, store: SqliteStore) -> list[str]:
     ]
 
 
-def _build_analysis(store: SqliteStore, external_tender_id: str) -> tuple[dict[str, object] | None, AnalysisSnapshot | None]:
+def _build_analysis(
+    store: SqliteStore,
+    external_tender_id: str,
+) -> tuple[dict[str, object] | None, AnalysisSnapshot | None, object | None, dict[str, object] | None]:
     tender = store.get_tender(external_tender_id)
     if tender is None:
-        return None, None
+        return None, None, None, None
 
-    analysis = compute_analysis_snapshot(tender, store.list_domain_events(external_tender_id))
+    events = store.list_domain_events(external_tender_id)
+    analysis = compute_analysis_snapshot(tender, events)
+    transition_snapshot = build_transition_snapshot(
+        tender,
+        events,
+        analytical_phase=analysis.analytical_phase,
+    )
     store.update_tender_analysis(
         external_tender_id,
         health=analysis.health,
         analytical_phase=analysis.analytical_phase,
     )
+    snapshot_record = store.record_analysis_snapshot(
+        external_tender_id,
+        analysis=analysis,
+        transition_snapshot=transition_snapshot,
+    )
     tender = store.get_tender(external_tender_id)
-    return tender, analysis
+    return tender, analysis, transition_snapshot, snapshot_record
+
+
+def _snapshot_generated_at(snapshot_record: dict[str, object] | None) -> datetime:
+    if snapshot_record and snapshot_record.get("generated_at"):
+        return datetime.fromisoformat(str(snapshot_record["generated_at"]).replace("Z", "+00:00"))
+    return datetime.now(timezone.utc)
 
 
 @app.get("/health", response_model=ServiceHealthResponse)
@@ -203,11 +225,11 @@ async def get_snapshot(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> TenderSnapshotResponse:
-    tender, analysis = _build_analysis(store, external_tender_id)
+    tender, analysis, transition_snapshot, snapshot_record = _build_analysis(store, external_tender_id)
     if tender is None or analysis is None:
         return TenderSnapshotResponse(
             external_tender_id=external_tender_id,
-            generated_at=datetime.now(timezone.utc),
+            generated_at=_snapshot_generated_at(snapshot_record),
             kpis=_placeholder_scores(),
             notes=["Tender not synchronized yet."],
         )
@@ -222,7 +244,7 @@ async def get_snapshot(
         external_tender_id=external_tender_id,
         analytical_phase=analysis.analytical_phase,
         health=analysis.health,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=_snapshot_generated_at(snapshot_record),
         kpis=[*analysis.kpis, *_placeholder_scores(concrete_codes)],
         notes=notes,
     )
@@ -237,7 +259,7 @@ async def get_diagnostics(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> DiagnosticsResponse:
-    tender, analysis = _build_analysis(store, external_tender_id)
+    tender, analysis, transition_snapshot, snapshot_record = _build_analysis(store, external_tender_id)
     if tender is None or analysis is None:
         return DiagnosticsResponse(
             external_tender_id=external_tender_id,
@@ -246,16 +268,12 @@ async def get_diagnostics(
             findings=[],
         )
 
-    findings = [*analysis.notes]
-    for score in analysis.kpis:
-        if score.value is not None:
-            findings.append(f"{score.kpi_code}: {score.value} ({score.health}).")
-        findings.extend(score.evidence[:2])
+    findings = list((snapshot_record or {}).get('findings', [])) or [*analysis.notes]
     findings.extend(_base_notes(external_tender_id, store))
     return DiagnosticsResponse(
         external_tender_id=external_tender_id,
-        generated_at=datetime.now(timezone.utc),
-        summary=analysis.summary,
+        generated_at=_snapshot_generated_at(snapshot_record),
+        summary=(snapshot_record or {}).get("summary") or analysis.summary,
         findings=findings,
     )
 
@@ -269,7 +287,7 @@ async def get_transitions(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> TransitionsResponse:
-    tender, analysis = _build_analysis(store, external_tender_id)
+    tender, analysis, transition_snapshot, snapshot_record = _build_analysis(store, external_tender_id)
     if tender is None or analysis is None:
         return TransitionsResponse(
             external_tender_id=external_tender_id,
@@ -279,17 +297,12 @@ async def get_transitions(
             requirement_items=[],
         )
 
-    transition_snapshot = build_transition_snapshot(
-        tender,
-        store.list_domain_events(external_tender_id),
-        analytical_phase=analysis.analytical_phase,
-    )
     return TransitionsResponse(
         external_tender_id=external_tender_id,
-        generated_at=datetime.now(timezone.utc),
-        summary=transition_snapshot.summary,
-        items=[TransitionItem(**asdict(item)) for item in transition_snapshot.items],
-        requirement_items=[RequirementTransitionItem(**asdict(item)) for item in transition_snapshot.requirement_items],
+        generated_at=_snapshot_generated_at(snapshot_record),
+        summary=transition_snapshot.summary if transition_snapshot is not None else 'Tender not synchronized yet.',
+        items=[TransitionItem(**item) for item in store.list_phase_transitions(external_tender_id)],
+        requirement_items=[RequirementTransitionItem(**asdict(item)) for item in (transition_snapshot.requirement_items if transition_snapshot is not None else [])],
     )
 
 
@@ -302,7 +315,7 @@ async def get_forecast(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> ForecastResponse:
-    tender, analysis = _build_analysis(store, external_tender_id)
+    tender, analysis, transition_snapshot, snapshot_record = _build_analysis(store, external_tender_id)
     if tender is None or analysis is None:
         description = "Forecasting is blocked until the tender is synchronized."
     else:
@@ -312,7 +325,7 @@ async def get_forecast(
         )
     return ForecastResponse(
         external_tender_id=external_tender_id,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=_snapshot_generated_at(snapshot_record),
         scenarios=[
             ForecastScenario(
                 name="not_ready",

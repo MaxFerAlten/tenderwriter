@@ -50,6 +50,10 @@ class KpiReasonEngineApiTests(unittest.TestCase):
             },
         )
 
+    def test_store_schema_version_matches_current_migration(self) -> None:
+        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0001")
+
+
     def test_protected_routes_require_service_credentials(self) -> None:
         response = self.client.post(
             "/v1/tenders",
@@ -308,6 +312,58 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         stored = self.client.app.state.store.get_tender("TEN-777")
         self.assertEqual(stored["health"], "amber")
         self.assertEqual(stored["analytical_phase"], "S4")
+
+    def test_snapshot_persistence_is_deduplicated_and_uses_persisted_timestamp(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-DEDUPE",
+                "title": "Persistent Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "draft",
+                "departments": ["sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide a company profile",
+                        "priority": "medium",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Company profile",
+                        "owner_department": "sales",
+                        "status": "in_progress",
+                    }
+                ],
+                "metadata": {"priority": "medium"},
+            },
+        )
+
+        first_snapshot = self.client.get(
+            "/v1/tenders/TEN-DEDUPE/snapshot",
+            headers=self._auth_headers(),
+        )
+        second_snapshot = self.client.get(
+            "/v1/tenders/TEN-DEDUPE/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(first_snapshot.status_code, 200)
+        self.assertEqual(second_snapshot.status_code, 200)
+
+        store = self.client.app.state.store
+        self.assertEqual(store.count_snapshots("TEN-DEDUPE"), 1)
+        snapshot_record = store.get_latest_snapshot_record("TEN-DEDUPE")
+        self.assertIsNotNone(snapshot_record)
+        self.assertEqual(first_snapshot.json()["generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])
+        self.assertEqual(second_snapshot.json()["generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])
 
     def test_admin_portfolio_endpoints_reflect_persisted_tenders(self) -> None:
         self.client.post(
@@ -688,6 +744,124 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         self.assertEqual(snapshot_response.status_code, 200)
         snapshot = snapshot_response.json()
         self.assertEqual(snapshot["analytical_phase"], "S8")
+
+    def test_findings_and_phase_transitions_are_persisted(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-HISTORY",
+                "title": "History Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "in_review",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "contribution_review_started",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_review_cycle_id": "RV-1",
+                    "stage_name": "quality_review",
+                },
+            },
+            {
+                "event_type": "rework_requested",
+                "occurred_at": "2026-03-15T08:20:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_rework_id": "RW-1",
+                    "severity": "high",
+                    "is_blocking": True,
+                    "reason": "signature missing",
+                },
+            },
+            {
+                "event_type": "compliance_gate_opened",
+                "occurred_at": "2026-03-15T08:30:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_gate_id": "G-1",
+                    "gate_name": "Auto compliance readiness",
+                },
+            },
+            {
+                "event_type": "compliance_gate_failed",
+                "occurred_at": "2026-03-15T08:40:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_gate_id": "G-1",
+                    "gate_name": "Auto compliance readiness",
+                    "status": "failed",
+                    "decision_notes": "signed annex still missing",
+                },
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-HISTORY/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        diagnostics_response = self.client.get(
+            "/v1/tenders/TEN-HISTORY/diagnostics",
+            headers=self._auth_headers(),
+        )
+        transitions_response = self.client.get(
+            "/v1/tenders/TEN-HISTORY/transitions",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(diagnostics_response.status_code, 200)
+        self.assertEqual(transitions_response.status_code, 200)
+
+        store = self.client.app.state.store
+        self.assertGreater(store.count_findings("TEN-HISTORY"), 0)
+        self.assertEqual(store.count_phase_transitions("TEN-HISTORY"), 4)
+
+        snapshot_record = store.get_latest_snapshot_record("TEN-HISTORY")
+        self.assertIsNotNone(snapshot_record)
+        self.assertEqual(snapshot_record["analytical_phase"], "S6")
+        self.assertEqual(transitions_response.json()["items"][0]["to_state"], "S8")
+        self.assertEqual(transitions_response.json()["generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])
+        self.assertIn("A1", " ".join(snapshot_record["findings"]))
 
     def test_transitions_endpoint_surfaces_phase_drivers_and_requirement_focus(self) -> None:
         self.client.post(
