@@ -469,6 +469,7 @@ export const adminApi = {
 export const kpiAdminApi = {
     getPortfolioOverview: () => request<KpiPortfolioOverview>('/admin/kpi/portfolio/overview'),
     getPortfolioBottlenecks: () => request<KpiPortfolioBottlenecks>('/admin/kpi/portfolio/bottlenecks'),
+    resyncPortfolio: () => request<KpiPortfolioResyncResult>('/admin/kpi/portfolio/resync', { method: 'POST' }),
     getTenderSnapshot: (tenderId: number) => request<KpiTenderSnapshot>(`/admin/kpi/tenders/${tenderId}/snapshot`),
     getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
     getTenderTransitions: (tenderId: number) => request<KpiTransitions>(`/admin/kpi/tenders/${tenderId}/transitions`),
@@ -863,6 +864,23 @@ export interface KpiPortfolioBottlenecks {
     status: string;
     generated_at: string | null;
     items: KpiBottleneckItem[];
+}
+
+export interface KpiPortfolioResyncItem {
+    tender_id: number;
+    delivered: boolean;
+    upstream_status_code: number | null;
+    error_message: string | null;
+}
+
+export interface KpiPortfolioResyncResult {
+    status: string;
+    generated_at: string | null;
+    total_tenders: number;
+    synced_tenders: number;
+    failed_tenders: number;
+    items: KpiPortfolioResyncItem[];
+    notes: string[];
 }
 
 export interface ChatRoom {

@@ -7,11 +7,12 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import UserResponse, get_current_user
 from app.db.database import get_db
-from app.models import KpiEventDeliveryStatus
+from app.models import KpiEventDeliveryStatus, Tender
 from app.services.kpi_reason_engine import KpiClientResult, KpiReasonEngineClient, publish_tender_sync
 
 logger = structlog.get_logger(__name__)
@@ -203,6 +204,11 @@ async def _sync_tender_before_analysis_job(
     )
 
 
+async def _load_portfolio_tender_ids(db: AsyncSession) -> list[int]:
+    result = await db.execute(select(Tender.id).order_by(Tender.id.asc()))
+    return list(result.scalars().all())
+
+
 @router.get("/portfolio/overview", response_model=dict[str, Any])
 async def get_kpi_portfolio_overview(
     current_user: UserResponse = Depends(get_current_user),
@@ -231,6 +237,61 @@ async def get_kpi_portfolio_bottlenecks(
         action="portfolio bottlenecks query",
         fallback=_bottlenecks_fallback(_error_detail(result, "portfolio bottlenecks query")),
     )
+
+
+@router.post("/portfolio/resync", response_model=dict[str, Any])
+async def resync_kpi_portfolio(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    _require_admin(current_user)
+    client = KpiReasonEngineClient()
+    tender_ids = await _load_portfolio_tender_ids(db)
+    items: list[dict[str, Any]] = []
+    synced_tenders = 0
+    failed_tenders = 0
+
+    for tender_id in tender_ids:
+        try:
+            sync_result = await _sync_tender_before_analysis_job(
+                tender_id=tender_id,
+                current_user=current_user,
+                db=db,
+                client=client,
+            )
+        except HTTPException as exc:
+            sync_result = KpiClientResult(
+                delivered=False,
+                status_code=exc.status_code,
+                response_json={},
+                error_message=str(exc.detail),
+            )
+        except Exception as exc:
+            sync_result = KpiClientResult(
+                delivered=False,
+                status_code=None,
+                response_json={},
+                error_message=str(exc),
+            )
+
+        _audit_admin_event(action="portfolio_tender_resync", current_user=current_user, tender_id=tender_id, result=sync_result)
+        items.append({"tender_id": tender_id, **_sync_result_metadata(sync_result)})
+        if sync_result.delivered:
+            synced_tenders += 1
+        else:
+            failed_tenders += 1
+
+    return {
+        "status": "completed",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_tenders": len(tender_ids),
+        "synced_tenders": synced_tenders,
+        "failed_tenders": failed_tenders,
+        "items": items,
+        "notes": [
+            "Portfolio resync completed successfully." if failed_tenders == 0 else "Portfolio resync completed with partial failures.",
+        ],
+    }
 
 
 @router.get("/tenders/{tender_id}/snapshot", response_model=dict[str, Any])

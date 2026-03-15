@@ -143,7 +143,9 @@ export default function ObservabilityKPI() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
     const [isRecomputing, setIsRecomputing] = useState(false);
+    const [isPortfolioResyncing, setIsPortfolioResyncing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [actionNotice, setActionNotice] = useState<string | null>(null);
 
     const loadTenderDetail = async (tenderId: number) => {
         setIsDetailLoading(true);
@@ -269,7 +271,30 @@ export default function ObservabilityKPI() {
     const analysisJobPalette = analysisJobColors(analysisJob?.job_status);
     const recomputeDisabled = !selectedTenderId || isDetailLoading || isAnalysisJobActive(analysisJob);
     const backfillDisabled = recomputeDisabled;
+    const portfolioResyncDisabled = isPortfolioResyncing || isRefreshing || isLoading;
     const activeJobType = analysisJob?.job_type || null;
+
+    const handlePortfolioResync = async () => {
+        setError(null);
+        setActionNotice(null);
+        setIsPortfolioResyncing(true);
+        try {
+            const response = await kpiAdminApi.resyncPortfolio();
+            const total = response.total_tenders ?? 0;
+            const synced = response.synced_tenders ?? 0;
+            const failed = response.failed_tenders ?? 0;
+            setActionNotice(
+                failed > 0
+                    ? `Portfolio resync completed: ${synced}/${total} synced, ${failed} failed.`
+                    : `Portfolio resync completed: ${synced}/${total} tenders synced into the KPI engine.`
+            );
+            await loadPortfolio(true);
+        } catch (resyncError) {
+            setError(resyncError instanceof Error ? resyncError.message : 'Failed to resync the KPI portfolio.');
+        } finally {
+            setIsPortfolioResyncing(false);
+        }
+    };
 
     const handleRecompute = async () => {
         if (selectedTenderId === null) {
@@ -327,6 +352,13 @@ export default function ObservabilityKPI() {
                         <RefreshCcw size={14} /> Refresh
                     </button>
                     <button
+                        className={`btn btn-secondary btn-sm ${isPortfolioResyncing ? 'animate-pulse' : ''}`}
+                        onClick={() => void handlePortfolioResync()}
+                        disabled={portfolioResyncDisabled}
+                    >
+                        <RefreshCcw size={14} /> {isPortfolioResyncing ? 'Resyncing portfolio…' : 'Resync Portfolio'}
+                    </button>
+                    <button
                         className={`btn btn-secondary btn-sm ${isRecomputing && activeJobType === 'history_backfill' ? 'animate-pulse' : ''}`}
                         onClick={() => void handleHistoryBackfill()}
                         disabled={backfillDisabled}
@@ -348,6 +380,15 @@ export default function ObservabilityKPI() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#fecaca' }}>
                         <AlertTriangle size={18} />
                         <span>{error}</span>
+                    </div>
+                </div>
+            )}
+
+            {actionNotice && (
+                <div className="card" style={{ borderColor: 'rgba(16, 185, 129, 0.28)', background: 'rgba(6, 78, 59, 0.18)', marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#bbf7d0' }}>
+                        <Activity size={18} />
+                        <span>{actionNotice}</span>
                     </div>
                 </div>
             )}

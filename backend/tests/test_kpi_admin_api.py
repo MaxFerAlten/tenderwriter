@@ -87,6 +87,28 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertTrue(payload["degraded"])
         self.assertEqual(payload["degraded_reason"], "KPI service timeout")
 
+    def test_portfolio_resync_reports_successes_and_failures(self) -> None:
+        mock_client = _MockKpiClient()
+        load_ids_mock = AsyncMock(return_value=[12, 18])
+        sync_mock = AsyncMock(side_effect=[
+            KpiClientResult(True, 202, {"external_tender_id": "12"}),
+            KpiClientResult(False, 502, {}, "Upstream timeout"),
+        ])
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client), patch("app.api.kpi_admin._load_portfolio_tender_ids", load_ids_mock), patch("app.api.kpi_admin._sync_tender_before_analysis_job", sync_mock):
+            response = self.client.post("/admin/kpi/portfolio/resync")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total_tenders"], 2)
+        self.assertEqual(payload["synced_tenders"], 1)
+        self.assertEqual(payload["failed_tenders"], 1)
+        self.assertEqual(payload["items"][0]["tender_id"], 12)
+        self.assertTrue(payload["items"][0]["delivered"])
+        self.assertEqual(payload["items"][1]["tender_id"], 18)
+        self.assertEqual(payload["items"][1]["error_message"], "Upstream timeout")
+        load_ids_mock.assert_awaited_once()
+        self.assertEqual(sync_mock.await_count, 2)
+
     def test_recompute_endpoint_resyncs_tender_before_requesting_analysis_job(self) -> None:
         mock_client = _MockKpiClient(
             recompute_result=KpiClientResult(

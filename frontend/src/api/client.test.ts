@@ -65,6 +65,26 @@ describe('kpiAdminApi', () => {
         );
     });
 
+    it('triggers a portfolio resync through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ status: 'completed', total_tenders: 4, synced_tenders: 4, failed_tenders: 0, items: [], notes: [] }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.resyncPortfolio();
+
+        expect(response.total_tenders).toBe(4);
+        expect(response.synced_tenders).toBe(4);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/portfolio/resync',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        );
+    });
+
     it('queries tender snapshot through the admin KPI BFF', async () => {
         fetchMock.mockResolvedValue(
             new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready' }), {
