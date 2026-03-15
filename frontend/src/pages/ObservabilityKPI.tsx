@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {
     kpiAdminApi,
+    observabilityApi,
     tenderApi,
     type KpiBottleneckItem,
     type KpiDiagnostics,
@@ -19,8 +20,11 @@ import {
     type KpiPortfolioOverview,
     type KpiScore,
     type KpiTenderSnapshot,
+    type OperationalWorkspace,
     type Tender,
+    type TenderDetail,
 } from '../api/client';
+import ComplianceDrilldownPanel from '../components/observability/ComplianceDrilldownPanel';
 import OperationalWorkspacePanel from '../components/observability/OperationalWorkspacePanel';
 
 function healthColors(health: string): { accent: string; soft: string; text: string } {
@@ -81,6 +85,8 @@ export default function ObservabilityKPI() {
     const [bottlenecks, setBottlenecks] = useState<KpiBottleneckItem[]>([]);
     const [tenders, setTenders] = useState<Tender[]>([]);
     const [selectedTenderId, setSelectedTenderId] = useState<number | null>(null);
+    const [tenderDetail, setTenderDetail] = useState<TenderDetail | null>(null);
+    const [workspace, setWorkspace] = useState<OperationalWorkspace | null>(null);
     const [snapshot, setSnapshot] = useState<KpiTenderSnapshot | null>(null);
     const [diagnostics, setDiagnostics] = useState<KpiDiagnostics | null>(null);
     const [forecast, setForecast] = useState<KpiForecast | null>(null);
@@ -92,14 +98,18 @@ export default function ObservabilityKPI() {
     const loadTenderDetail = async (tenderId: number) => {
         setIsDetailLoading(true);
         try {
-            const [snapshotResponse, diagnosticsResponse, forecastResponse] = await Promise.all([
+            const [snapshotResponse, diagnosticsResponse, forecastResponse, tenderResponse, workspaceResponse] = await Promise.all([
                 kpiAdminApi.getTenderSnapshot(tenderId),
                 kpiAdminApi.getTenderDiagnostics(tenderId),
                 kpiAdminApi.getTenderForecast(tenderId),
+                tenderApi.get(tenderId),
+                observabilityApi.getWorkspace(tenderId),
             ]);
             setSnapshot(snapshotResponse);
             setDiagnostics(diagnosticsResponse);
             setForecast(forecastResponse);
+            setTenderDetail(tenderResponse);
+            setWorkspace(workspaceResponse);
         } catch (detailError) {
             setError(detailError instanceof Error ? detailError.message : 'Failed to load KPI tender detail.');
         } finally {
@@ -463,6 +473,12 @@ export default function ObservabilityKPI() {
                                     </div>
                                 </div>
                             </div>
+
+                            <ComplianceDrilldownPanel
+                                tenderDetail={tenderDetail}
+                                workspace={workspace}
+                                analyticalPhase={snapshot?.analytical_phase || null}
+                            />
                         </>
                     )}
 
@@ -477,5 +493,4 @@ export default function ObservabilityKPI() {
         </div>
     );
 }
-
 

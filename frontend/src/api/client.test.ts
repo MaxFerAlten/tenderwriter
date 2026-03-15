@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { kpiAdminApi, observabilityApi } from './client';
+import { kpiAdminApi, observabilityApi, tenderApi } from './client';
 
 const fetchMock = vi.fn();
 const storage = new Map<string, string>();
@@ -75,6 +75,65 @@ describe('kpiAdminApi', () => {
     });
 });
 
+describe('tenderApi', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('loads tender detail with requirement mapping metadata', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                id: 12,
+                title: 'Healthcare tender',
+                client: 'Region',
+                description: null,
+                deadline: null,
+                status: 'active',
+                category: null,
+                tags: [],
+                budget_estimate: null,
+                created_at: '2026-03-15T10:00:00Z',
+                created_by: 1,
+                created_by_name: 'Admin',
+                requirement_count: 1,
+                requirements: [
+                    {
+                        id: 3,
+                        requirement_text: 'Provide signed annex',
+                        category: 'legal',
+                        priority: 'high',
+                        compliance_status: 'partially_addressed',
+                        mapped_section_id: 44,
+                        mapped_section_title: 'Compliance matrix',
+                    },
+                ],
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.get(12);
+
+        expect(response.requirements[0].mapped_section_id).toBe(44);
+        expect(response.requirements[0].mapped_section_title).toBe('Compliance matrix');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+});
+
 describe('observabilityApi', () => {
     beforeEach(() => {
         storage.clear();
@@ -131,3 +190,4 @@ describe('observabilityApi', () => {
         );
     });
 });
+

@@ -405,6 +405,8 @@ export interface Requirement {
     category: string | null;
     priority: string;
     compliance_status: string;
+    mapped_section_id: number | null;
+    mapped_section_title: string | null;
 }
 
 export interface TenderCreate {
@@ -873,3 +875,4 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
+

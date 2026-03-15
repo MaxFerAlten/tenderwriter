@@ -68,6 +68,8 @@ class RequirementResponse(BaseModel):
     category: str | None
     priority: str
     compliance_status: str
+    mapped_section_id: int | None = None
+    mapped_section_title: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -114,7 +116,7 @@ async def check_tender_access(
         select(Tender)
         .where(Tender.id == tender_id)
         .options(
-            selectinload(Tender.requirements),
+            selectinload(Tender.requirements).selectinload(TenderRequirement.proposal_section),
             selectinload(Tender.created_by_user),
             selectinload(Tender.proposals),
         )
@@ -176,6 +178,19 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         proposal_id=prop_id,
         created_by=tender.created_by,
         created_by_name=creator_name,
+    )
+
+
+def _requirement_to_response(requirement: TenderRequirement) -> RequirementResponse:
+    mapped_section = requirement.proposal_section
+    return RequirementResponse(
+        id=requirement.id,
+        requirement_text=requirement.requirement_text,
+        category=requirement.category,
+        priority=requirement.priority,
+        compliance_status=requirement.compliance_status.value,
+        mapped_section_id=requirement.proposal_section_id,
+        mapped_section_title=mapped_section.title if mapped_section else None,
     )
 
 
@@ -289,16 +304,7 @@ async def get_tender(
     response = _tender_to_response(tender)
     return TenderDetailResponse(
         **response.model_dump(),
-        requirements=[
-            RequirementResponse(
-                id=r.id,
-                requirement_text=r.requirement_text,
-                category=r.category,
-                priority=r.priority,
-                compliance_status=r.compliance_status.value,
-            )
-            for r in tender.requirements
-        ],
+        requirements=[_requirement_to_response(r) for r in tender.requirements],
     )
 
 
