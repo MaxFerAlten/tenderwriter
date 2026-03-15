@@ -19,9 +19,7 @@ import {
     type ProposalDetail,
     type RAGResponse,
 } from '../api/client';
-import OnlyOfficeEditor from './OnlyOfficeEditor';
-
-
+import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
 
 export default function ProposalEditor() {
     const location = useLocation();
@@ -125,6 +123,18 @@ export default function ProposalEditor() {
             setSaved(false);
             setAiResult(null);
         }
+    }, [activeSection, proposal]);
+
+    useEffect(() => {
+        if (!proposal?.sections?.[activeSection]) {
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            void prefetchOnlyOfficeEditor();
+        }, 120);
+
+        return () => window.clearTimeout(timer);
     }, [activeSection, proposal]);
 
 
@@ -473,6 +483,9 @@ export default function ProposalEditor() {
                             <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={() => setIsFullEdit(true)}
+                                onMouseEnter={() => void prefetchOnlyOfficeEditor()}
+                                onFocus={() => void prefetchOnlyOfficeEditor()}
+                                onTouchStart={() => void prefetchOnlyOfficeEditor()}
                                 style={{ gap: '0.4rem' }}
                             >
                                 <Maximize2 size={14} />
@@ -483,12 +496,13 @@ export default function ProposalEditor() {
                         {/* OnlyOffice Editor Area */}
                         {currentSection && (
                             <div style={{ flex: 1, minHeight: 0 }}>
-                                <OnlyOfficeEditor
+                                <LazyOnlyOfficeEditor
                                     key={`${proposal.id}-${currentSection.id}`}
                                     proposalId={proposal.id}
                                     sectionId={currentSection.id}
                                     title={currentSection.title}
                                     onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                    minHeight="520px"
                                 />
                             </div>
                         )}
@@ -640,11 +654,12 @@ export default function ProposalEditor() {
                             </div>
                         </div>
                         <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
-                            <OnlyOfficeEditor
+                            <LazyOnlyOfficeEditor
                                 proposalId={proposal.id}
                                 sectionId={currentSection.id}
                                 title={currentSection.title}
                                 onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                minHeight="720px"
                             />
                         </div>
                     </div>

@@ -11,7 +11,7 @@ declare global {
     }
 }
 
-interface OnlyOfficeEditorProps {
+export interface OnlyOfficeEditorProps {
     mode?: 'proposal' | 'library' | 'create';
     proposalId?: number;
     sectionId?: number;

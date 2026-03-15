@@ -15,7 +15,7 @@ import {
     Sparkles,
 } from 'lucide-react';
 import { contentApi, type ContentBlock } from '../api/client';
-import OnlyOfficeEditor from './OnlyOfficeEditor';
+import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
 
 const CATEGORIES = [
     'All',
@@ -84,6 +84,16 @@ export default function ContentLibrary() {
     useEffect(() => {
         loadBlocks();
     }, [loadBlocks]);
+
+    const openNewBlockComposer = () => {
+        void prefetchOnlyOfficeEditor();
+        setShowNewBlock(!showNewBlock);
+    };
+
+    const beginEditBlock = (block: ContentBlock) => {
+        void prefetchOnlyOfficeEditor();
+        setEditingBlock(block);
+    };
 
     const handleCreate = async () => {
         if (!formTitle.trim()) return;
@@ -156,7 +166,7 @@ export default function ContentLibrary() {
                         {!loading && <> — {total} blocks</>}
                     </p>
                 </div>
-                <button className="btn btn-primary" onClick={() => setShowNewBlock(!showNewBlock)}>
+                <button className="btn btn-primary" onClick={openNewBlockComposer} onMouseEnter={() => void prefetchOnlyOfficeEditor()} onFocus={() => void prefetchOnlyOfficeEditor()} onTouchStart={() => void prefetchOnlyOfficeEditor()}>
                     <Plus size={18} />
                     New Block
                 </button>
@@ -219,11 +229,12 @@ export default function ContentLibrary() {
                     <div className="form-group" style={{ display: 'flex', flexDirection: 'column' }}>
                         <label className="form-label">Content *</label>
                         <div style={{ minHeight: '600px', height: '600px', marginBottom: '1.5rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                            <OnlyOfficeEditor
+                            <LazyOnlyOfficeEditor
                                 mode="create"
                                 title={formTitle || 'Nuovo Blocco'}
                                 onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
                                 onConfigLoaded={(cfg) => setCreateDocKey(cfg.config.document.key)}
+                                minHeight="600px"
                             />
                         </div>
                     </div>
@@ -299,6 +310,9 @@ export default function ContentLibrary() {
                             <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={() => setIsFullEdit(true)}
+                                onMouseEnter={() => void prefetchOnlyOfficeEditor()}
+                                onFocus={() => void prefetchOnlyOfficeEditor()}
+                                onTouchStart={() => void prefetchOnlyOfficeEditor()}
                                 title="Open in Full Screen Modal"
                             >
                                 <Sparkles size={14} />
@@ -317,12 +331,13 @@ export default function ContentLibrary() {
                     </div>
 
                     <div style={{ minHeight: '600px', height: '600px', marginBottom: '1rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                        <OnlyOfficeEditor
+                        <LazyOnlyOfficeEditor
                             key={`lib-edit-${editingBlock.id}`}
                             mode="library"
                             libraryBlockId={editingBlock.id}
                             title={editingBlock.title}
                             onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                            minHeight="600px"
                         />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -361,7 +376,10 @@ export default function ContentLibrary() {
                                     <button
                                         className="btn btn-ghost btn-icon btn-sm"
                                         title="Edit in OnlyOffice"
-                                        onClick={() => setEditingBlock(block)}
+                                        onClick={() => beginEditBlock(block)}
+                                        onMouseEnter={() => void prefetchOnlyOfficeEditor()}
+                                        onFocus={() => void prefetchOnlyOfficeEditor()}
+                                        onTouchStart={() => void prefetchOnlyOfficeEditor()}
                                     >
                                         <FileEdit size={14} />
                                     </button>
@@ -444,11 +462,12 @@ export default function ContentLibrary() {
                             </button>
                         </div>
                         <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
-                            <OnlyOfficeEditor
+                            <LazyOnlyOfficeEditor
                                 key="lib-create-new"
                                 mode="create"
                                 title="Nuovo Blocco"
                                 onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                minHeight="760px"
                             />
                         </div>
                     </motion.div>
