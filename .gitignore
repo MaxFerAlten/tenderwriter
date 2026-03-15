@@ -79,3 +79,4 @@ temp/
 
 # --- Models ---
 *.gguf
+kpi-reason-engine/data/

@@ -134,6 +134,9 @@ class KpiReasonEngineClient:
     async def get_tender_diagnostics(self, external_tender_id: str) -> KpiClientResult:
         return await self._get(f"/v1/tenders/{external_tender_id}/diagnostics")
 
+    async def get_tender_transitions(self, external_tender_id: str) -> KpiClientResult:
+        return await self._get(f"/v1/tenders/{external_tender_id}/transitions")
+
     async def get_tender_forecast(self, external_tender_id: str) -> KpiClientResult:
         return await self._get(f"/v1/tenders/{external_tender_id}/forecast")
 
@@ -715,7 +718,3 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
-
-
-
-

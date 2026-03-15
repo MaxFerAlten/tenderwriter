@@ -309,6 +309,7 @@ export const kpiAdminApi = {
     getPortfolioBottlenecks: () => request<KpiPortfolioBottlenecks>('/admin/kpi/portfolio/bottlenecks'),
     getTenderSnapshot: (tenderId: number) => request<KpiTenderSnapshot>(`/admin/kpi/tenders/${tenderId}/snapshot`),
     getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
+    getTenderTransitions: (tenderId: number) => request<KpiTransitions>(`/admin/kpi/tenders/${tenderId}/transitions`),
     getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
 };
 
@@ -574,6 +575,38 @@ export interface KpiDiagnostics {
     generated_at: string | null;
     summary: string;
     findings: string[];
+}
+
+export interface KpiTransitionItem {
+    from_state: string;
+    to_state: string;
+    occurred_at: string | null;
+    cause: string | null;
+    confidence: number | null;
+    source_event_type?: string | null;
+    related_entity_id?: string | null;
+}
+
+export interface KpiRequirementTransitionItem {
+    external_requirement_id: string;
+    summary: string | null;
+    priority: string | null;
+    compliance_status: string | null;
+    mapped_section_id: string | null;
+    mapped_section_title: string | null;
+    section_status: string | null;
+    driver_phase: string | null;
+    driver: string;
+    last_event_type: string | null;
+}
+
+export interface KpiTransitions {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    summary: string;
+    items: KpiTransitionItem[];
+    requirement_items: KpiRequirementTransitionItem[];
 }
 
 export interface KpiForecastScenario {
@@ -875,4 +908,3 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
-

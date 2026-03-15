@@ -152,6 +152,23 @@ class TransitionItem(BaseModel):
     occurred_at: datetime | None = None
     cause: str | None = None
     confidence: float | None = None
+    source_event_type: str | None = None
+    related_entity_id: str | None = None
+
+
+class RequirementTransitionItem(BaseModel):
+    """Requirement-level driver surfaced in the transition drilldown."""
+
+    external_requirement_id: str
+    summary: str | None = None
+    priority: str | None = None
+    compliance_status: str | None = None
+    mapped_section_id: str | None = None
+    mapped_section_title: str | None = None
+    section_status: str | None = None
+    driver_phase: str | None = None
+    driver: str
+    last_event_type: str | None = None
 
 
 class TransitionsResponse(BaseModel):
@@ -160,7 +177,9 @@ class TransitionsResponse(BaseModel):
     status: StubStatus = "not_ready"
     external_tender_id: str
     generated_at: datetime | None = None
+    summary: str = "Transitions are not implemented in Sprint 1."
     items: list[TransitionItem] = Field(default_factory=list)
+    requirement_items: list[RequirementTransitionItem] = Field(default_factory=list)
 
 
 class ForecastScenario(BaseModel):

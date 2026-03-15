@@ -1,6 +1,7 @@
 """FastAPI application for tw-kpi-reason-engine."""
 
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 import logging
 
@@ -8,6 +9,7 @@ import structlog
 from fastapi import Depends, FastAPI, Request, status
 
 from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
+from app.transition_diagnostics import build_transition_snapshot
 from app.auth import require_internal_service
 from app.config import settings
 from app.schemas import (
@@ -23,6 +25,7 @@ from app.schemas import (
     ForecastScenario,
     KpiScore,
     PortfolioBottlenecksResponse,
+    RequirementTransitionItem,
     PortfolioOverviewResponse,
     ServiceHealthResponse,
     TenderSnapshotResponse,
@@ -267,22 +270,26 @@ async def get_transitions(
     store: SqliteStore = Depends(get_store),
 ) -> TransitionsResponse:
     tender, analysis = _build_analysis(store, external_tender_id)
-    if tender is None or analysis is None or analysis.analytical_phase is None:
-        items: list[TransitionItem] = []
-    else:
-        current_phase = analysis.analytical_phase
-        items = [
-            TransitionItem(
-                from_state="S0" if current_phase != "S0" else current_phase,
-                to_state=current_phase,
-                cause=analysis.summary,
-                confidence=0.68,
-            )
-        ]
+    if tender is None or analysis is None:
+        return TransitionsResponse(
+            external_tender_id=external_tender_id,
+            generated_at=datetime.now(timezone.utc),
+            summary="Tender not synchronized yet.",
+            items=[],
+            requirement_items=[],
+        )
+
+    transition_snapshot = build_transition_snapshot(
+        tender,
+        store.list_domain_events(external_tender_id),
+        analytical_phase=analysis.analytical_phase,
+    )
     return TransitionsResponse(
         external_tender_id=external_tender_id,
         generated_at=datetime.now(timezone.utc),
-        items=items,
+        summary=transition_snapshot.summary,
+        items=[TransitionItem(**asdict(item)) for item in transition_snapshot.items],
+        requirement_items=[RequirementTransitionItem(**asdict(item)) for item in transition_snapshot.requirement_items],
     )
 
 

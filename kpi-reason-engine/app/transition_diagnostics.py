@@ -1,0 +1,315 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+
+@dataclass(slots=True)
+class PhaseTransitionDriver:
+    from_state: str
+    to_state: str
+    occurred_at: datetime | None
+    cause: str
+    confidence: float
+    source_event_type: str | None = None
+    related_entity_id: str | None = None
+
+
+@dataclass(slots=True)
+class RequirementTransitionDriver:
+    external_requirement_id: str
+    summary: str | None
+    priority: str | None
+    compliance_status: str | None
+    mapped_section_id: str | None
+    mapped_section_title: str | None
+    section_status: str | None
+    driver_phase: str | None
+    driver: str
+    last_event_type: str | None = None
+
+
+@dataclass(slots=True)
+class TransitionSnapshot:
+    summary: str
+    items: list[PhaseTransitionDriver]
+    requirement_items: list[RequirementTransitionDriver]
+
+
+_PHASE_EVENT_RULES = {
+    'contribution_review_started': ('S4', 'S5'),
+    'review_cycle_started': ('S4', 'S5'),
+    'rework_requested': ('S5', 'S6'),
+    'rework_resolved': ('S6', 'S5'),
+    'compliance_gate_opened': ('S7', 'S8'),
+    'compliance_gate_failed': ('S8', 'S8'),
+    'compliance_gate_passed': ('S8', 'S7'),
+    'tender_submitted': ('S8', 'S9'),
+}
+
+
+def _normalized(value: Any) -> str:
+    return str(value or '').strip().casefold()
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace('Z', '+00:00')
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get('payload') or {}
+    if isinstance(payload, dict) and isinstance(payload.get('payload'), dict):
+        return payload['payload']
+    return payload if isinstance(payload, dict) else {}
+
+
+def _latest_event(events: list[dict[str, Any]], event_types: set[str]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if _normalized(event.get('event_type')) in event_types:
+            return event
+    return None
+
+
+def _section_lookup(tender: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(section.get('external_section_id')): section
+        for section in list(tender.get('section_contexts') or [])
+        if section.get('external_section_id') is not None
+    }
+
+
+def _build_phase_cause(event_type: str, payload: dict[str, Any]) -> tuple[str, str | None]:
+    if event_type in {'contribution_review_started', 'review_cycle_started'}:
+        stage_name = payload.get('stage_name') or 'review'
+        contribution_id = payload.get('external_contribution_id')
+        return (
+            f"Review cycle '{stage_name}' started for contribution {contribution_id or 'n/a'}, pushing the tender into quality review.",
+            str(contribution_id) if contribution_id else None,
+        )
+
+    if event_type == 'rework_requested':
+        severity = _normalized(payload.get('severity')) or 'medium'
+        blocking = 'blocking ' if payload.get('is_blocking') else ''
+        reason = payload.get('reason') or 'clarifications are still required'
+        contribution_id = payload.get('external_contribution_id')
+        return (
+            f"A {blocking}rework ({severity}) was opened for contribution {contribution_id or 'n/a'} because {reason}.",
+            str(contribution_id) if contribution_id else None,
+        )
+
+    if event_type == 'rework_resolved':
+        contribution_id = payload.get('external_contribution_id')
+        return (
+            f"Rework for contribution {contribution_id or 'n/a'} was resolved, allowing the tender to move back toward review/integration.",
+            str(contribution_id) if contribution_id else None,
+        )
+
+    if event_type == 'compliance_gate_opened':
+        gate_name = payload.get('gate_name') or 'compliance gate'
+        gate_id = payload.get('external_gate_id')
+        return (
+            f"Gate '{gate_name}' was opened, so the tender entered compliance-gate control.",
+            str(gate_id) if gate_id else None,
+        )
+
+    if event_type == 'compliance_gate_failed':
+        gate_name = payload.get('gate_name') or 'compliance gate'
+        notes = payload.get('decision_notes') or 'unresolved compliance issues remain'
+        gate_id = payload.get('external_gate_id')
+        return (
+            f"Gate '{gate_name}' failed because {notes}.",
+            str(gate_id) if gate_id else None,
+        )
+
+    if event_type == 'compliance_gate_passed':
+        gate_name = payload.get('gate_name') or 'compliance gate'
+        gate_id = payload.get('external_gate_id')
+        return (
+            f"Gate '{gate_name}' passed, so compliance blocking conditions were cleared.",
+            str(gate_id) if gate_id else None,
+        )
+
+    if event_type == 'tender_submitted':
+        return ('Tender submission was recorded in the workflow telemetry.', None)
+
+    return ('Operational transition recorded.', None)
+
+
+def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | None) -> list[PhaseTransitionDriver]:
+    items: list[PhaseTransitionDriver] = []
+    for event in reversed(events):
+        event_type = _normalized(event.get('event_type'))
+        if event_type not in _PHASE_EVENT_RULES:
+            continue
+        from_state, to_state = _PHASE_EVENT_RULES[event_type]
+        payload = _event_payload(event)
+        cause, related_entity_id = _build_phase_cause(event_type, payload)
+        items.append(
+            PhaseTransitionDriver(
+                from_state=from_state,
+                to_state=to_state,
+                occurred_at=_parse_datetime(event.get('occurred_at')),
+                cause=cause,
+                confidence=0.9,
+                source_event_type=event_type,
+                related_entity_id=related_entity_id,
+            )
+        )
+        if len(items) >= 8:
+            break
+
+    if items:
+        return items
+
+    if analytical_phase == 'S5':
+        return [
+            PhaseTransitionDriver(
+                from_state='S4',
+                to_state='S5',
+                occurred_at=None,
+                cause='The mirrored section state indicates active review, even though no explicit review-start event is available.',
+                confidence=0.62,
+                source_event_type='inferred_from_section_status',
+            )
+        ]
+    if analytical_phase == 'S6':
+        return [
+            PhaseTransitionDriver(
+                from_state='S5',
+                to_state='S6',
+                occurred_at=None,
+                cause='Blocking rework is still reflected in the mirrored workflow state.',
+                confidence=0.62,
+                source_event_type='inferred_from_rework_state',
+            )
+        ]
+    if analytical_phase == 'S8':
+        return [
+            PhaseTransitionDriver(
+                from_state='S7',
+                to_state='S8',
+                occurred_at=None,
+                cause='Compliance gate pressure is reflected in the mirrored operational state.',
+                confidence=0.62,
+                source_event_type='inferred_from_gate_state',
+            )
+        ]
+    return []
+
+
+def _requirement_driver(
+    requirement: dict[str, Any],
+    *,
+    section_lookup: dict[str, dict[str, Any]],
+    analytical_phase: str | None,
+    latest_review_event: dict[str, Any] | None,
+    latest_rework_event: dict[str, Any] | None,
+    latest_gate_event: dict[str, Any] | None,
+) -> RequirementTransitionDriver:
+    mapped_section_id = requirement.get('mapped_section_id')
+    section = section_lookup.get(str(mapped_section_id)) if mapped_section_id else None
+    section_status = _normalized(section.get('status')) if section else None
+    compliance_status = _normalized(requirement.get('compliance_status')) or None
+
+    driver_phase = 'S4'
+    driver = 'Requirement progress is being inferred from the current proposal section state.'
+    last_event_type = None
+
+    latest_gate_event_type = _normalized((latest_gate_event or {}).get('event_type')) or None
+    latest_rework_event_type = _normalized((latest_rework_event or {}).get('event_type')) or None
+
+    if not mapped_section_id:
+        driver_phase = 'S3'
+        driver = 'Requirement was extracted but is not mapped to any proposal section yet.'
+        last_event_type = 'requirements_extracted'
+    elif latest_gate_event_type in {'compliance_gate_opened', 'compliance_gate_failed'} and compliance_status != 'fully_addressed':
+        driver_phase = 'S8'
+        gate_payload = _event_payload(latest_gate_event or {})
+        gate_status = _normalized(gate_payload.get('status')) or 'open'
+        gate_name = gate_payload.get('gate_name') or 'Auto compliance readiness'
+        driver = f"Requirement remains unresolved while gate '{gate_name}' is {gate_status}."
+        last_event_type = latest_gate_event_type or 'compliance_gate_opened'
+    elif latest_rework_event_type == 'rework_requested' and compliance_status != 'fully_addressed':
+        driver_phase = 'S6'
+        rework_payload = _event_payload(latest_rework_event or {})
+        reason = rework_payload.get('reason') or 'blocking changes are still open'
+        driver = f"Requirement is inside a rework loop because {reason}."
+        last_event_type = latest_rework_event_type or 'rework_requested'
+    elif section_status == 'in_review' or analytical_phase == 'S5':
+        driver_phase = 'S5'
+        stage_name = _event_payload(latest_review_event or {}).get('stage_name') or 'review'
+        driver = f"Mapped section '{section.get('title') or mapped_section_id}' is in {stage_name}, so the requirement is still under review."
+        last_event_type = _normalized((latest_review_event or {}).get('event_type')) or 'contribution_review_started'
+    elif section_status == 'approved' and compliance_status == 'fully_addressed':
+        driver_phase = 'S7'
+        driver = f"Mapped section '{section.get('title') or mapped_section_id}' is approved and the requirement is fully addressed."
+        last_event_type = 'proposal_section_updated'
+    elif section_status in {'in_progress', 'draft', 'todo'}:
+        driver_phase = 'S4'
+        driver = f"Mapped section '{section.get('title') or mapped_section_id}' is still in progress, so the requirement is not yet stabilized."
+        last_event_type = 'proposal_section_updated'
+
+    return RequirementTransitionDriver(
+        external_requirement_id=str(requirement.get('external_requirement_id') or 'unknown'),
+        summary=requirement.get('summary'),
+        priority=requirement.get('priority'),
+        compliance_status=compliance_status,
+        mapped_section_id=str(mapped_section_id) if mapped_section_id is not None else None,
+        mapped_section_title=section.get('title') if section else None,
+        section_status=section_status,
+        driver_phase=driver_phase,
+        driver=driver,
+        last_event_type=last_event_type,
+    )
+
+
+def build_transition_snapshot(
+    tender: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    analytical_phase: str | None,
+) -> TransitionSnapshot:
+    section_lookup = _section_lookup(tender)
+    latest_review_event = _latest_event(events, {'contribution_review_started', 'review_cycle_started'})
+    latest_rework_event = _latest_event(events, {'rework_requested', 'rework_resolved'})
+    latest_gate_event = _latest_event(events, {'compliance_gate_opened', 'compliance_gate_failed', 'compliance_gate_passed'})
+    phase_items = _build_phase_items(events, analytical_phase)
+    requirements = list(tender.get('requirement_contexts') or [])
+    requirement_items = [
+        _requirement_driver(
+            requirement,
+            section_lookup=section_lookup,
+            analytical_phase=analytical_phase,
+            latest_review_event=latest_review_event,
+            latest_rework_event=latest_rework_event,
+            latest_gate_event=latest_gate_event,
+        )
+        for requirement in requirements
+    ]
+    requirement_items.sort(
+        key=lambda item: (
+            0 if item.driver_phase in {'S8', 'S6', 'S5'} else 1,
+            0 if _normalized(item.priority) == 'high' else 1 if _normalized(item.priority) == 'medium' else 2,
+            item.external_requirement_id,
+        )
+    )
+
+    leading_phase = phase_items[0].to_state if phase_items else requirement_items[0].driver_phase if requirement_items else analytical_phase
+
+    if not phase_items and not requirement_items:
+        summary = 'No transition evidence is available yet for this tender.'
+    elif leading_phase in {'S5', 'S6', 'S8'} and analytical_phase and analytical_phase != leading_phase:
+        summary = f'Latest mirrored driver points to {leading_phase} while the current analytical phase remains {analytical_phase}.'
+    elif leading_phase in {'S5', 'S6', 'S8'}:
+        summary = f'Current transition pressure is centered on {leading_phase}, backed by mirrored workflow events and requirement-level drivers.'
+    else:
+        summary = 'Recent workflow events and requirement mappings are available for transition analysis.'
+
+    return TransitionSnapshot(summary=summary, items=phase_items, requirement_items=requirement_items)

@@ -73,6 +73,25 @@ describe('kpiAdminApi', () => {
             })
         );
     });
+
+    it('queries tender transitions through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready', summary: 'ok', items: [], requirement_items: [] }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.getTenderTransitions(12);
+
+        expect(response.external_tender_id).toBe('12');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/tenders/12/transitions',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
 });
 
 describe('tenderApi', () => {
@@ -190,4 +209,3 @@ describe('observabilityApi', () => {
         );
     });
 });
-

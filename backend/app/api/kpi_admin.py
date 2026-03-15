@@ -81,6 +81,19 @@ async def get_kpi_tender_diagnostics(
     )
 
 
+@router.get("/tenders/{tender_id}/transitions", response_model=dict[str, Any])
+async def get_kpi_tender_transitions(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_admin(current_user)
+    client = KpiReasonEngineClient()
+    return _unwrap_query_result(
+        await client.get_tender_transitions(str(tender_id)),
+        action="tender transitions query",
+    )
+
+
 @router.get("/tenders/{tender_id}/forecast", response_model=dict[str, Any])
 async def get_kpi_tender_forecast(
     tender_id: int,

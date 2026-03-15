@@ -689,3 +689,110 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         snapshot = snapshot_response.json()
         self.assertEqual(snapshot["analytical_phase"], "S8")
 
+    def test_transitions_endpoint_surfaces_phase_drivers_and_requirement_focus(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-TRANS",
+                "title": "Transition Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "in_review",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "contribution_review_started",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_review_cycle_id": "RV-1",
+                    "stage_name": "quality_review",
+                },
+            },
+            {
+                "event_type": "rework_requested",
+                "occurred_at": "2026-03-15T08:20:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_rework_id": "RW-1",
+                    "severity": "high",
+                    "is_blocking": True,
+                    "reason": "signature missing",
+                },
+            },
+            {
+                "event_type": "compliance_gate_opened",
+                "occurred_at": "2026-03-15T08:30:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_gate_id": "G-1",
+                    "gate_name": "Auto compliance readiness",
+                },
+            },
+            {
+                "event_type": "compliance_gate_failed",
+                "occurred_at": "2026-03-15T08:40:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_gate_id": "G-1",
+                    "gate_name": "Auto compliance readiness",
+                    "status": "failed",
+                    "decision_notes": "signed annex still missing",
+                },
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-TRANS/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        transitions_response = self.client.get(
+            "/v1/tenders/TEN-TRANS/transitions",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(transitions_response.status_code, 200)
+        transitions = transitions_response.json()
+        self.assertIn("S8", transitions["summary"])
+        self.assertEqual(transitions["items"][0]["to_state"], "S8")
+        self.assertEqual(transitions["items"][0]["source_event_type"], "compliance_gate_failed")
+        self.assertEqual(transitions["requirement_items"][0]["driver_phase"], "S8")
+        self.assertEqual(transitions["requirement_items"][0]["last_event_type"], "compliance_gate_failed")

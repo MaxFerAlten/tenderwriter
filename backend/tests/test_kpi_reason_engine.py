@@ -310,6 +310,26 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["path"], "/v1/admin/portfolio/overview")
         self.assertEqual(result.response_json["total_tenders"], 2)
 
+    async def test_get_tender_transitions_queries_expected_endpoint(self) -> None:
+        observed: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
+            observed["path"] = request.url.path
+            return httpx.Response(200, json={"external_tender_id": "7", "items": [], "requirement_items": []})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await client.get_tender_transitions("7")
+
+        self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "GET")
+        self.assertEqual(observed["path"], "/v1/tenders/7/transitions")
+        self.assertEqual(result.response_json["external_tender_id"], "7")
+
 
 class DeliveryStateTests(unittest.TestCase):
     def test_apply_delivery_result_marks_event_delivered(self) -> None:
@@ -476,4 +496,3 @@ class OperationalPayloadBuilderTests(unittest.TestCase):
         self.assertEqual(gate_decision_payload["status"], "passed")
         self.assertEqual(call_payload["external_call_session_id"], "701")
         self.assertEqual(attendance_payload["attendance_status"], "attended")
-

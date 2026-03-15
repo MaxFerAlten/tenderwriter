@@ -20,12 +20,14 @@ import {
     type KpiPortfolioOverview,
     type KpiScore,
     type KpiTenderSnapshot,
+    type KpiTransitions,
     type OperationalWorkspace,
     type Tender,
     type TenderDetail,
 } from '../api/client';
 import ComplianceDrilldownPanel from '../components/observability/ComplianceDrilldownPanel';
 import OperationalWorkspacePanel from '../components/observability/OperationalWorkspacePanel';
+import TransitionTimelinePanel from '../components/observability/TransitionTimelinePanel';
 
 function healthColors(health: string): { accent: string; soft: string; text: string } {
     switch (health) {
@@ -89,6 +91,7 @@ export default function ObservabilityKPI() {
     const [workspace, setWorkspace] = useState<OperationalWorkspace | null>(null);
     const [snapshot, setSnapshot] = useState<KpiTenderSnapshot | null>(null);
     const [diagnostics, setDiagnostics] = useState<KpiDiagnostics | null>(null);
+    const [transitions, setTransitions] = useState<KpiTransitions | null>(null);
     const [forecast, setForecast] = useState<KpiForecast | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -98,15 +101,17 @@ export default function ObservabilityKPI() {
     const loadTenderDetail = async (tenderId: number) => {
         setIsDetailLoading(true);
         try {
-            const [snapshotResponse, diagnosticsResponse, forecastResponse, tenderResponse, workspaceResponse] = await Promise.all([
+            const [snapshotResponse, diagnosticsResponse, transitionsResponse, forecastResponse, tenderResponse, workspaceResponse] = await Promise.all([
                 kpiAdminApi.getTenderSnapshot(tenderId),
                 kpiAdminApi.getTenderDiagnostics(tenderId),
+                kpiAdminApi.getTenderTransitions(tenderId),
                 kpiAdminApi.getTenderForecast(tenderId),
                 tenderApi.get(tenderId),
                 observabilityApi.getWorkspace(tenderId),
             ]);
             setSnapshot(snapshotResponse);
             setDiagnostics(diagnosticsResponse);
+            setTransitions(transitionsResponse);
             setForecast(forecastResponse);
             setTenderDetail(tenderResponse);
             setWorkspace(workspaceResponse);
@@ -479,6 +484,8 @@ export default function ObservabilityKPI() {
                                 workspace={workspace}
                                 analyticalPhase={snapshot?.analytical_phase || null}
                             />
+
+                            <TransitionTimelinePanel transitions={transitions} />
                         </>
                     )}
 
@@ -493,4 +500,3 @@ export default function ObservabilityKPI() {
         </div>
     );
 }
-
