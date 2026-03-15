@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -17,21 +17,24 @@ import {
     Sparkles,
 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
-
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const ProposalEditor = lazy(() => import('./pages/ProposalEditor'));
-const ContentLibrary = lazy(() => import('./pages/ContentLibrary'));
-const RAGSearch = lazy(() => import('./pages/Search'));
-const SettingsPage = lazy(() => import('./pages/Settings'));
-const SystemMonitor = lazy(() => import('./pages/SystemMonitor'));
-const TenderPermissions = lazy(() => import('./pages/TenderPermissions'));
-const TaskManager = lazy(() => import('./pages/TaskManager'));
-const Components = lazy(() => import('./pages/Components'));
-const Developments = lazy(() => import('./pages/Developments'));
-const ObservabilityKPI = lazy(() => import('./pages/ObservabilityKPI'));
-const Login = lazy(() => import('./pages/Login'));
-const Register = lazy(() => import('./pages/Register'));
-const TenderChat = lazy(() => import('./pages/TenderChat'));
+import {
+    ComponentsPage,
+    ContentLibraryPage,
+    DashboardPage,
+    DevelopmentsPage,
+    LoginPage,
+    ObservabilityKpiPage,
+    preloadLikelyRoutes,
+    preloadRoute,
+    ProposalEditorPage,
+    RegisterPage,
+    SearchPage,
+    SettingsPage,
+    SystemMonitorPage,
+    TaskManagerPage,
+    TenderChatPage,
+    TenderPermissionsPage,
+} from './router/lazyRoutes';
 
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -67,6 +70,22 @@ function App() {
     const location = useLocation();
     const { user, isLoading, logout } = useAuth();
 
+    useEffect(() => {
+        if (!user) {
+            return undefined;
+        }
+
+        const timer = window.setTimeout(() => {
+            void preloadLikelyRoutes(user.role);
+        }, 900);
+
+        return () => window.clearTimeout(timer);
+    }, [user]);
+
+    const warmRoute = (path: string) => {
+        void preloadRoute(path);
+    };
+
     if (isLoading) {
         return <FullscreenLoader message="Loading..." />;
     }
@@ -76,8 +95,8 @@ function App() {
             <AnimatePresence mode="wait">
                 <Suspense fallback={<FullscreenLoader message="Loading authentication..." />}>
                     <Routes location={location} key={location.pathname}>
-                        <Route path="/login" element={<Login />} />
-                        <Route path="/register" element={<Register />} />
+                        <Route path="/login" element={<LoginPage />} />
+                        <Route path="/register" element={<RegisterPage />} />
                         <Route path="*" element={<Navigate to="/login" replace />} />
                     </Routes>
                 </Suspense>
@@ -95,13 +114,16 @@ function App() {
 
                 <nav className="sidebar-nav">
                     {navItems.map((item) => {
-                        if (item.adminOnly && user?.role !== 'admin') return null;
+                        if (item.adminOnly && user.role !== 'admin') return null;
                         return (
                             <NavLink
                                 key={item.path}
                                 to={item.path}
                                 className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                                 end={item.path === '/'}
+                                onMouseEnter={() => warmRoute(item.path)}
+                                onFocus={() => warmRoute(item.path)}
+                                onTouchStart={() => warmRoute(item.path)}
                             >
                                 <item.icon size={20} />
                                 <span>{item.label}</span>
@@ -143,19 +165,19 @@ function App() {
                     >
                         <Suspense fallback={<RouteLoader />}>
                             <Routes location={location}>
-                                <Route path="/" element={<Dashboard />} />
-                                <Route path="/proposals" element={<ProposalEditor />} />
-                                <Route path="/proposals/:id" element={<ProposalEditor />} />
-                                <Route path="/library" element={<ContentLibrary />} />
-                                <Route path="/search" element={<RAGSearch />} />
-                                <Route path="/tasks" element={<TaskManager />} />
-                                <Route path="/observability-kpi" element={user?.role === 'admin' ? <ObservabilityKPI /> : <Navigate to="/" />} />
-                                <Route path="/components" element={user?.role === 'admin' ? <Components /> : <Navigate to="/" />} />
-                                <Route path="/settings" element={user?.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
-                                <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
-                                <Route path="/developments" element={user?.role === 'admin' ? <Developments /> : <Navigate to="/" />} />
-                                <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
-                                <Route path="/tenders/:id/chat" element={<TenderChat />} />
+                                <Route path="/" element={<DashboardPage />} />
+                                <Route path="/proposals" element={<ProposalEditorPage />} />
+                                <Route path="/proposals/:id" element={<ProposalEditorPage />} />
+                                <Route path="/library" element={<ContentLibraryPage />} />
+                                <Route path="/search" element={<SearchPage />} />
+                                <Route path="/tasks" element={<TaskManagerPage />} />
+                                <Route path="/observability-kpi" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
+                                <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
+                                <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />
+                                <Route path="/developments" element={user.role === 'admin' ? <DevelopmentsPage /> : <Navigate to="/" />} />
+                                <Route path="/permissions" element={user.role === 'admin' ? <TenderPermissionsPage /> : <Navigate to="/" />} />
+                                <Route path="/tenders/:id/chat" element={<TenderChatPage />} />
                             </Routes>
                         </Suspense>
                     </motion.div>
