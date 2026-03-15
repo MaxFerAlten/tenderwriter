@@ -19,6 +19,16 @@ from app.db.database import get_db
 from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission, TenderStatus
 from app.api.auth import get_current_user, UserResponse
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.services.kpi_reason_engine import (
+    build_proposal_created_event_payload,
+    build_proposal_section_updated_event_payload,
+    build_tender_submitted_event_payload,
+    publish_domain_event,
+    publish_tender_sync,
+    sync_tender_and_publish_event,
+)
+from app.services.compliance_observability import sync_requirement_compliance_and_gate
+from app.services.operational_workflow import ensure_contribution_for_section, sync_section_operational_workflow
 
 router = APIRouter()
 
@@ -205,6 +215,7 @@ async def create_proposal(
     await db.flush()
     await db.refresh(proposal)
 
+
     # Create default sections
     default_sections = [
         "Executive Summary",
@@ -217,6 +228,7 @@ async def create_proposal(
         "Compliance Matrix",
     ]
 
+    created_sections: list[ProposalSection] = []
     for idx, title in enumerate(default_sections):
         section = ProposalSection(
             proposal_id=proposal.id,
@@ -226,8 +238,17 @@ async def create_proposal(
             status=SectionStatus.TODO,
         )
         db.add(section)
+        created_sections.append(section)
 
     await db.flush()
+
+    for section in created_sections:
+        await ensure_contribution_for_section(
+            db,
+            tender_id=proposal.tender_id,
+            section=section,
+            actor_id=current_user.id,
+        )
 
     await ensure_official_chat_room(
         db,
@@ -239,6 +260,17 @@ async def create_proposal(
         db,
         tender_id=data.tender_id,
         actor_id=current_user.id,
+    )
+
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=data.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_created",
+        event_payload=build_proposal_created_event_payload(
+            proposal=proposal,
+            section_count=len(default_sections),
+        ),
     )
 
     return ProposalResponse(
@@ -306,6 +338,7 @@ async def update_proposal(
     """Update proposal metadata. RBAC-checked via tender."""
     result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
     proposal = result.scalar_one_or_none()
+    previous_status = proposal.status if proposal else None
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
@@ -323,6 +356,41 @@ async def update_proposal(
 
     await db.flush()
     await db.refresh(proposal)
+
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+    )
+
+
+
+    if proposal.status == ProposalStatus.SUBMITTED and proposal.status != previous_status:
+        await sync_tender_and_publish_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type="tender_submitted",
+            event_payload=build_tender_submitted_event_payload(
+                submitted_at=datetime.utcnow(),
+                channel="proposal_status_update",
+            ),
+        )
+    else:
+        await publish_tender_sync(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+        )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
 
     return ProposalResponse(
         id=proposal.id,
@@ -438,6 +506,9 @@ async def update_section(
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
+    previous_status = section.status or SectionStatus.TODO
+    previous_assigned_to = section.assigned_to
+    changed_fields = list(data.model_dump(exclude_unset=True).keys())
     for key, value in data.model_dump(exclude_unset=True).items():
         if key == 'content' and isinstance(value, str):
             setattr(section, key, value)
@@ -446,6 +517,53 @@ async def update_section(
 
     await db.flush()
     await db.refresh(section)
+
+    operational_events = await sync_section_operational_workflow(
+        db,
+        tender_id=proposal.tender_id,
+        section=section,
+        actor_id=current_user.id,
+        previous_status=previous_status,
+        previous_assigned_to=previous_assigned_to,
+    )
+
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+    )
+
+
+
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_section_updated",
+        event_payload=build_proposal_section_updated_event_payload(
+            section=section,
+            change_type="section_updated",
+            changed_fields=changed_fields,
+        ),
+    )
+
+    for event_type, payload in operational_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
 
     return SectionResponse(
         id=section.id,
@@ -485,6 +603,25 @@ async def add_section(
     await db.flush()
     await db.refresh(section)
 
+    await ensure_contribution_for_section(
+        db,
+        tender_id=proposal.tender_id,
+        section=section,
+        actor_id=current_user.id,
+    )
+
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_section_updated",
+        event_payload=build_proposal_section_updated_event_payload(
+            section=section,
+            change_type="section_created",
+            changed_fields=["title", "content", "order", "status"],
+        ),
+    )
+
     return SectionResponse(
         id=section.id,
         title=section.title,
@@ -495,3 +632,4 @@ async def add_section(
         created_at=section.created_at,
         updated_at=section.updated_at,
     )
+

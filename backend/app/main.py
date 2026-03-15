@@ -25,8 +25,7 @@ async def lifespan(app: FastAPI):
             debug=settings.app_debug,
         )
 
-        # Initialize database connection pool
-        from app.db.database import init_db, async_session_factory
+        from app.db.database import async_session_factory, init_db
         from app.models import User
         from sqlalchemy import select
         from app.api.auth import hash_password
@@ -34,11 +33,10 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info("Database initialized")
 
-        # Initialize technical admin
         async with async_session_factory() as session:
             result = await session.execute(select(User).where(User.email == settings.admin_username))
             admin_user = result.scalar_one_or_none()
-            
+
             if admin_user:
                 if not settings.admin_enabled:
                     if admin_user.is_active:
@@ -46,7 +44,6 @@ async def lifespan(app: FastAPI):
                         await session.commit()
                         logger.info("Admin user disabled by configuration")
                 else:
-                    # Ensure it is active and verified if enabled
                     if not admin_user.is_active or not admin_user.is_verified:
                         admin_user.is_active = True
                         admin_user.is_verified = True
@@ -66,10 +63,9 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Admin user '{settings.admin_username}' created successfully")
 
         import asyncio
-        # Initialize RAG engine components
         from app.rag.engine import HybridRAGEngine
+
         app.state.rag_engine = HybridRAGEngine()
-        # Initialize RAG in background to avoid blocking startup
         asyncio.create_task(app.state.rag_engine.initialize())
         logger.info("HybridRAG engine initialization started in background")
 
@@ -77,12 +73,10 @@ async def lifespan(app: FastAPI):
         import traceback
         traceback.print_exc()
         logger.error(f"Startup failed: {e}")
-        # We might want to re-raise to fail the container, but printing is key for now
         raise e
 
     yield
 
-    # Shutdown
     try:
         logger.info("Shutting down TenderWriter")
         if hasattr(app.state, "rag_engine"):
@@ -104,7 +98,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
     origins = [origin.strip() for origin in settings.cors_origins.split(",")]
     app.add_middleware(
         CORSMiddleware,
@@ -114,27 +107,24 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Rate limiting
     from app.api.auth import limiter
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    # Register API routers
-    from app.api import tenders, proposals, content_library, rag, auth, system, admin, onlyoffice, chat
-    from app.api import gateway_admin
+    from app.api import admin, auth, chat, content_library, gateway_admin, kpi_admin, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(system.router, prefix="/api/system", tags=["System Dashboard"])
     app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    app.include_router(kpi_admin.router, prefix="/api/admin/kpi", tags=["Admin KPI"])
     app.include_router(gateway_admin.router, prefix="/api/gateway", tags=["Gateway"])
     app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
+    app.include_router(observability.router, prefix="/api/tenders", tags=["Operational Observability"])
     app.include_router(chat.router, prefix="/api/tenders", tags=["Tender Chat"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])
-    app.include_router(
-        content_library.router, prefix="/api/content-blocks", tags=["Content Library"]
-    )
+    app.include_router(content_library.router, prefix="/api/content-blocks", tags=["Content Library"])
     app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])
     app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
 
@@ -146,3 +136,5 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+

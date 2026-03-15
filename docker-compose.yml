@@ -282,6 +282,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM: ${SMTP_FROM}
       SMTP_TLS: ${SMTP_TLS}
+      KPI_REASON_ENGINE_BASE_URL: ${KPI_REASON_ENGINE_BASE_URL:-http://tw-kpi-reason-engine:8010}
+      KPI_REASON_ENGINE_SERVICE_TOKEN: ${KPI_REASON_ENGINE_SERVICE_TOKEN:-changeme-kpi-service-token}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
@@ -301,6 +303,35 @@ services:
     volumes:
       - onlyoffice_data:/var/log/onlyoffice
       - onlyoffice_lib:/var/lib/onlyoffice
+
+  # --- KPI Reason Engine ---
+  kpi-reason-engine:
+    build:
+      context: ./kpi-reason-engine
+      dockerfile: Dockerfile
+    container_name: tw-kpi-reason-engine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      KPI_REASON_ENGINE_APP_DEBUG: ${APP_DEBUG:-false}
+      KPI_REASON_ENGINE_APP_HOST: 0.0.0.0
+      KPI_REASON_ENGINE_APP_PORT: 8010
+      KPI_REASON_ENGINE_LOG_LEVEL: info
+      KPI_REASON_ENGINE_PUBLIC_BASE_URL: ${KPI_REASON_ENGINE_BASE_URL:-http://tw-kpi-reason-engine:8010}
+      KPI_REASON_ENGINE_SERVICE_TOKEN: ${KPI_REASON_ENGINE_SERVICE_TOKEN:-changeme-kpi-service-token}
+      KPI_REASON_ENGINE_DATABASE_PATH: ${KPI_REASON_ENGINE_DATABASE_PATH:-/app/data/kpi_reason_engine.db}
+    ports:
+      - "${KPI_REASON_ENGINE_PORT:-8010}:8010"
+    volumes:
+      - ./kpi-reason-engine/app:/app/app
+      - ./kpi-reason-engine/docs:/app/docs
+      - ./kpi-reason-engine/data:/app/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8010/health" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   # --- Frontend (React + Vite) ---
   frontend:
@@ -367,3 +398,8 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
+
+
+
+
+

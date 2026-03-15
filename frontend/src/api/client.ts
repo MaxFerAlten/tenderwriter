@@ -220,6 +220,168 @@ export const chatApi = {
     },
 };
 
+
+const CHAT_PREFETCH_TTL_MS = 45_000;
+
+type TenderChatContextCacheEntry = {
+    value: TenderChatContextSnapshot | null;
+    promise: Promise<TenderChatContextSnapshot> | null;
+    cached_at: number;
+};
+
+type TenderChatRetrospectiveCacheEntry = {
+    value: ChatRetrospective | null;
+    promise: Promise<ChatRetrospective> | null;
+    cached_at: number;
+};
+
+const tenderChatContextCache = new Map<number, TenderChatContextCacheEntry>();
+const tenderChatRetrospectiveCache = new Map<number, TenderChatRetrospectiveCacheEntry>();
+
+function isTenderChatContextFresh(entry: TenderChatContextCacheEntry | undefined): boolean {
+    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
+}
+
+function isTenderChatRetrospectiveFresh(entry: TenderChatRetrospectiveCacheEntry | undefined): boolean {
+    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
+}
+
+async function fetchTenderChatContext(tenderId: number): Promise<TenderChatContextSnapshot> {
+    const [tender, room, messageData] = await Promise.all([
+        tenderApi.get(tenderId),
+        chatApi.getRoom(tenderId),
+        chatApi.listMessages(tenderId, { limit: 100 }),
+    ]);
+
+    return {
+        tender,
+        room,
+        messages: messageData.items || [],
+        prefetched_at: Date.now(),
+    };
+}
+
+async function fetchTenderChatRetrospective(tenderId: number): Promise<ChatRetrospective> {
+    return chatApi.getRetrospective(tenderId, { timeline_limit: 200 });
+}
+
+export async function resolveTenderChatContext(tenderId: number, options: { preferCached?: boolean } = {}): Promise<TenderChatContextSnapshot> {
+    if (!Number.isFinite(tenderId) || tenderId <= 0) {
+        throw new Error('Invalid tender id');
+    }
+
+    const preferCached = options.preferCached ?? true;
+    const existing = tenderChatContextCache.get(tenderId);
+    if (preferCached && isTenderChatContextFresh(existing)) {
+        if (existing?.value) {
+            return existing.value;
+        }
+        if (existing?.promise) {
+            return existing.promise;
+        }
+    }
+
+    const promise = fetchTenderChatContext(tenderId)
+        .then((value) => {
+            tenderChatContextCache.set(tenderId, {
+                value,
+                promise: null,
+                cached_at: Date.now(),
+            });
+            return value;
+        })
+        .catch((error) => {
+            const cached = tenderChatContextCache.get(tenderId);
+            if (cached?.promise === promise) {
+                tenderChatContextCache.delete(tenderId);
+            }
+            throw error;
+        });
+
+    tenderChatContextCache.set(tenderId, {
+        value: null,
+        promise,
+        cached_at: Date.now(),
+    });
+
+    return promise;
+}
+
+export async function resolveTenderChatRetrospective(tenderId: number, options: { preferCached?: boolean } = {}): Promise<ChatRetrospective> {
+    if (!Number.isFinite(tenderId) || tenderId <= 0) {
+        throw new Error('Invalid tender id');
+    }
+
+    const preferCached = options.preferCached ?? true;
+    const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (preferCached && isTenderChatRetrospectiveFresh(existing)) {
+        if (existing?.value) {
+            return existing.value;
+        }
+        if (existing?.promise) {
+            return existing.promise;
+        }
+    }
+
+    const promise = fetchTenderChatRetrospective(tenderId)
+        .then((value) => {
+            tenderChatRetrospectiveCache.set(tenderId, {
+                value,
+                promise: null,
+                cached_at: Date.now(),
+            });
+            return value;
+        })
+        .catch((error) => {
+            const cached = tenderChatRetrospectiveCache.get(tenderId);
+            if (cached?.promise === promise) {
+                tenderChatRetrospectiveCache.delete(tenderId);
+            }
+            throw error;
+        });
+
+    tenderChatRetrospectiveCache.set(tenderId, {
+        value: null,
+        promise,
+        cached_at: Date.now(),
+    });
+
+    return promise;
+}
+
+export async function prefetchTenderChatContext(tenderId: number): Promise<void> {
+    await resolveTenderChatContext(tenderId, { preferCached: true });
+}
+
+export async function prefetchTenderChatRetrospective(tenderId: number): Promise<void> {
+    await resolveTenderChatRetrospective(tenderId, { preferCached: true });
+}
+
+export function consumePrefetchedTenderChatContext(tenderId: number): TenderChatContextSnapshot | null {
+    const existing = tenderChatContextCache.get(tenderId);
+    if (!isTenderChatContextFresh(existing) || !existing?.value) {
+        return null;
+    }
+
+    tenderChatContextCache.delete(tenderId);
+    return existing.value;
+}
+
+export function consumePrefetchedTenderChatRetrospective(tenderId: number): ChatRetrospective | null {
+    const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (!isTenderChatRetrospectiveFresh(existing) || !existing?.value) {
+        return null;
+    }
+
+    tenderChatRetrospectiveCache.delete(tenderId);
+    return existing.value;
+}
+
+export function resetTenderChatContextCacheForTest(): void {
+    tenderChatContextCache.clear();
+    tenderChatRetrospectiveCache.clear();
+}
+
 // ── Proposals ──
 
 export const proposalApi = {
@@ -304,6 +466,45 @@ export const adminApi = {
         request(`/admin/tenders/${tenderId}/permissions/${userId}`, { method: 'DELETE' }),
 };
 
+export const kpiAdminApi = {
+    getPortfolioOverview: () => request<KpiPortfolioOverview>('/admin/kpi/portfolio/overview'),
+    getPortfolioBottlenecks: () => request<KpiPortfolioBottlenecks>('/admin/kpi/portfolio/bottlenecks'),
+    resyncPortfolio: () => request<KpiPortfolioResyncResult>('/admin/kpi/portfolio/resync', { method: 'POST' }),
+    getTenderSnapshot: (tenderId: number) => request<KpiTenderSnapshot>(`/admin/kpi/tenders/${tenderId}/snapshot`),
+    getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
+    getTenderTransitions: (tenderId: number) => request<KpiTransitions>(`/admin/kpi/tenders/${tenderId}/transitions`),
+    getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
+    recomputeTender: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/recompute`, { method: 'POST' }),
+    backfillTenderHistory: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/history/backfill`, { method: 'POST' }),
+    getLatestAnalysisJob: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/analysis-jobs/latest`),
+};
+
+export const observabilityApi = {
+    getWorkspace: (tenderId: number) => request<OperationalWorkspace>(`/tenders/${tenderId}/observability/workspace`),
+    createContribution: (tenderId: number, data: ContributionUnitCreateRequest) =>
+        request<ContributionUnitRecord>(`/tenders/${tenderId}/observability/contributions`, { method: 'POST', body: data }),
+    createRequest: (tenderId: number, contributionId: number, data: ContributionRequestCreateRequest) =>
+        request<ContributionRequestRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/requests`, { method: 'POST', body: data }),
+    receiveRequest: (tenderId: number, contributionId: number, requestId: number, data: ContributionRequestReceiveRequest) =>
+        request<ContributionRequestRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/requests/${requestId}/receive`, { method: 'POST', body: data }),
+    createReview: (tenderId: number, contributionId: number, data: ReviewCycleCreateRequest) =>
+        request<ReviewCycleRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/reviews`, { method: 'POST', body: data }),
+    completeReview: (tenderId: number, contributionId: number, reviewId: number, data: ReviewCycleCompleteRequest) =>
+        request<ReviewCycleRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/reviews/${reviewId}/complete`, { method: 'POST', body: data }),
+    createRework: (tenderId: number, contributionId: number, data: ReworkCreateRequest) =>
+        request<ReworkRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/rework`, { method: 'POST', body: data }),
+    resolveRework: (tenderId: number, contributionId: number, reworkId: number, data: ReworkResolveRequest) =>
+        request<ReworkRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/rework/${reworkId}/resolve`, { method: 'POST', body: data }),
+    createGate: (tenderId: number, data: ComplianceGateCreateRequest) =>
+        request<ComplianceGateRecord>(`/tenders/${tenderId}/observability/gates`, { method: 'POST', body: data }),
+    decideGate: (tenderId: number, gateId: number, data: ComplianceGateDecisionRequest) =>
+        request<ComplianceGateRecord>(`/tenders/${tenderId}/observability/gates/${gateId}/decision`, { method: 'POST', body: data }),
+    createCall: (tenderId: number, data: CallSessionCreateRequest) =>
+        request<CallSessionRecord>(`/tenders/${tenderId}/observability/calls`, { method: 'POST', body: data }),
+    upsertAttendance: (tenderId: number, callId: number, data: AttendanceRecordUpsertRequest) =>
+        request<AttendanceRecordItem>(`/tenders/${tenderId}/observability/calls/${callId}/attendance`, { method: 'POST', body: data }),
+};
+
 // ── Gateway Admin ──
 
 export interface GatewayTarget {
@@ -358,6 +559,7 @@ export interface Tender {
     created_at: string;
     created_by: number | null;
     created_by_name: string | null;
+    requirement_count?: number;
 }
 
 export interface TenderDetail extends Tender {
@@ -370,6 +572,8 @@ export interface Requirement {
     category: string | null;
     priority: string;
     compliance_status: string;
+    mapped_section_id: number | null;
+    mapped_section_title: string | null;
 }
 
 export interface TenderCreate {
@@ -511,6 +715,174 @@ export interface TenderPermissionOverview {
     permissions: TenderPermissionEntry[];
 }
 
+export interface KpiAnalysisMetadata {
+    formula_bundle_version: string | null;
+    model_bundle_version: string | null;
+    prompt_bundle_version: string | null;
+    engine_kind: string | null;
+    scored_kpis: string[];
+    event_count: number | null;
+    requirements_tracked: number | null;
+    sections_tracked: number | null;
+    reconstructed: boolean;
+    replay_until: string | null;
+    replay_source_event_type: string | null;
+    source_job_type: string | null;
+    history_points: number | null;
+}
+
+export interface KpiScore {
+    kpi_code: string;
+    value: number | null;
+    label: string | null;
+    health: string;
+    severity: string;
+    provenance: string;
+    confidence: number | null;
+    evidence: string[];
+    recommendation: string | null;
+    formula_version: string | null;
+    model_version: string | null;
+    prompt_version: string | null;
+}
+
+export interface KpiTenderSnapshot {
+    status: string;
+    external_tender_id: string;
+    analytical_phase: string | null;
+    health: string;
+    generated_at: string | null;
+    kpis: KpiScore[];
+    notes: string[];
+    analysis_metadata: KpiAnalysisMetadata;
+}
+
+export interface KpiDiagnostics {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    summary: string;
+    findings: string[];
+    analysis_metadata: KpiAnalysisMetadata;
+}
+
+export interface KpiTransitionItem {
+    from_state: string;
+    to_state: string;
+    occurred_at: string | null;
+    cause: string | null;
+    confidence: number | null;
+    source_event_type?: string | null;
+    related_entity_id?: string | null;
+}
+
+export interface KpiRequirementTransitionItem {
+    external_requirement_id: string;
+    summary: string | null;
+    priority: string | null;
+    compliance_status: string | null;
+    mapped_section_id: string | null;
+    mapped_section_title: string | null;
+    section_status: string | null;
+    driver_phase: string | null;
+    driver: string;
+    last_event_type: string | null;
+}
+
+export interface KpiSnapshotHistoryItem {
+    snapshot_id: number;
+    generated_at: string | null;
+    analytical_phase: string | null;
+    health: string;
+    summary: string | null;
+    reconstructed: boolean;
+    replay_until: string | null;
+    source_job_type: string | null;
+    replay_source_event_type: string | null;
+}
+
+export interface KpiTransitions {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    summary: string;
+    items: KpiTransitionItem[];
+    requirement_items: KpiRequirementTransitionItem[];
+    history_items: KpiSnapshotHistoryItem[];
+}
+
+export interface KpiForecastScenario {
+    name: string;
+    probability: number | null;
+    description: string | null;
+    confidence: number | null;
+    drivers: string[];
+    recommended_action: string | null;
+}
+
+export interface KpiForecast {
+    status: string;
+    external_tender_id: string;
+    generated_at: string | null;
+    summary: string | null;
+    overall_confidence: number | null;
+    scenarios: KpiForecastScenario[];
+}
+
+export interface KpiAnalysisJob {
+    external_tender_id: string;
+    job_id: number | null;
+    job_type: string | null;
+    job_status: string;
+    requested_by: string | null;
+    priority: string | null;
+    reason: string | null;
+    created_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    updated_at: string | null;
+    latest_snapshot_generated_at: string | null;
+    error_message: string | null;
+}
+
+export interface KpiPortfolioOverview {
+    status: string;
+    generated_at: string | null;
+    portfolio_health: string;
+    total_tenders: number;
+    tenders_by_health: Record<string, number>;
+}
+
+export interface KpiBottleneckItem {
+    external_tender_id: string;
+    bottleneck_type: string;
+    summary: string;
+    health: string;
+}
+
+export interface KpiPortfolioBottlenecks {
+    status: string;
+    generated_at: string | null;
+    items: KpiBottleneckItem[];
+}
+
+export interface KpiPortfolioResyncItem {
+    tender_id: number;
+    delivered: boolean;
+    upstream_status_code: number | null;
+    error_message: string | null;
+}
+
+export interface KpiPortfolioResyncResult {
+    status: string;
+    generated_at: string | null;
+    total_tenders: number;
+    synced_tenders: number;
+    failed_tenders: number;
+    items: KpiPortfolioResyncItem[];
+    notes: string[];
+}
+
 export interface ChatRoom {
     id: number;
     tender_id: number;
@@ -579,6 +951,13 @@ export interface ChatRetrospective {
     generated_at: string;
     timeline: ChatRetrospectiveTimelineItem[];
 }
+
+export interface TenderChatContextSnapshot {
+    tender: TenderDetail;
+    room: ChatRoom;
+    messages: ChatMessage[];
+    prefetched_at: number;
+}
 // LLM Settings
 export const llmSettingsApi = {
     get: () => request<{ id?: number | null; max_tokens?: number | null; temperature?: number | null; stop_tokens?: string | null; }>("/gateway/llm-settings"),
@@ -587,3 +966,192 @@ export const llmSettingsApi = {
 
 
 
+
+
+
+
+export interface OperationalSummary {
+    tender_id: number;
+    contribution_count: number;
+    request_count: number;
+    open_rework_count: number;
+    open_gate_count: number;
+    call_count: number;
+}
+
+export interface ContributionUnitRecord {
+    id: number;
+    tender_id: number;
+    title: string;
+    description: string | null;
+    department_name: string | null;
+    owner_user_id: number | null;
+    proposal_section_id: number | null;
+    due_at: string | null;
+    status: string;
+}
+
+export interface ContributionRequestRecord {
+    id: number;
+    contribution_unit_id: number;
+    requested_to_user_id: number | null;
+    requested_to_label: string | null;
+    request_channel: string | null;
+    requested_at: string | null;
+    due_at: string | null;
+    sla_target_hours: number | null;
+    sla_max_hours: number | null;
+    response_received_at: string | null;
+    response_summary: string | null;
+    status: string;
+}
+
+export interface ReviewCycleRecord {
+    id: number;
+    contribution_unit_id: number;
+    reviewer_id: number | null;
+    stage_name: string;
+    started_at: string | null;
+    completed_at: string | null;
+    outcome: string | null;
+    notes: string | null;
+    status: string;
+}
+
+export interface ReworkRecord {
+    id: number;
+    contribution_unit_id: number;
+    review_cycle_id: number | null;
+    assigned_to_user_id: number | null;
+    severity: string;
+    is_blocking: boolean;
+    reason: string | null;
+    due_at: string | null;
+    requested_at: string | null;
+    resolved_at: string | null;
+    resolution_notes: string | null;
+    status: string;
+}
+
+export interface ComplianceGateRecord {
+    id: number;
+    tender_id: number;
+    contribution_unit_id: number | null;
+    owner_user_id: number | null;
+    gate_name: string;
+    due_at: string | null;
+    evaluated_at: string | null;
+    decision_notes: string | null;
+    status: string;
+}
+
+export interface AttendanceRecordItem {
+    id: number;
+    call_session_id: number;
+    user_id: number | null;
+    attendee_label: string | null;
+    attendance_status: string;
+    recorded_at: string | null;
+    notes: string | null;
+}
+
+export interface CallSessionRecord {
+    id: number;
+    tender_id: number;
+    title: string;
+    scheduled_at: string;
+    started_at: string | null;
+    ended_at: string | null;
+    status: string;
+    attendance?: AttendanceRecordItem[];
+}
+
+export interface OperationalWorkspace {
+    summary: OperationalSummary;
+    contributions: ContributionUnitRecord[];
+    requests: ContributionRequestRecord[];
+    reviews: ReviewCycleRecord[];
+    reworks: ReworkRecord[];
+    gates: ComplianceGateRecord[];
+    calls: CallSessionRecord[];
+}
+
+export interface ContributionUnitCreateRequest {
+    title: string;
+    description?: string;
+    department_name?: string;
+    owner_user_id?: number;
+    proposal_section_id?: number;
+    due_at?: string;
+}
+
+export interface ContributionRequestCreateRequest {
+    requested_to_user_id?: number;
+    requested_to_label?: string;
+    request_channel?: string;
+    requested_at?: string;
+    due_at?: string;
+    sla_target_hours?: number;
+    sla_max_hours?: number;
+    response_summary?: string;
+}
+
+export interface ContributionRequestReceiveRequest {
+    response_received_at?: string;
+    response_summary?: string;
+}
+
+export interface ReviewCycleCreateRequest {
+    reviewer_id?: number;
+    stage_name?: string;
+    started_at?: string;
+    notes?: string;
+}
+
+export interface ReviewCycleCompleteRequest {
+    completed_at?: string;
+    outcome?: string;
+    notes?: string;
+}
+
+export interface ReworkCreateRequest {
+    review_cycle_id?: number;
+    assigned_to_user_id?: number;
+    severity?: string;
+    is_blocking?: boolean;
+    reason?: string;
+    due_at?: string;
+    requested_at?: string;
+}
+
+export interface ReworkResolveRequest {
+    resolved_at?: string;
+    resolution_notes?: string;
+}
+
+export interface ComplianceGateCreateRequest {
+    gate_name: string;
+    contribution_unit_id?: number;
+    owner_user_id?: number;
+    due_at?: string;
+    decision_notes?: string;
+}
+
+export interface ComplianceGateDecisionRequest {
+    status: string;
+    evaluated_at?: string;
+    decision_notes?: string;
+}
+
+export interface CallSessionCreateRequest {
+    title: string;
+    scheduled_at: string;
+}
+
+export interface AttendanceRecordUpsertRequest {
+    user_id?: number;
+    attendee_label?: string;
+    attendance_status: string;
+    recorded_at?: string;
+    notes?: string;
+}

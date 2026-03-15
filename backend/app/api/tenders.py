@@ -23,6 +23,17 @@ from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.services.kpi_reason_engine import (
+    build_requirements_extracted_event_payload,
+    build_tender_created_event_payload,
+    build_tender_document_ingested_event_payload,
+    build_tender_outcome_recorded_event_payload,
+    publish_domain_event,
+    publish_tender_sync,
+    sync_tender_and_publish_event,
+)
+from app.services.compliance_observability import sync_requirement_compliance_and_gate
+from app.services.tender_requirements import apply_extracted_requirement_candidates
 
 router = APIRouter()
 
@@ -57,6 +68,8 @@ class RequirementResponse(BaseModel):
     category: str | None
     priority: str
     compliance_status: str
+    mapped_section_id: int | None = None
+    mapped_section_title: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -103,7 +116,7 @@ async def check_tender_access(
         select(Tender)
         .where(Tender.id == tender_id)
         .options(
-            selectinload(Tender.requirements),
+            selectinload(Tender.requirements).selectinload(TenderRequirement.proposal_section),
             selectinload(Tender.created_by_user),
             selectinload(Tender.proposals),
         )
@@ -165,6 +178,19 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         proposal_id=prop_id,
         created_by=tender.created_by,
         created_by_name=creator_name,
+    )
+
+
+def _requirement_to_response(requirement: TenderRequirement) -> RequirementResponse:
+    mapped_section = requirement.proposal_section
+    return RequirementResponse(
+        id=requirement.id,
+        requirement_text=requirement.requirement_text,
+        category=requirement.category,
+        priority=requirement.priority,
+        compliance_status=requirement.compliance_status.value,
+        mapped_section_id=requirement.proposal_section_id,
+        mapped_section_title=mapped_section.title if mapped_section else None,
     )
 
 
@@ -255,6 +281,14 @@ async def create_tender(
         actor_id=current_user.id,
     )
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="tender_created",
+        event_payload=build_tender_created_event_payload(tender),
+    )
+
     return _tender_to_response(tender)
 
 
@@ -270,16 +304,7 @@ async def get_tender(
     response = _tender_to_response(tender)
     return TenderDetailResponse(
         **response.model_dump(),
-        requirements=[
-            RequirementResponse(
-                id=r.id,
-                requirement_text=r.requirement_text,
-                category=r.category,
-                priority=r.priority,
-                compliance_status=r.compliance_status.value,
-            )
-            for r in tender.requirements
-        ],
+        requirements=[_requirement_to_response(r) for r in tender.requirements],
     )
 
 
@@ -292,6 +317,7 @@ async def update_tender(
 ):
     """Update a tender. RBAC-checked."""
     tender = await check_tender_access(tender_id, current_user, db)
+    previous_status = tender.status
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -300,6 +326,11 @@ async def update_tender(
     await db.flush()
     await db.refresh(tender)
 
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
     await ensure_official_chat_room(
         db,
         tender_id=tender.id,
@@ -311,6 +342,33 @@ async def update_tender(
         tender_id=tender.id,
         actor_id=current_user.id,
     )
+
+    if tender.status in [TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED] and tender.status != previous_status:
+        await sync_tender_and_publish_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type="tender_outcome_recorded",
+            event_payload=build_tender_outcome_recorded_event_payload(
+                outcome=tender.status.value,
+                recorded_at=datetime.utcnow(),
+            ),
+        )
+    else:
+        await publish_tender_sync(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+        )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
 
     return _tender_to_response(tender)
 
@@ -407,6 +465,14 @@ async def import_tender_document(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+    requirement_candidates = list(stats.get("requirement_candidates") or [])
+    created_requirements = apply_extracted_requirement_candidates(tender, requirement_candidates)
+    await db.flush()
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
     # 3. Update status to ACTIVE if it was DRAFT
     if tender.status == TenderStatus.DRAFT:
         tender.status = TenderStatus.ACTIVE
@@ -427,9 +493,44 @@ async def import_tender_document(
             actor_id=current_user.id,
         )
 
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="tender_document_ingested",
+        event_payload=build_tender_document_ingested_event_payload(
+            document_id=object_name,
+            filename=file.filename or "uploaded-document",
+            stats=stats,
+        ),
+    )
+
+    await publish_domain_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="requirements_extracted",
+        payload=build_requirements_extracted_event_payload(
+            document_id=object_name,
+            filename=file.filename or "uploaded-document",
+            extracted_candidates=requirement_candidates,
+            created_requirements=created_requirements,
+        ),
+    )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
+
     return {
         "message": "Document uploaded and ingested successfully",
         "tender_id": tender_id,
         "filename": file.filename,
         "stats": stats,
     }
+

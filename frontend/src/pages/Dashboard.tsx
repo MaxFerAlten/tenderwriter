@@ -15,7 +15,8 @@ import {
     X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { tenderApi, proposalApi, type Tender, type TenderCreate } from '../api/client';
+import { prefetchTenderChatContext, prefetchTenderChatRetrospective, tenderApi, proposalApi, type Tender, type TenderCreate } from '../api/client';
+import { preloadRoute } from '../router/lazyRoutes';
 
 const PIPELINE_COLUMNS = [
     { key: 'draft', label: 'Draft', color: '#64748b' },
@@ -32,7 +33,7 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat, onWarmChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void; onWarmChat: (id: number) => void }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
@@ -131,6 +132,9 @@ function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal,
                     className="btn btn-ghost btn-sm"
                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', gap: '0.25rem' }}
                     onClick={() => onOpenChat(tender.id)}
+                    onMouseEnter={() => onWarmChat(tender.id)}
+                    onFocus={() => onWarmChat(tender.id)}
+                    onTouchStart={() => onWarmChat(tender.id)}
                 >
                     <MessageSquare size={12} />
                     Open Chat
@@ -241,6 +245,7 @@ export default function Dashboard() {
         try {
             setError(null);
             await tenderApi.uploadDocument(id, file);
+            warmChatExperience(id);
             // Refresh to see status change from DRAFT -> ACTIVE
             await loadTenders();
             navigate(`/tenders/${id}/chat`);
@@ -254,7 +259,18 @@ export default function Dashboard() {
         navigate('/proposals', { state: { proposalId } });
     };
 
+    const warmChatExperience = useCallback((id: number) => {
+        void preloadRoute(`/tenders/${id}/chat`);
+        void prefetchTenderChatContext(id);
+        void prefetchTenderChatRetrospective(id);
+    }, []);
+
+    const handleWarmChat = (id: number) => {
+        warmChatExperience(id);
+    };
+
     const handleOpenChat = (id: number) => {
+        warmChatExperience(id);
         navigate(`/tenders/${id}/chat`);
     };
 
@@ -387,7 +403,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} onOpenChat={handleOpenChat} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} onOpenChat={handleOpenChat} onWarmChat={handleWarmChat} />
                                     ))
                                 )}
                             </div>
