@@ -23,9 +23,11 @@ from app.services.kpi_reason_engine import (
     build_proposal_created_event_payload,
     build_proposal_section_updated_event_payload,
     build_tender_submitted_event_payload,
+    publish_domain_event,
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
+from app.services.operational_workflow import ensure_contribution_for_section, sync_section_operational_workflow
 
 router = APIRouter()
 
@@ -224,6 +226,7 @@ async def create_proposal(
         "Compliance Matrix",
     ]
 
+    created_sections: list[ProposalSection] = []
     for idx, title in enumerate(default_sections):
         section = ProposalSection(
             proposal_id=proposal.id,
@@ -233,8 +236,17 @@ async def create_proposal(
             status=SectionStatus.TODO,
         )
         db.add(section)
+        created_sections.append(section)
 
     await db.flush()
+
+    for section in created_sections:
+        await ensure_contribution_for_section(
+            db,
+            tender_id=proposal.tender_id,
+            section=section,
+            actor_id=current_user.id,
+        )
 
     await ensure_official_chat_room(
         db,
@@ -475,6 +487,8 @@ async def update_section(
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
+    previous_status = section.status or SectionStatus.TODO
+    previous_assigned_to = section.assigned_to
     changed_fields = list(data.model_dump(exclude_unset=True).keys())
     for key, value in data.model_dump(exclude_unset=True).items():
         if key == 'content' and isinstance(value, str):
@@ -484,6 +498,15 @@ async def update_section(
 
     await db.flush()
     await db.refresh(section)
+
+    operational_events = await sync_section_operational_workflow(
+        db,
+        tender_id=proposal.tender_id,
+        section=section,
+        actor_id=current_user.id,
+        previous_status=previous_status,
+        previous_assigned_to=previous_assigned_to,
+    )
 
     await sync_tender_and_publish_event(
         db,
@@ -496,6 +519,15 @@ async def update_section(
             changed_fields=changed_fields,
         ),
     )
+
+    for event_type, payload in operational_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
 
     return SectionResponse(
         id=section.id,
@@ -535,6 +567,13 @@ async def add_section(
     await db.flush()
     await db.refresh(section)
 
+    await ensure_contribution_for_section(
+        db,
+        tender_id=proposal.tender_id,
+        section=section,
+        actor_id=current_user.id,
+    )
+
     await sync_tender_and_publish_event(
         db,
         tender_id=proposal.tender_id,
@@ -557,6 +596,3 @@ async def add_section(
         created_at=section.created_at,
         updated_at=section.updated_at,
     )
-
-
-
