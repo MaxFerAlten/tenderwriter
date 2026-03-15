@@ -1054,3 +1054,197 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         self.assertEqual(transitions["items"][0]["source_event_type"], "compliance_gate_failed")
         self.assertEqual(transitions["requirement_items"][0]["driver_phase"], "S8")
         self.assertEqual(transitions["requirement_items"][0]["last_event_type"], "compliance_gate_failed")
+
+
+    def test_forecast_endpoint_returns_rule_based_scenarios(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-FORECAST",
+                "title": "Forecast Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "active",
+                "departments": ["sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide ISO 27001 evidence",
+                        "priority": "high",
+                        "compliance_status": "fully_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Security",
+                        "owner_department": "sales",
+                        "status": "approved",
+                    }
+                ],
+                "metadata": {"priority": "high"},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "proposal_section_updated",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {"external_section_id": "SEC-1"},
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-FORECAST/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        forecast_response = self.client.get(
+            "/v1/tenders/TEN-FORECAST/forecast",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(forecast_response.status_code, 200)
+        forecast = forecast_response.json()
+        self.assertTrue(forecast["summary"])
+        self.assertIsNotNone(forecast["overall_confidence"])
+        self.assertEqual(len(forecast["scenarios"]), 3)
+        self.assertEqual(forecast["scenarios"][0]["name"], "submit_on_time")
+        self.assertGreater(len(forecast["scenarios"][0]["drivers"]), 0)
+        self.assertTrue(forecast["scenarios"][0]["recommended_action"])
+
+    def test_history_backfill_job_persists_reconstructed_history(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-BACKFILL",
+                "title": "Backfill Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "in_review",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "contribution_review_started",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_review_cycle_id": "RV-1",
+                    "stage_name": "quality_review",
+                },
+            },
+            {
+                "event_type": "rework_requested",
+                "occurred_at": "2026-03-15T08:20:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_rework_id": "RW-1",
+                    "severity": "high",
+                    "is_blocking": True,
+                    "reason": "signature missing",
+                },
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-BACKFILL/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        request_response = self.client.post(
+            "/v1/tenders/TEN-BACKFILL/analysis-jobs",
+            headers=self._auth_headers(),
+            json={
+                "job_type": "history_backfill",
+                "requested_by": "admin-1",
+                "priority": "high",
+                "reason": "Manual history replay",
+                "metadata": {"source": "admin-ui"},
+            },
+        )
+        self.assertEqual(request_response.status_code, 202)
+        self.assertEqual(request_response.json()["job_status"], "queued")
+
+        latest_job = None
+        for _ in range(40):
+            latest_response = self.client.get(
+                "/v1/tenders/TEN-BACKFILL/analysis-jobs/latest",
+                headers=self._auth_headers(),
+            )
+            self.assertEqual(latest_response.status_code, 200)
+            latest_job = latest_response.json()
+            if latest_job["job_status"] == "succeeded":
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(latest_job)
+        self.assertEqual(latest_job["job_status"], "succeeded")
+
+        transitions_response = self.client.get(
+            "/v1/tenders/TEN-BACKFILL/transitions",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(transitions_response.status_code, 200)
+        history_items = transitions_response.json()["history_items"]
+        self.assertGreaterEqual(len(history_items), 3)
+        self.assertTrue(any(item["reconstructed"] for item in history_items))
+        self.assertTrue(any(item["replay_source_event_type"] == "rework_requested" for item in history_items))
+
+        snapshot_record = self.client.app.state.store.get_latest_snapshot_record("TEN-BACKFILL")
+        self.assertIsNotNone(snapshot_record)
+        self.assertFalse(snapshot_record["analysis_metadata"].get("reconstructed", False))
+        self.assertEqual(snapshot_record["analysis_metadata"].get("source_job_type"), "history_backfill")
+        self.assertEqual(latest_job["latest_snapshot_generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])

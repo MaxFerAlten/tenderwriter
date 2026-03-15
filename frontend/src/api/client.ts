@@ -474,6 +474,7 @@ export const kpiAdminApi = {
     getTenderTransitions: (tenderId: number) => request<KpiTransitions>(`/admin/kpi/tenders/${tenderId}/transitions`),
     getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
     recomputeTender: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/recompute`, { method: 'POST' }),
+    backfillTenderHistory: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/history/backfill`, { method: 'POST' }),
     getLatestAnalysisJob: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/analysis-jobs/latest`),
 };
 
@@ -722,6 +723,11 @@ export interface KpiAnalysisMetadata {
     event_count: number | null;
     requirements_tracked: number | null;
     sections_tracked: number | null;
+    reconstructed: boolean;
+    replay_until: string | null;
+    replay_source_event_type: string | null;
+    source_job_type: string | null;
+    history_points: number | null;
 }
 
 export interface KpiScore {
@@ -782,6 +788,18 @@ export interface KpiRequirementTransitionItem {
     last_event_type: string | null;
 }
 
+export interface KpiSnapshotHistoryItem {
+    snapshot_id: number;
+    generated_at: string | null;
+    analytical_phase: string | null;
+    health: string;
+    summary: string | null;
+    reconstructed: boolean;
+    replay_until: string | null;
+    source_job_type: string | null;
+    replay_source_event_type: string | null;
+}
+
 export interface KpiTransitions {
     status: string;
     external_tender_id: string;
@@ -789,18 +807,24 @@ export interface KpiTransitions {
     summary: string;
     items: KpiTransitionItem[];
     requirement_items: KpiRequirementTransitionItem[];
+    history_items: KpiSnapshotHistoryItem[];
 }
 
 export interface KpiForecastScenario {
     name: string;
     probability: number | null;
     description: string | null;
+    confidence: number | null;
+    drivers: string[];
+    recommended_action: string | null;
 }
 
 export interface KpiForecast {
     status: string;
     external_tender_id: string;
     generated_at: string | null;
+    summary: string | null;
+    overall_confidence: number | null;
     scenarios: KpiForecastScenario[];
 }
 

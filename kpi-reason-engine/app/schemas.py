@@ -15,6 +15,7 @@ AnalysisJobKind = Literal[
     "diagnostics_refresh",
     "forecast_refresh",
     "full_recompute",
+    "history_backfill",
 ]
 AnalysisJobLifecycleStatus = Literal["queued", "running", "succeeded", "failed", "not_requested"]
 
@@ -143,6 +144,11 @@ class AnalysisMetadata(BaseModel):
     event_count: int | None = None
     requirements_tracked: int | None = None
     sections_tracked: int | None = None
+    reconstructed: bool = False
+    replay_until: datetime | None = None
+    replay_source_event_type: str | None = None
+    source_job_type: str | None = None
+    history_points: int | None = None
 
 
 class KpiScore(BaseModel):
@@ -213,6 +219,20 @@ class RequirementTransitionItem(BaseModel):
     last_event_type: str | None = None
 
 
+class SnapshotHistoryItem(BaseModel):
+    """Persisted analytical snapshot entry used for history/replay views."""
+
+    snapshot_id: int
+    generated_at: datetime | None = None
+    analytical_phase: str | None = None
+    health: HealthClass = "unknown"
+    summary: str | None = None
+    reconstructed: bool = False
+    replay_until: datetime | None = None
+    source_job_type: str | None = None
+    replay_source_event_type: str | None = None
+
+
 class TransitionsResponse(BaseModel):
     """Timeline of analytical transitions for a tender."""
 
@@ -222,6 +242,7 @@ class TransitionsResponse(BaseModel):
     summary: str = "Transitions are not implemented in Sprint 1."
     items: list[TransitionItem] = Field(default_factory=list)
     requirement_items: list[RequirementTransitionItem] = Field(default_factory=list)
+    history_items: list[SnapshotHistoryItem] = Field(default_factory=list)
 
 
 class ForecastScenario(BaseModel):
@@ -230,6 +251,9 @@ class ForecastScenario(BaseModel):
     name: str
     probability: float | None = None
     description: str | None = None
+    confidence: float | None = None
+    drivers: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
 
 
 class ForecastResponse(BaseModel):
@@ -238,6 +262,8 @@ class ForecastResponse(BaseModel):
     status: StubStatus = "not_ready"
     external_tender_id: str
     generated_at: datetime | None = None
+    summary: str | None = None
+    overall_confidence: float | None = None
     scenarios: list[ForecastScenario] = Field(default_factory=list)
 
 

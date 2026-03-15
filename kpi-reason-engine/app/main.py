@@ -1,7 +1,7 @@
 """FastAPI application for tw-kpi-reason-engine."""
 
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import logging
 from typing import Any
@@ -9,8 +9,10 @@ from typing import Any
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
+from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
 from app.auth import require_internal_service
 from app.config import settings
+from app.forecasting import build_forecast_snapshot
 from app.job_worker import AnalysisJobWorker
 from app.migrations import run_migrations
 from app.schemas import (
@@ -30,13 +32,13 @@ from app.schemas import (
     PortfolioOverviewResponse,
     RequirementTransitionItem,
     ServiceHealthResponse,
+    SnapshotHistoryItem,
     TenderSnapshotResponse,
     TenderSyncRequest,
     TransitionItem,
     TransitionsResponse,
 )
 from app.store import SqliteStore
-from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
 from app.transition_diagnostics import TransitionSnapshot, build_transition_snapshot
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO), format="%(message)s")
@@ -58,7 +60,7 @@ async def lifespan(app: FastAPI):
     store.open()
     worker = AnalysisJobWorker(
         store,
-        run_analysis=lambda external_tender_id: _perform_analysis(store, external_tender_id),
+        run_analysis=lambda job: _run_job(store, job),
         poll_interval_seconds=settings.analysis_job_poll_interval_seconds,
     )
     worker.start()
@@ -115,6 +117,9 @@ def _base_notes(external_tender_id: str, store: SqliteStore) -> list[str]:
 def _perform_analysis(
     store: SqliteStore,
     external_tender_id: str,
+    *,
+    metadata_overrides: dict[str, Any] | None = None,
+    generated_at_override: str | None = None,
 ) -> tuple[dict[str, Any] | None, AnalysisSnapshot | None, TransitionSnapshot | None, dict[str, Any] | None]:
     tender = store.get_tender(external_tender_id)
     if tender is None:
@@ -122,6 +127,10 @@ def _perform_analysis(
 
     events = store.list_domain_events(external_tender_id)
     analysis = compute_analysis_snapshot(tender, events)
+    if metadata_overrides:
+        merged_metadata = dict(analysis.analysis_metadata or {})
+        merged_metadata.update(metadata_overrides)
+        analysis = replace(analysis, analysis_metadata=merged_metadata)
     transition_snapshot = build_transition_snapshot(
         tender,
         events,
@@ -136,9 +145,89 @@ def _perform_analysis(
         external_tender_id,
         analysis=analysis,
         transition_snapshot=transition_snapshot,
+        generated_at_override=generated_at_override,
     )
     tender = store.get_tender(external_tender_id)
     return tender, analysis, transition_snapshot, snapshot_record
+
+
+def _perform_history_backfill(
+    store: SqliteStore,
+    external_tender_id: str,
+) -> tuple[dict[str, Any] | None, AnalysisSnapshot | None, TransitionSnapshot | None, dict[str, Any] | None]:
+    tender = store.get_tender(external_tender_id)
+    if tender is None:
+        return None, None, None, None
+
+    events = store.list_domain_events(external_tender_id)
+    if not events:
+        return _perform_analysis(
+            store,
+            external_tender_id,
+            metadata_overrides={
+                "source_job_type": "history_backfill",
+                "history_points": 0,
+            },
+        )
+
+    last_result: tuple[dict[str, Any] | None, AnalysisSnapshot | None, TransitionSnapshot | None, dict[str, Any] | None] = (None, None, None, None)
+    cumulative_events: list[dict[str, Any]] = []
+    for event in events:
+        cumulative_events.append(event)
+        occurred_at = str(event["occurred_at"])
+        occurred_at_dt = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        analysis = compute_analysis_snapshot(tender, cumulative_events, now=occurred_at_dt)
+        merged_metadata = dict(analysis.analysis_metadata or {})
+        merged_metadata.update(
+            {
+                "reconstructed": True,
+                "replay_until": occurred_at,
+                "replay_source_event_type": event["event_type"],
+                "source_job_type": "history_backfill",
+                "history_points": len(cumulative_events),
+            }
+        )
+        analysis = replace(analysis, analysis_metadata=merged_metadata)
+        transition_snapshot = build_transition_snapshot(
+            tender,
+            cumulative_events,
+            analytical_phase=analysis.analytical_phase,
+        )
+        store.update_tender_analysis(
+            external_tender_id,
+            health=analysis.health,
+            analytical_phase=analysis.analytical_phase,
+        )
+        snapshot_record = store.record_analysis_snapshot(
+            external_tender_id,
+            analysis=analysis,
+            transition_snapshot=transition_snapshot,
+            generated_at_override=occurred_at,
+        )
+        tender = store.get_tender(external_tender_id)
+        last_result = (tender, analysis, transition_snapshot, snapshot_record)
+
+    final_result = _perform_analysis(
+        store,
+        external_tender_id,
+        metadata_overrides={
+            "source_job_type": "history_backfill",
+            "history_points": len(events),
+        },
+    )
+    if final_result[3] is not None:
+        return final_result
+    return last_result
+
+
+def _run_job(
+    store: SqliteStore,
+    job: dict[str, Any],
+) -> tuple[dict[str, Any] | None, AnalysisSnapshot | None, TransitionSnapshot | None, dict[str, Any] | None]:
+    external_tender_id = str(job["external_tender_id"])
+    if str(job.get("job_type")) == "history_backfill":
+        return _perform_history_backfill(store, external_tender_id)
+    return _perform_analysis(store, external_tender_id)
 
 
 def _load_snapshot_state(
@@ -374,6 +463,7 @@ async def get_transitions(
             summary="Tender not synchronized yet.",
             items=[],
             requirement_items=[],
+            history_items=[],
         )
 
     return TransitionsResponse(
@@ -385,6 +475,7 @@ async def get_transitions(
             RequirementTransitionItem(**asdict(item))
             for item in (transition_snapshot.requirement_items if transition_snapshot is not None else [])
         ],
+        history_items=[SnapshotHistoryItem(**item) for item in store.list_snapshot_history(external_tender_id)],
     )
 
 
@@ -397,22 +488,31 @@ async def get_forecast(
     external_tender_id: str,
     store: SqliteStore = Depends(get_store),
 ) -> ForecastResponse:
-    tender, snapshot_record, _transition_snapshot = _load_snapshot_state(store, external_tender_id)
-    if tender is None or snapshot_record is None:
-        description = "Forecasting is blocked until the tender is synchronized."
-    else:
-        description = (
-            "Forecasting will remain rule-based in a later sprint; current partial snapshot "
-            f"reports {snapshot_record.get('health', 'unknown')} health in {snapshot_record.get('analytical_phase') or 'unknown phase'}."
-        )
+    tender, snapshot_record, transition_snapshot = _load_snapshot_state(store, external_tender_id)
+    history_items = store.list_snapshot_history(external_tender_id) if tender is not None else []
+    events = store.list_domain_events(external_tender_id) if tender is not None else []
+    forecast = build_forecast_snapshot(
+        tender=tender,
+        snapshot_record=snapshot_record,
+        transition_snapshot=transition_snapshot,
+        history_items=history_items,
+        events=events,
+    )
     return ForecastResponse(
         external_tender_id=external_tender_id,
         generated_at=_snapshot_generated_at(snapshot_record),
+        summary=forecast.summary,
+        overall_confidence=forecast.overall_confidence,
         scenarios=[
             ForecastScenario(
-                name="not_ready",
-                description=description,
+                name=item.name,
+                probability=item.probability,
+                description=item.description,
+                confidence=item.confidence,
+                drivers=item.drivers,
+                recommended_action=item.recommended_action,
             )
+            for item in forecast.scenarios
         ],
     )
 

@@ -20,7 +20,7 @@ class AnalysisJobWorker:
         self,
         store: SqliteStore,
         *,
-        run_analysis: Callable[[str], tuple[dict[str, Any] | None, Any, Any, dict[str, Any] | None]],
+        run_analysis: Callable[[dict[str, Any]], tuple[dict[str, Any] | None, Any, Any, dict[str, Any] | None]],
         poll_interval_seconds: float = 0.25,
     ) -> None:
         self.store = store
@@ -59,7 +59,7 @@ class AnalysisJobWorker:
             job_id = int(job["job_id"])
             external_tender_id = str(job["external_tender_id"])
             try:
-                _, _, _, snapshot_record = self.run_analysis(external_tender_id)
+                _, _, _, snapshot_record = self.run_analysis(job)
                 if snapshot_record is None:
                     raise RuntimeError("Tender snapshot could not be recomputed.")
                 self.store.mark_analysis_job_succeeded(job_id, snapshot_record=snapshot_record)

@@ -79,6 +79,13 @@ function formatGeneratedAt(value: string | null): string {
     return parsed.toLocaleString('it-IT');
 }
 
+function formatProbability(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+        return '--';
+    }
+    return `${Math.round(value * 100)}%`;
+}
+
 function riskCount(items: KpiBottleneckItem[], health: string): number {
     return items.filter((item) => item.health === health).length;
 }
@@ -261,6 +268,8 @@ export default function ObservabilityKPI() {
     const amberCount = riskCount(bottlenecks, 'amber');
     const analysisJobPalette = analysisJobColors(analysisJob?.job_status);
     const recomputeDisabled = !selectedTenderId || isDetailLoading || isAnalysisJobActive(analysisJob);
+    const backfillDisabled = recomputeDisabled;
+    const activeJobType = analysisJob?.job_type || null;
 
     const handleRecompute = async () => {
         if (selectedTenderId === null) {
@@ -271,9 +280,26 @@ export default function ObservabilityKPI() {
         try {
             const response = await kpiAdminApi.recomputeTender(selectedTenderId);
             setAnalysisJob(response);
+            setIsRecomputing(isAnalysisJobActive(response));
         } catch (recomputeError) {
             setIsRecomputing(false);
             setError(recomputeError instanceof Error ? recomputeError.message : 'Failed to trigger KPI recompute.');
+        }
+    };
+
+    const handleHistoryBackfill = async () => {
+        if (selectedTenderId === null) {
+            return;
+        }
+        setError(null);
+        setIsRecomputing(true);
+        try {
+            const response = await kpiAdminApi.backfillTenderHistory(selectedTenderId);
+            setAnalysisJob(response);
+            setIsRecomputing(isAnalysisJobActive(response));
+        } catch (backfillError) {
+            setIsRecomputing(false);
+            setError(backfillError instanceof Error ? backfillError.message : 'Failed to trigger KPI history backfill.');
         }
     };
 
@@ -301,11 +327,18 @@ export default function ObservabilityKPI() {
                         <RefreshCcw size={14} /> Refresh
                     </button>
                     <button
-                        className={`btn btn-primary btn-sm ${isRecomputing ? 'animate-pulse' : ''}`}
+                        className={`btn btn-secondary btn-sm ${isRecomputing && activeJobType === 'history_backfill' ? 'animate-pulse' : ''}`}
+                        onClick={() => void handleHistoryBackfill()}
+                        disabled={backfillDisabled}
+                    >
+                        <FileSearch size={14} /> {isRecomputing && activeJobType === 'history_backfill' ? 'Replaying history…' : 'Replay History'}
+                    </button>
+                    <button
+                        className={`btn btn-primary btn-sm ${isRecomputing && activeJobType !== 'history_backfill' ? 'animate-pulse' : ''}`}
                         onClick={() => void handleRecompute()}
                         disabled={recomputeDisabled}
                     >
-                        <RefreshCcw size={14} /> {isRecomputing ? 'Recomputing…' : 'Recompute KPI'}
+                        <RefreshCcw size={14} /> {isRecomputing && activeJobType !== 'history_backfill' ? 'Recomputing…' : 'Recompute KPI'}
                     </button>
                 </div>
             </div>
@@ -639,6 +672,35 @@ export default function ObservabilityKPI() {
                                         <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                             <TrendingUp size={18} color="#38bdf8" /> Forecast
                                         </h3>
+                                        {forecast?.summary && (
+                                            <p style={{ marginTop: 0, marginBottom: '0.65rem', fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+                                                {forecast.summary}
+                                            </p>
+                                        )}
+                                        <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
+                                            <span style={{
+                                                padding: '0.24rem 0.62rem',
+                                                borderRadius: '999px',
+                                                fontSize: '0.72rem',
+                                                background: 'rgba(56, 189, 248, 0.14)',
+                                                color: '#38bdf8',
+                                                border: '1px solid rgba(56, 189, 248, 0.2)',
+                                            }}>
+                                                Overall confidence: {formatProbability(forecast?.overall_confidence)}
+                                            </span>
+                                            {analysisMetadata?.reconstructed && (
+                                                <span style={{
+                                                    padding: '0.24rem 0.62rem',
+                                                    borderRadius: '999px',
+                                                    fontSize: '0.72rem',
+                                                    background: 'rgba(245, 158, 11, 0.14)',
+                                                    color: '#f59e0b',
+                                                    border: '1px solid rgba(245, 158, 11, 0.2)',
+                                                }}>
+                                                    Snapshot includes reconstructed history
+                                                </span>
+                                            )}
+                                        </div>
                                         {(forecast?.scenarios || []).length === 0 ? (
                                             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>Forecast not available.</p>
                                         ) : (
@@ -646,14 +708,33 @@ export default function ObservabilityKPI() {
                                                 {forecast?.scenarios.map((scenario) => (
                                                     <div key={scenario.name} style={{ padding: '0.8rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
-                                                            <span style={{ fontWeight: 600 }}>{scenario.name}</span>
-                                                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                                {scenario.probability === null || scenario.probability === undefined ? '--' : `${Math.round(scenario.probability * 100)}%`}
-                                                            </span>
+                                                            <span style={{ fontWeight: 600 }}>{scenario.name.replace(/_/g, ' ')}</span>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                                    {formatProbability(scenario.probability)}
+                                                                </span>
+                                                                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                                    Confidence {formatProbability(scenario.confidence)}
+                                                                </span>
+                                                            </div>
                                                         </div>
                                                         <p style={{ margin: '0.45rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                                                             {scenario.description || 'No description available.'}
                                                         </p>
+                                                        {scenario.drivers.length > 0 && (
+                                                            <div style={{ display: 'grid', gap: '0.35rem', marginTop: '0.65rem' }}>
+                                                                {scenario.drivers.slice(0, 4).map((driver) => (
+                                                                    <div key={`${scenario.name}-${driver}`} style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                                                                        - {driver}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {scenario.recommended_action && (
+                                                            <div style={{ marginTop: '0.65rem', fontSize: '0.78rem', color: '#bae6fd' }}>
+                                                                Recommended action: {scenario.recommended_action}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>

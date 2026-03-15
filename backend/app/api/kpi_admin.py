@@ -87,6 +87,7 @@ def _transitions_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "summary": detail,
         "items": [],
         "requirement_items": [],
+        "history_items": [],
     }
 
 
@@ -95,11 +96,16 @@ def _forecast_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "status": "not_ready",
         "external_tender_id": str(tender_id),
         "generated_at": None,
+        "summary": detail,
+        "overall_confidence": 0.0,
         "scenarios": [
             {
                 "name": "service_unavailable",
                 "probability": None,
                 "description": detail,
+                "confidence": 0.0,
+                "drivers": [detail],
+                "recommended_action": "Retry when the KPI service becomes available.",
             }
         ],
     }
@@ -240,6 +246,31 @@ async def recompute_kpi_tender(
             },
         ),
         action="tender recompute request",
+    )
+
+
+@router.post("/tenders/{tender_id}/history/backfill", response_model=dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
+async def backfill_kpi_tender_history(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_admin(current_user)
+    client = KpiReasonEngineClient()
+    return _unwrap_action_result(
+        await client.request_analysis_job(
+            str(tender_id),
+            {
+                "job_type": "history_backfill",
+                "requested_by": str(current_user.id),
+                "priority": "high",
+                "reason": "Manual admin history backfill",
+                "metadata": {
+                    "source": "admin-ui",
+                    "requested_by_name": current_user.name,
+                },
+            },
+        ),
+        action="tender history backfill request",
     )
 
 

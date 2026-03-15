@@ -86,7 +86,7 @@ describe('kpiAdminApi', () => {
 
     it('queries tender transitions through the admin KPI BFF', async () => {
         fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready', summary: 'ok', items: [], requirement_items: [] }), {
+            new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready', summary: 'ok', items: [], requirement_items: [], history_items: [] }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             })
@@ -117,6 +117,26 @@ describe('kpiAdminApi', () => {
         expect(response.job_status).toBe('queued');
         expect(fetchMock).toHaveBeenCalledWith(
             '/api/admin/kpi/tenders/12/recompute',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        );
+    });
+
+    it('triggers a history backfill request through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ external_tender_id: '12', job_id: 91, job_type: 'history_backfill', job_status: 'queued' }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.backfillTenderHistory(12);
+
+        expect(response.job_id).toBe(91);
+        expect(response.job_type).toBe('history_backfill');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/tenders/12/history/backfill',
             expect.objectContaining({
                 method: 'POST',
             })

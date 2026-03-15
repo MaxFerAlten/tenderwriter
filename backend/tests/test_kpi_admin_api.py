@@ -49,10 +49,10 @@ class _MockKpiClient:
         return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "summary": "ok", "findings": []})
 
     async def get_tender_transitions(self, external_tender_id: str) -> KpiClientResult:
-        return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "summary": "ok", "items": [], "requirement_items": []})
+        return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "summary": "ok", "items": [], "requirement_items": [], "history_items": []})
 
     async def get_tender_forecast(self, external_tender_id: str) -> KpiClientResult:
-        return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "scenarios": []})
+        return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "summary": "ok", "overall_confidence": 0.5, "scenarios": []})
 
 
 class KpiAdminApiTests(unittest.TestCase):
@@ -100,6 +100,28 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(payload["job_id"], 81)
+        self.assertEqual(payload["job_status"], "queued")
+
+    def test_backfill_endpoint_forwards_admin_request(self) -> None:
+        mock_client = _MockKpiClient(
+            recompute_result=KpiClientResult(
+                delivered=True,
+                status_code=202,
+                response_json={
+                    "external_tender_id": "12",
+                    "job_id": 91,
+                    "job_type": "history_backfill",
+                    "job_status": "queued",
+                },
+            )
+        )
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+            response = self.client.post("/admin/kpi/tenders/12/history/backfill")
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["job_id"], 91)
+        self.assertEqual(payload["job_type"], "history_backfill")
         self.assertEqual(payload["job_status"], "queued")
 
     def test_latest_analysis_job_falls_back_to_degraded_state(self) -> None:

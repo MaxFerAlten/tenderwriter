@@ -346,8 +346,9 @@ class SqliteStore:
         *,
         analysis: AnalysisSnapshot,
         transition_snapshot: TransitionSnapshot,
+        generated_at_override: str | None = None,
     ) -> dict[str, Any]:
-        generated_at = _utcnow_iso()
+        generated_at = generated_at_override or _utcnow_iso()
         with self._lock:
             connection = self._require_connection()
             analysis_metadata = dict(analysis.analysis_metadata or {})
@@ -514,7 +515,7 @@ class SqliteStore:
             for row in rows
         ]
 
-    def list_phase_transitions(self, external_tender_id: str, limit: int = 8) -> list[dict[str, Any]]:
+    def list_phase_transitions(self, external_tender_id: str, limit: int = 12) -> list[dict[str, Any]]:
         with self._lock:
             connection = self._require_connection()
             rows = connection.execute(
@@ -539,6 +540,37 @@ class SqliteStore:
             }
             for row in rows
         ]
+
+    def list_snapshot_history(self, external_tender_id: str, limit: int = 12) -> list[dict[str, Any]]:
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                """
+                SELECT id, generated_at, analytical_phase, health, summary, analysis_metadata_json
+                FROM kpi_snapshots
+                WHERE external_tender_id = ?
+                ORDER BY generated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (external_tender_id, limit),
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            items.append(
+                {
+                    'snapshot_id': int(row['id']),
+                    'generated_at': row['generated_at'],
+                    'analytical_phase': row['analytical_phase'],
+                    'health': row['health'] or 'unknown',
+                    'summary': row['summary'],
+                    'reconstructed': bool(metadata.get('reconstructed', False)),
+                    'replay_until': metadata.get('replay_until'),
+                    'source_job_type': metadata.get('source_job_type'),
+                    'replay_source_event_type': metadata.get('replay_source_event_type'),
+                }
+            )
+        return items
 
     def update_tender_analysis(self, external_tender_id: str, *, health: str, analytical_phase: str | None) -> None:
         with self._lock:
