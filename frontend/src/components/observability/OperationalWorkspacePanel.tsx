@@ -257,8 +257,15 @@ export default function OperationalWorkspacePanel({ tender, onDataChanged }: Ope
                         ))}
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(320px, 0.9fr)', gap: '1rem', alignItems: 'start' }}>
-                        <div style={{ display: 'grid', gap: '1rem' }}>
+                    <div
+                        style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                            gap: '1rem',
+                            alignItems: 'start',
+                        }}
+                    >
+                        <div style={{ display: 'grid', gap: '1rem', minWidth: 0 }}>
                             <SectionCard title="Contributions" subtitle="Select one contribution to drive requests, reviews and rework.">
                                 <div style={{ display: 'grid', gap: '0.75rem' }}>
                                     {workspace.contributions.length === 0 ? (
@@ -466,7 +473,7 @@ export default function OperationalWorkspacePanel({ tender, onDataChanged }: Ope
                             </SectionCard>
                         </div>
 
-                        <div style={{ display: 'grid', gap: '1rem' }}>
+                        <div style={{ display: 'grid', gap: '1rem', minWidth: 0 }}>
                             <SectionCard title="Create contribution" subtitle="Seed a contribution unit before starting operational tracking.">
                                 <div style={{ display: 'grid', gap: '0.65rem' }}>
                                     <input className="input" placeholder="Contribution title" value={contributionForm.title} onChange={(event) => setContributionForm((current) => ({ ...current, title: event.target.value }))} />
@@ -495,7 +502,7 @@ export default function OperationalWorkspacePanel({ tender, onDataChanged }: Ope
                                 {!selectedContribution ? (
                                     <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>No contribution selected.</div>
                                 ) : (
-                                    <div style={{ display: 'grid', gap: '1rem' }}>
+                                    <div style={{ display: 'grid', gap: '1rem', minWidth: 0 }}>
                                         <div style={{ display: 'grid', gap: '0.65rem' }}>
                                             <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Create request</div>
                                             <input className="input" placeholder="Requested to" value={requestForm.requested_to_label} onChange={(event) => setRequestForm((current) => ({ ...current, requested_to_label: event.target.value }))} />
@@ -576,7 +583,7 @@ export default function OperationalWorkspacePanel({ tender, onDataChanged }: Ope
                             </SectionCard>
 
                             <SectionCard title="Tender-wide actions" subtitle="Use these controls for compliance gates and call attendance.">
-                                <div style={{ display: 'grid', gap: '1rem' }}>
+                                <div style={{ display: 'grid', gap: '1rem', minWidth: 0 }}>
                                     <div style={{ display: 'grid', gap: '0.65rem' }}>
                                         <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Create gate</div>
                                         <input className="input" placeholder="Gate name" value={gateForm.gate_name} onChange={(event) => setGateForm((current) => ({ ...current, gate_name: event.target.value }))} />
@@ -651,5 +658,4 @@ export default function OperationalWorkspacePanel({ tender, onDataChanged }: Ope
         </div>
     );
 }
-
 

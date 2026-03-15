@@ -412,4 +412,66 @@ describe('observabilityApi', () => {
             })
         );
     });
+
+    it('marks a contribution request as received through the tender observability endpoint', async () => {
+        localStorageMock.setItem('token', 'editor-token');
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ id: 55, contribution_unit_id: 91, status: 'received' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await observabilityApi.receiveRequest(12, 91, 55, {
+            response_received_at: '2026-03-15T16:00:00Z',
+            response_summary: 'Received through workspace',
+        });
+
+        expect(response.status).toBe('received');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/observability/contributions/91/requests/55/receive',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer editor-token',
+                }),
+                body: JSON.stringify({
+                    response_received_at: '2026-03-15T16:00:00Z',
+                    response_summary: 'Received through workspace',
+                }),
+            })
+        );
+    });
+
+    it('starts a review cycle through the tender observability endpoint', async () => {
+        localStorageMock.setItem('token', 'editor-token');
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ id: 71, contribution_unit_id: 91, status: 'in_review', stage_name: 'quality_review' }), {
+                status: 201,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await observabilityApi.createReview(12, 91, {
+            stage_name: 'quality_review',
+            notes: 'Start review from workspace',
+        });
+
+        expect(response.stage_name).toBe('quality_review');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/observability/contributions/91/reviews',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer editor-token',
+                }),
+                body: JSON.stringify({
+                    stage_name: 'quality_review',
+                    notes: 'Start review from workspace',
+                }),
+            })
+        );
+    });
 });
+
+
