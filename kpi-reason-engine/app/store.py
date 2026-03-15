@@ -644,6 +644,44 @@ class SqliteStore:
             ).fetchone()
         return int(row['count'] or 0)
 
+    def get_runtime_metrics(self) -> dict[str, Any]:
+        with self._lock:
+            connection = self._require_connection()
+            tender_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_tenders').fetchone()
+            event_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_domain_events').fetchone()
+            document_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_document_contexts').fetchone()
+            snapshot_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_snapshots').fetchone()
+            finding_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_findings').fetchone()
+            transition_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_phase_transitions').fetchone()
+            status_rows = connection.execute(
+                'SELECT status, COUNT(*) AS count FROM kpi_analysis_jobs GROUP BY status'
+            ).fetchall()
+            type_status_rows = connection.execute(
+                'SELECT job_type, status, COUNT(*) AS count FROM kpi_analysis_jobs GROUP BY job_type, status ORDER BY job_type, status'
+            ).fetchall()
+
+        return {
+            'analysis_jobs': {
+                'by_status': {row['status']: int(row['count'] or 0) for row in status_rows},
+                'by_type_and_status': [
+                    {
+                        'job_type': row['job_type'],
+                        'status': row['status'],
+                        'count': int(row['count'] or 0),
+                    }
+                    for row in type_status_rows
+                ],
+            },
+            'persistence': {
+                'mirrored_tenders': int(tender_row['count'] or 0),
+                'persisted_domain_events': int(event_row['count'] or 0),
+                'persisted_document_contexts': int(document_row['count'] or 0),
+                'persisted_snapshots': int(snapshot_row['count'] or 0),
+                'persisted_findings': int(finding_row['count'] or 0),
+                'persisted_phase_transitions': int(transition_row['count'] or 0),
+            },
+        }
+
     def get_schema_version(self) -> str | None:
         with self._lock:
             connection = self._require_connection()

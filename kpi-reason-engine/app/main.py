@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import logging
+from time import perf_counter
 from typing import Any
 
 import structlog
@@ -14,6 +15,7 @@ from app.auth import require_internal_service
 from app.config import settings
 from app.forecasting import build_forecast_snapshot
 from app.job_worker import AnalysisJobWorker
+from app.metrics import RuntimeMetrics
 from app.migrations import run_migrations
 from app.schemas import (
     AcceptedResponse,
@@ -65,6 +67,7 @@ async def lifespan(app: FastAPI):
     )
     worker.start()
     app.state.store = store
+    app.state.metrics = RuntimeMetrics(service_name=settings.app_name, service_version=settings.app_version)
     app.state.analysis_job_worker = worker
     logger.info(
         "service.starting",
@@ -89,8 +92,39 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def collect_runtime_metrics(request: Request, call_next):
+    started_at = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        metrics = _get_metrics(request)
+        if metrics is not None:
+            metrics.record_request(
+                method=request.method,
+                path=request.url.path,
+                status_code=500,
+                duration_ms=(perf_counter() - started_at) * 1000,
+            )
+        raise
+
+    metrics = _get_metrics(request)
+    if metrics is not None:
+        metrics.record_request(
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=(perf_counter() - started_at) * 1000,
+        )
+    return response
+
+
 def get_store(request: Request) -> SqliteStore:
     return request.app.state.store
+
+
+def _get_metrics(request: Request) -> RuntimeMetrics | None:
+    return getattr(request.app.state, "metrics", None)
 
 
 def _accepted_message(action: str) -> str:
@@ -286,6 +320,25 @@ async def health() -> ServiceHealthResponse:
     return ServiceHealthResponse(service=settings.app_name, version=settings.app_version)
 
 
+@app.get("/metrics", response_model=dict[str, Any])
+async def get_metrics(request: Request) -> dict[str, Any]:
+    store = get_store(request)
+    metrics = _get_metrics(request)
+    if metrics is None:
+        return {
+            "service": {
+                "name": settings.app_name,
+                "version": settings.app_version,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "http": {"total_requests": 0, "breakdown": [], "latency_ms": []},
+            "domain_events": {"ingested_total": {}},
+            "analysis_jobs": {"requested_total": {}, "runtime": {}},
+            "persistence": store.get_runtime_metrics().get("persistence", {}),
+        }
+    return metrics.snapshot(store_runtime=store.get_runtime_metrics())
+
+
 @app.post(
     "/v1/tenders",
     response_model=AcceptedResponse,
@@ -294,6 +347,7 @@ async def health() -> ServiceHealthResponse:
 )
 async def sync_tender(
     payload: TenderSyncRequest,
+    request: Request,
     store: SqliteStore = Depends(get_store),
 ) -> AcceptedResponse:
     store.upsert_tender(payload.model_dump(mode="json"))
@@ -313,9 +367,13 @@ async def sync_tender(
 async def ingest_event(
     external_tender_id: str,
     payload: DomainEventRequest,
+    request: Request,
     store: SqliteStore = Depends(get_store),
 ) -> EventAcceptedResponse:
     store.insert_domain_event(external_tender_id, payload.model_dump(mode="json"))
+    metrics = _get_metrics(request)
+    if metrics is not None:
+        metrics.record_domain_event(payload.event_type)
     _perform_analysis(store, external_tender_id)
     return EventAcceptedResponse(
         message=_accepted_message("Domain event ingestion"),
@@ -357,6 +415,9 @@ async def request_analysis_job(
     if store.get_tender(external_tender_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tender not synchronized yet.")
     job_record = store.enqueue_analysis_job(external_tender_id, payload.model_dump(mode="json"))
+    metrics = _get_metrics(request)
+    if metrics is not None:
+        metrics.record_analysis_job_request(payload.job_type)
     request.app.state.analysis_job_worker.notify()
     return AnalysisJobAcceptedResponse(
         message=_accepted_message("Analysis job"),

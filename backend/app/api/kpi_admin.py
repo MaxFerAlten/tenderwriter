@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.auth import UserResponse, get_current_user
 from app.services.kpi_reason_engine import KpiClientResult, KpiReasonEngineClient
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -27,11 +30,29 @@ def _error_detail(result: KpiClientResult, action: str) -> str:
 
 def _unwrap_action_result(result: KpiClientResult, *, action: str) -> dict[str, Any]:
     if result.delivered:
-        return result.response_json
+        payload = dict(result.response_json)
+        payload.setdefault("degraded", False)
+        payload.setdefault("upstream_status_code", result.status_code)
+        return payload
 
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=_error_detail(result, action),
+    )
+
+
+def _audit_admin_event(*, action: str, current_user: UserResponse, tender_id: int | None = None, result: KpiClientResult | None = None) -> None:
+    logger.info(
+        "admin_kpi.audit",
+        action=action,
+        admin_user_id=current_user.id,
+        admin_user_email=current_user.email,
+        admin_user_role=current_user.role,
+        tender_id=tender_id,
+        delivered=result.delivered if result is not None else None,
+        degraded=(False if result is None else not result.delivered),
+        upstream_status_code=None if result is None else result.status_code,
+        error_message=None if result is None else result.error_message,
     )
 
 
@@ -131,8 +152,14 @@ def _analysis_job_fallback(tender_id: int, detail: str) -> dict[str, Any]:
 
 def _query_or_fallback(result: KpiClientResult, *, action: str, fallback: dict[str, Any]) -> dict[str, Any]:
     if result.delivered:
-        return result.response_json
+        payload = dict(result.response_json)
+        payload.setdefault("degraded", False)
+        payload.setdefault("upstream_status_code", result.status_code)
+        return payload
     fallback.setdefault("error_message", _error_detail(result, action))
+    fallback.setdefault("degraded", True)
+    fallback.setdefault("degraded_reason", _error_detail(result, action))
+    fallback.setdefault("upstream_status_code", result.status_code)
     return fallback
 
 
@@ -143,6 +170,7 @@ async def get_kpi_portfolio_overview(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_portfolio_overview()
+    _audit_admin_event(action="portfolio_overview_query", current_user=current_user, result=result)
     return _query_or_fallback(
         result,
         action="portfolio overview query",
@@ -157,6 +185,7 @@ async def get_kpi_portfolio_bottlenecks(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_portfolio_bottlenecks()
+    _audit_admin_event(action="portfolio_bottlenecks_query", current_user=current_user, result=result)
     return _query_or_fallback(
         result,
         action="portfolio bottlenecks query",
@@ -172,6 +201,7 @@ async def get_kpi_tender_snapshot(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_snapshot(str(tender_id))
+    _audit_admin_event(action="tender_snapshot_query", current_user=current_user, tender_id=tender_id, result=result)
     return _query_or_fallback(
         result,
         action="tender snapshot query",
@@ -187,6 +217,7 @@ async def get_kpi_tender_diagnostics(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_diagnostics(str(tender_id))
+    _audit_admin_event(action="tender_diagnostics_query", current_user=current_user, tender_id=tender_id, result=result)
     return _query_or_fallback(
         result,
         action="tender diagnostics query",
@@ -202,6 +233,7 @@ async def get_kpi_tender_transitions(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_transitions(str(tender_id))
+    _audit_admin_event(action="tender_transitions_query", current_user=current_user, tender_id=tender_id, result=result)
     return _query_or_fallback(
         result,
         action="tender transitions query",
@@ -217,6 +249,7 @@ async def get_kpi_tender_forecast(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_forecast(str(tender_id))
+    _audit_admin_event(action="tender_forecast_query", current_user=current_user, tender_id=tender_id, result=result)
     return _query_or_fallback(
         result,
         action="tender forecast query",
@@ -231,8 +264,7 @@ async def recompute_kpi_tender(
 ) -> dict[str, Any]:
     _require_admin(current_user)
     client = KpiReasonEngineClient()
-    return _unwrap_action_result(
-        await client.request_analysis_job(
+    result = await client.request_analysis_job(
             str(tender_id),
             {
                 "job_type": "full_recompute",
@@ -244,9 +276,9 @@ async def recompute_kpi_tender(
                     "requested_by_name": current_user.name,
                 },
             },
-        ),
-        action="tender recompute request",
-    )
+        )
+    _audit_admin_event(action="tender_recompute_request", current_user=current_user, tender_id=tender_id, result=result)
+    return _unwrap_action_result(result, action="tender recompute request")
 
 
 @router.post("/tenders/{tender_id}/history/backfill", response_model=dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
@@ -256,8 +288,7 @@ async def backfill_kpi_tender_history(
 ) -> dict[str, Any]:
     _require_admin(current_user)
     client = KpiReasonEngineClient()
-    return _unwrap_action_result(
-        await client.request_analysis_job(
+    result = await client.request_analysis_job(
             str(tender_id),
             {
                 "job_type": "history_backfill",
@@ -269,9 +300,9 @@ async def backfill_kpi_tender_history(
                     "requested_by_name": current_user.name,
                 },
             },
-        ),
-        action="tender history backfill request",
-    )
+        )
+    _audit_admin_event(action="tender_history_backfill_request", current_user=current_user, tender_id=tender_id, result=result)
+    return _unwrap_action_result(result, action="tender history backfill request")
 
 
 @router.get("/tenders/{tender_id}/analysis-jobs/latest", response_model=dict[str, Any])
@@ -282,6 +313,7 @@ async def get_kpi_latest_analysis_job(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_latest_analysis_job(str(tender_id))
+    _audit_admin_event(action="latest_analysis_job_query", current_user=current_user, tender_id=tender_id, result=result)
     return _query_or_fallback(
         result,
         action="latest analysis job query",

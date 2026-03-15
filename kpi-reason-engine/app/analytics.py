@@ -1172,11 +1172,15 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
     all_scores = [a1, a2, a3, a4, q, operational.b1, operational.b2, operational.b3, operational.b4, operational.e]
     health = _derive_health(all_scores)
     analytical_phase = _derive_phase(current_status=current_status, document_ingested=document_ingested, requirements_extracted=requirements_extracted, requirement_count=requirement_count, active_sections=active_sections, proposal_updates=proposal_updates, a1_score=a1, outcome=outcome, submitted=submitted, operational_state=operational_state)
+    failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
+    if failed_gates > 0 and health != "red":
+        health = "red"
 
     notes = [
         f"Requirements tracked in mirror: {requirement_count}.",
         f"Proposal sections tracked in mirror: {len(sections)} ({completed_sections} completed).",
         f"Observed `proposal_section_updated` events: {proposal_updates}.",
+        *([f"Failed compliance gates observed: {failed_gates}."] if failed_gates else []),
         *operational.notes,
     ]
 
@@ -1197,3 +1201,4 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         summary=summary,
         analysis_metadata=_analysis_metadata(events=events, requirement_count=requirement_count, section_count=len(sections), scored_kpis=all_scores),
     )
+

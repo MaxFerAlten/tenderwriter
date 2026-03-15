@@ -80,6 +80,8 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["external_tender_id"], "12")
         self.assertEqual(payload["health"], "unknown")
         self.assertEqual(payload["notes"], ["KPI service timeout"])
+        self.assertTrue(payload["degraded"])
+        self.assertEqual(payload["degraded_reason"], "KPI service timeout")
 
     def test_recompute_endpoint_forwards_admin_request(self) -> None:
         mock_client = _MockKpiClient(
@@ -123,6 +125,38 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["job_id"], 91)
         self.assertEqual(payload["job_type"], "history_backfill")
         self.assertEqual(payload["job_status"], "queued")
+
+    def test_forecast_query_preserves_rich_payload(self) -> None:
+        mock_client = _MockKpiClient()
+
+        async def rich_forecast(external_tender_id: str) -> KpiClientResult:
+            return KpiClientResult(True, 200, {
+                "external_tender_id": external_tender_id,
+                "status": "not_ready",
+                "summary": "Forecast leans toward submission.",
+                "overall_confidence": 0.72,
+                "scenarios": [
+                    {
+                        "name": "submit_on_time",
+                        "probability": 0.61,
+                        "description": "Submission path remains viable.",
+                        "confidence": 0.74,
+                        "drivers": ["Q remains stable"],
+                        "recommended_action": "Protect the submission path.",
+                    }
+                ],
+            })
+
+        mock_client.get_tender_forecast = rich_forecast
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+            response = self.client.get("/admin/kpi/tenders/12/forecast")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["degraded"])
+        self.assertEqual(payload["upstream_status_code"], 200)
+        self.assertEqual(payload["scenarios"][0]["name"], "submit_on_time")
+        self.assertEqual(payload["scenarios"][0]["drivers"], ["Q remains stable"])
 
     def test_latest_analysis_job_falls_back_to_degraded_state(self) -> None:
         mock_client = _MockKpiClient()
