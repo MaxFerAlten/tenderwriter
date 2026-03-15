@@ -340,7 +340,7 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
             current["lateness_hours"] = _coerce_float(payload.get("lateness_hours"))
             continue
 
-        if event_type == "review_cycle_started":
+        if event_type in {"review_cycle_started", "contribution_review_started"}:
             reviews_started += 1
             contribution_id = str(payload.get("external_contribution_id") or "")
             if contribution_id:
@@ -941,5 +941,4 @@ def compute_analysis_snapshot(
         notes=notes,
         summary=summary,
     )
-
 

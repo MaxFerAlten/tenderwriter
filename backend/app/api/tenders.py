@@ -32,6 +32,7 @@ from app.services.kpi_reason_engine import (
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
+from app.services.compliance_observability import sync_requirement_compliance_and_gate
 from app.services.tender_requirements import apply_extracted_requirement_candidates
 
 router = APIRouter()
@@ -319,6 +320,11 @@ async def update_tender(
     await db.flush()
     await db.refresh(tender)
 
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
     await ensure_official_chat_room(
         db,
         tender_id=tender.id,
@@ -347,6 +353,15 @@ async def update_tender(
             db,
             tender_id=tender.id,
             actor_id=current_user.id,
+        )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
         )
 
     return _tender_to_response(tender)
@@ -444,6 +459,14 @@ async def import_tender_document(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+    requirement_candidates = list(stats.get("requirement_candidates") or [])
+    created_requirements = apply_extracted_requirement_candidates(tender, requirement_candidates)
+    await db.flush()
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
     # 3. Update status to ACTIVE if it was DRAFT
     if tender.status == TenderStatus.DRAFT:
         tender.status = TenderStatus.ACTIVE
@@ -476,13 +499,32 @@ async def import_tender_document(
         ),
     )
 
+    await publish_domain_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="requirements_extracted",
+        payload=build_requirements_extracted_event_payload(
+            document_id=object_name,
+            filename=file.filename or "uploaded-document",
+            extracted_candidates=requirement_candidates,
+            created_requirements=created_requirements,
+        ),
+    )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
+
     return {
         "message": "Document uploaded and ingested successfully",
         "tender_id": tender_id,
         "filename": file.filename,
         "stats": stats,
     }
-
-
-
 

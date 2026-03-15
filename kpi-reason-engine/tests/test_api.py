@@ -546,3 +546,146 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         self.assertEqual(scores["E"]["value"], 71.2)
         self.assertEqual(scores["B1"]["provenance"], "measured")
         self.assertEqual(scores["B4"]["health"], "green")
+    def test_snapshot_recognizes_contribution_review_started_for_s5_phase(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-REV",
+                "title": "Review Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "in_review",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "contribution_review_started",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_contribution_id": "C-1",
+                    "external_review_cycle_id": "RV-1",
+                    "stage_name": "proposal_section_review",
+                },
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-REV/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        snapshot_response = self.client.get(
+            "/v1/tenders/TEN-REV/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        snapshot = snapshot_response.json()
+        self.assertEqual(snapshot["analytical_phase"], "S5")
+
+    def test_snapshot_enters_s8_for_open_compliance_gate(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-GATE",
+                "title": "Compliance Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide signed annex",
+                        "priority": "high",
+                        "compliance_status": "not_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "approved",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+            {
+                "event_type": "compliance_gate_opened",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {
+                    "external_gate_id": "G-1",
+                    "gate_name": "Auto compliance readiness",
+                },
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-GATE/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        snapshot_response = self.client.get(
+            "/v1/tenders/TEN-GATE/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        snapshot = snapshot_response.json()
+        self.assertEqual(snapshot["analytical_phase"], "S8")
+

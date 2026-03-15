@@ -27,6 +27,7 @@ from app.services.kpi_reason_engine import (
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
+from app.services.compliance_observability import sync_requirement_compliance_and_gate
 from app.services.operational_workflow import ensure_contribution_for_section, sync_section_operational_workflow
 
 router = APIRouter()
@@ -214,6 +215,7 @@ async def create_proposal(
     await db.flush()
     await db.refresh(proposal)
 
+
     # Create default sections
     default_sections = [
         "Executive Summary",
@@ -355,6 +357,14 @@ async def update_proposal(
     await db.flush()
     await db.refresh(proposal)
 
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+    )
+
+
+
     if proposal.status == ProposalStatus.SUBMITTED and proposal.status != previous_status:
         await sync_tender_and_publish_event(
             db,
@@ -371,6 +381,15 @@ async def update_proposal(
             db,
             tender_id=proposal.tender_id,
             actor_id=current_user.id,
+        )
+
+    for event_type, payload in compliance_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
         )
 
     return ProposalResponse(
@@ -508,6 +527,14 @@ async def update_section(
         previous_assigned_to=previous_assigned_to,
     )
 
+    compliance_events = await sync_requirement_compliance_and_gate(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+    )
+
+
+
     await sync_tender_and_publish_event(
         db,
         tender_id=proposal.tender_id,
@@ -521,6 +548,15 @@ async def update_section(
     )
 
     for event_type, payload in operational_events:
+        await publish_domain_event(
+            db,
+            tender_id=proposal.tender_id,
+            actor_id=current_user.id,
+            event_type=event_type,
+            payload=payload,
+        )
+
+    for event_type, payload in compliance_events:
         await publish_domain_event(
             db,
             tender_id=proposal.tender_id,
@@ -596,3 +632,4 @@ async def add_section(
         created_at=section.created_at,
         updated_at=section.updated_at,
     )
+
