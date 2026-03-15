@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { kpiAdminApi, observabilityApi, tenderApi } from './client';
+import {
+    kpiAdminApi,
+    observabilityApi,
+    prefetchTenderChatContext,
+    resetTenderChatContextCacheForTest,
+    resolveTenderChatContext,
+    tenderApi,
+} from './client';
 
 const fetchMock = vi.fn();
 const storage = new Map<string, string>();
@@ -27,6 +34,7 @@ describe('kpiAdminApi', () => {
     });
 
     afterEach(() => {
+        resetTenderChatContextCacheForTest();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });
@@ -94,6 +102,81 @@ describe('kpiAdminApi', () => {
     });
 });
 
+describe('chat context prefetch', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        resetTenderChatContextCacheForTest();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        resetTenderChatContextCacheForTest();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('reuses prefetched TenderChat context without triggering duplicate requests', async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    id: 12,
+                    title: 'Healthcare tender',
+                    client: 'Region',
+                    description: null,
+                    deadline: null,
+                    status: 'active',
+                    category: null,
+                    tags: [],
+                    budget_estimate: null,
+                    created_at: '2026-03-15T10:00:00Z',
+                    created_by: 1,
+                    created_by_name: 'Admin',
+                    requirement_count: 0,
+                    requirements: [],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    id: 5,
+                    tender_id: 12,
+                    is_official: true,
+                    status: 'open',
+                    opened_at: null,
+                    created_at: null,
+                    participant_count: 3,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 101,
+                            room_id: 5,
+                            sender_id: 7,
+                            sender_name: 'Alice',
+                            sender_email: 'alice@example.com',
+                            content: 'Latest upload received',
+                            created_at: '2026-03-15T10:10:00Z',
+                            updated_at: null,
+                            attachments: [],
+                        },
+                    ],
+                    next_before_id: null,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            );
+
+        await prefetchTenderChatContext(12);
+        const context = await resolveTenderChatContext(12, { preferCached: true });
+
+        expect(context.tender.id).toBe(12);
+        expect(context.room.id).toBe(5);
+        expect(context.messages).toHaveLength(1);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+});
+
 describe('tenderApi', () => {
     beforeEach(() => {
         storage.clear();
@@ -103,6 +186,7 @@ describe('tenderApi', () => {
     });
 
     afterEach(() => {
+        resetTenderChatContextCacheForTest();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });
@@ -162,6 +246,7 @@ describe('observabilityApi', () => {
     });
 
     afterEach(() => {
+        resetTenderChatContextCacheForTest();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });

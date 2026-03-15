@@ -220,6 +220,96 @@ export const chatApi = {
     },
 };
 
+
+const CHAT_CONTEXT_PREFETCH_TTL_MS = 45_000;
+
+type TenderChatContextCacheEntry = {
+    value: TenderChatContextSnapshot | null;
+    promise: Promise<TenderChatContextSnapshot> | null;
+    cached_at: number;
+};
+
+const tenderChatContextCache = new Map<number, TenderChatContextCacheEntry>();
+
+function isTenderChatContextFresh(entry: TenderChatContextCacheEntry | undefined): boolean {
+    return Boolean(entry && Date.now() - entry.cached_at <= CHAT_CONTEXT_PREFETCH_TTL_MS);
+}
+
+async function fetchTenderChatContext(tenderId: number): Promise<TenderChatContextSnapshot> {
+    const [tender, room, messageData] = await Promise.all([
+        tenderApi.get(tenderId),
+        chatApi.getRoom(tenderId),
+        chatApi.listMessages(tenderId, { limit: 100 }),
+    ]);
+
+    return {
+        tender,
+        room,
+        messages: messageData.items || [],
+        prefetched_at: Date.now(),
+    };
+}
+
+export async function resolveTenderChatContext(tenderId: number, options: { preferCached?: boolean } = {}): Promise<TenderChatContextSnapshot> {
+    if (!Number.isFinite(tenderId) || tenderId <= 0) {
+        throw new Error('Invalid tender id');
+    }
+
+    const preferCached = options.preferCached ?? true;
+    const existing = tenderChatContextCache.get(tenderId);
+    if (preferCached && isTenderChatContextFresh(existing)) {
+        if (existing?.value) {
+            return existing.value;
+        }
+        if (existing?.promise) {
+            return existing.promise;
+        }
+    }
+
+    const promise = fetchTenderChatContext(tenderId)
+        .then((value) => {
+            tenderChatContextCache.set(tenderId, {
+                value,
+                promise: null,
+                cached_at: Date.now(),
+            });
+            return value;
+        })
+        .catch((error) => {
+            const cached = tenderChatContextCache.get(tenderId);
+            if (cached?.promise === promise) {
+                tenderChatContextCache.delete(tenderId);
+            }
+            throw error;
+        });
+
+    tenderChatContextCache.set(tenderId, {
+        value: null,
+        promise,
+        cached_at: Date.now(),
+    });
+
+    return promise;
+}
+
+export async function prefetchTenderChatContext(tenderId: number): Promise<void> {
+    await resolveTenderChatContext(tenderId, { preferCached: true });
+}
+
+export function consumePrefetchedTenderChatContext(tenderId: number): TenderChatContextSnapshot | null {
+    const existing = tenderChatContextCache.get(tenderId);
+    if (!isTenderChatContextFresh(existing) || !existing?.value) {
+        return null;
+    }
+
+    tenderChatContextCache.delete(tenderId);
+    return existing.value;
+}
+
+export function resetTenderChatContextCacheForTest(): void {
+    tenderChatContextCache.clear();
+}
+
 // ── Proposals ──
 
 export const proposalApi = {
@@ -710,6 +800,13 @@ export interface ChatRetrospective {
     last_message_at: string | null;
     generated_at: string;
     timeline: ChatRetrospectiveTimelineItem[];
+}
+
+export interface TenderChatContextSnapshot {
+    tender: TenderDetail;
+    room: ChatRoom;
+    messages: ChatMessage[];
+    prefetched_at: number;
 }
 // LLM Settings
 export const llmSettingsApi = {

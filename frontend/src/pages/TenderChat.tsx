@@ -15,7 +15,8 @@ import {
 } from 'lucide-react';
 import {
     chatApi,
-    tenderApi,
+    consumePrefetchedTenderChatContext,
+    resolveTenderChatContext,
     type ChatAttachment,
     type ChatMessage,
     type ChatRetrospective,
@@ -56,6 +57,41 @@ function upsertMessage(list: ChatMessage[], incoming: ChatMessage): ChatMessage[
 function buildWsUrl(tenderId: number, token: string): string {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     return `${protocol}://${window.location.host}/api/tenders/${tenderId}/chat/ws?token=${encodeURIComponent(token)}`;
+}
+
+function ChatLoadingShell() {
+    return (
+        <div className="animate-in">
+            <div className="page-header" style={{ marginBottom: '1rem' }}>
+                <div>
+                    <div style={{ width: '160px', height: '14px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.18)', marginBottom: '0.75rem' }} />
+                    <div style={{ width: '280px', height: '28px', borderRadius: '10px', background: 'rgba(148, 163, 184, 0.16)' }} />
+                </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.7fr) minmax(320px, 0.9fr)', gap: '1rem' }}>
+                <div className="card" style={{ minHeight: '520px', display: 'grid', gap: '0.9rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                        <div style={{ width: '35%', height: '16px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.18)' }} />
+                        <div style={{ width: '22%', height: '16px', borderRadius: '999px', background: 'rgba(96, 165, 250, 0.18)' }} />
+                    </div>
+                    {[0, 1, 2, 3].map((item) => (
+                        <div key={item} style={{ alignSelf: item % 2 === 0 ? 'flex-start' : 'flex-end', width: item % 2 === 0 ? '72%' : '58%', padding: '0.9rem', borderRadius: '16px', background: item % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(59, 130, 246, 0.16)' }}>
+                            <div style={{ width: '42%', height: '12px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.16)', marginBottom: '0.6rem' }} />
+                            <div style={{ width: '100%', height: '11px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.12)', marginBottom: '0.35rem' }} />
+                            <div style={{ width: '88%', height: '11px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.12)' }} />
+                        </div>
+                    ))}
+                </div>
+                <div className="card" style={{ minHeight: '520px', display: 'grid', gap: '0.85rem' }}>
+                    <div style={{ width: '46%', height: '16px', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.18)' }} />
+                    {[0, 1, 2, 3, 4].map((item) => (
+                        <div key={item} style={{ width: '100%', height: '46px', borderRadius: '14px', background: 'rgba(255,255,255,0.03)' }} />
+                    ))}
+                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading chat context, room activity, and recent messages...</p>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 export default function TenderChat() {
@@ -149,14 +185,11 @@ export default function TenderChat() {
         try {
             setLoading(true);
             setError(null);
-            const [tenderData, roomData, messageData] = await Promise.all([
-                tenderApi.get(tenderId),
-                chatApi.getRoom(tenderId),
-                chatApi.listMessages(tenderId, { limit: 100 }),
-            ]);
-            setTender(tenderData);
-            setRoom(roomData);
-            setMessages(messageData.items || []);
+            const prefetched = consumePrefetchedTenderChatContext(tenderId);
+            const context = prefetched || await resolveTenderChatContext(tenderId, { preferCached: true });
+            setTender(context.tender);
+            setRoom(context.room);
+            setMessages(context.messages || []);
             void fetchRetrospective(true);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load chat');
@@ -353,12 +386,7 @@ export default function TenderChat() {
     };
 
     if (loading) {
-        return (
-            <div className="loading-spinner" style={{ padding: '3rem 0' }}>
-                <div className="spinner" />
-                <p style={{ color: 'var(--text-muted)', marginTop: '0.75rem' }}>Loading chat...</p>
-            </div>
-        );
+        return <ChatLoadingShell />;
     }
 
     return (
