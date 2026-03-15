@@ -121,6 +121,7 @@ def create_app() -> FastAPI:
     app.include_router(gateway_admin.router, prefix="/api/gateway", tags=["Gateway"])
     app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
+    app.include_router(observability.router, prefix="/api/tenders", tags=["Operational Observability"])
     app.include_router(chat.router, prefix="/api/tenders", tags=["Tender Chat"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])
     app.include_router(content_library.router, prefix="/api/content-blocks", tags=["Content Library"])
@@ -135,4 +136,5 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
 
