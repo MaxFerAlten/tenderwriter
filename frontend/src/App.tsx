@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -15,21 +16,22 @@ import {
     Shield,
     Sparkles,
 } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
-import ProposalEditor from './pages/ProposalEditor';
-import ContentLibrary from './pages/ContentLibrary';
-import RAGSearch from './pages/Search';
-import SettingsPage from './pages/Settings';
-import SystemMonitor from './pages/SystemMonitor';
-import TenderPermissions from './pages/TenderPermissions';
-import TaskManager from './pages/TaskManager';
-import Components from './pages/Components';
-import Developments from './pages/Developments';
-import ObservabilityKPI from './pages/ObservabilityKPI';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import TenderChat from './pages/TenderChat';
 import { useAuth } from './contexts/AuthContext';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const ProposalEditor = lazy(() => import('./pages/ProposalEditor'));
+const ContentLibrary = lazy(() => import('./pages/ContentLibrary'));
+const RAGSearch = lazy(() => import('./pages/Search'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const SystemMonitor = lazy(() => import('./pages/SystemMonitor'));
+const TenderPermissions = lazy(() => import('./pages/TenderPermissions'));
+const TaskManager = lazy(() => import('./pages/TaskManager'));
+const Components = lazy(() => import('./pages/Components'));
+const Developments = lazy(() => import('./pages/Developments'));
+const ObservabilityKPI = lazy(() => import('./pages/ObservabilityKPI'));
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const TenderChat = lazy(() => import('./pages/TenderChat'));
 
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -45,22 +47,40 @@ const navItems = [
     { path: '/permissions', label: 'Permissions', icon: Shield, adminOnly: true },
 ];
 
+function FullscreenLoader({ message }: { message: string }) {
+    return (
+        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+            {message}
+        </div>
+    );
+}
+
+function RouteLoader() {
+    return (
+        <div className="card" style={{ minHeight: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+            Loading page...
+        </div>
+    );
+}
+
 function App() {
     const location = useLocation();
     const { user, isLoading, logout } = useAuth();
 
     if (isLoading) {
-        return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>Loading...</div>;
+        return <FullscreenLoader message="Loading..." />;
     }
 
     if (!user) {
         return (
             <AnimatePresence mode="wait">
-                <Routes location={location} key={location.pathname}>
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/register" element={<Register />} />
-                    <Route path="*" element={<Navigate to="/login" replace />} />
-                </Routes>
+                <Suspense fallback={<FullscreenLoader message="Loading authentication..." />}>
+                    <Routes location={location} key={location.pathname}>
+                        <Route path="/login" element={<Login />} />
+                        <Route path="/register" element={<Register />} />
+                        <Route path="*" element={<Navigate to="/login" replace />} />
+                    </Routes>
+                </Suspense>
             </AnimatePresence>
         );
     }
@@ -121,21 +141,23 @@ function App() {
                         transition={{ duration: 0.2 }}
                         style={{ width: '100%' }}
                     >
-                        <Routes location={location}>
-                            <Route path="/" element={<Dashboard />} />
-                            <Route path="/proposals" element={<ProposalEditor />} />
-                            <Route path="/proposals/:id" element={<ProposalEditor />} />
-                            <Route path="/library" element={<ContentLibrary />} />
-                            <Route path="/search" element={<RAGSearch />} />
-                            <Route path="/tasks" element={<TaskManager />} />
-                            <Route path="/observability-kpi" element={user?.role === 'admin' ? <ObservabilityKPI /> : <Navigate to="/" />} />
-                            <Route path="/components" element={user?.role === 'admin' ? <Components /> : <Navigate to="/" />} />
-                            <Route path="/settings" element={user?.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
-                            <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
-                            <Route path="/developments" element={user?.role === 'admin' ? <Developments /> : <Navigate to="/" />} />
-                            <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
-                            <Route path="/tenders/:id/chat" element={<TenderChat />} />
-                        </Routes>
+                        <Suspense fallback={<RouteLoader />}>
+                            <Routes location={location}>
+                                <Route path="/" element={<Dashboard />} />
+                                <Route path="/proposals" element={<ProposalEditor />} />
+                                <Route path="/proposals/:id" element={<ProposalEditor />} />
+                                <Route path="/library" element={<ContentLibrary />} />
+                                <Route path="/search" element={<RAGSearch />} />
+                                <Route path="/tasks" element={<TaskManager />} />
+                                <Route path="/observability-kpi" element={user?.role === 'admin' ? <ObservabilityKPI /> : <Navigate to="/" />} />
+                                <Route path="/components" element={user?.role === 'admin' ? <Components /> : <Navigate to="/" />} />
+                                <Route path="/settings" element={user?.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
+                                <Route path="/monitor" element={user?.role === 'admin' ? <SystemMonitor /> : <Navigate to="/" />} />
+                                <Route path="/developments" element={user?.role === 'admin' ? <Developments /> : <Navigate to="/" />} />
+                                <Route path="/permissions" element={user?.role === 'admin' ? <TenderPermissions /> : <Navigate to="/" />} />
+                                <Route path="/tenders/:id/chat" element={<TenderChat />} />
+                            </Routes>
+                        </Suspense>
                     </motion.div>
                 </AnimatePresence>
             </main>
