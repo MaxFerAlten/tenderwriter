@@ -312,6 +312,32 @@ export const kpiAdminApi = {
     getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
 };
 
+export const observabilityApi = {
+    getWorkspace: (tenderId: number) => request<OperationalWorkspace>(`/tenders/${tenderId}/observability/workspace`),
+    createContribution: (tenderId: number, data: ContributionUnitCreateRequest) =>
+        request<ContributionUnitRecord>(`/tenders/${tenderId}/observability/contributions`, { method: 'POST', body: data }),
+    createRequest: (tenderId: number, contributionId: number, data: ContributionRequestCreateRequest) =>
+        request<ContributionRequestRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/requests`, { method: 'POST', body: data }),
+    receiveRequest: (tenderId: number, contributionId: number, requestId: number, data: ContributionRequestReceiveRequest) =>
+        request<ContributionRequestRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/requests/${requestId}/receive`, { method: 'POST', body: data }),
+    createReview: (tenderId: number, contributionId: number, data: ReviewCycleCreateRequest) =>
+        request<ReviewCycleRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/reviews`, { method: 'POST', body: data }),
+    completeReview: (tenderId: number, contributionId: number, reviewId: number, data: ReviewCycleCompleteRequest) =>
+        request<ReviewCycleRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/reviews/${reviewId}/complete`, { method: 'POST', body: data }),
+    createRework: (tenderId: number, contributionId: number, data: ReworkCreateRequest) =>
+        request<ReworkRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/rework`, { method: 'POST', body: data }),
+    resolveRework: (tenderId: number, contributionId: number, reworkId: number, data: ReworkResolveRequest) =>
+        request<ReworkRecord>(`/tenders/${tenderId}/observability/contributions/${contributionId}/rework/${reworkId}/resolve`, { method: 'POST', body: data }),
+    createGate: (tenderId: number, data: ComplianceGateCreateRequest) =>
+        request<ComplianceGateRecord>(`/tenders/${tenderId}/observability/gates`, { method: 'POST', body: data }),
+    decideGate: (tenderId: number, gateId: number, data: ComplianceGateDecisionRequest) =>
+        request<ComplianceGateRecord>(`/tenders/${tenderId}/observability/gates/${gateId}/decision`, { method: 'POST', body: data }),
+    createCall: (tenderId: number, data: CallSessionCreateRequest) =>
+        request<CallSessionRecord>(`/tenders/${tenderId}/observability/calls`, { method: 'POST', body: data }),
+    upsertAttendance: (tenderId: number, callId: number, data: AttendanceRecordUpsertRequest) =>
+        request<AttendanceRecordItem>(`/tenders/${tenderId}/observability/calls/${callId}/attendance`, { method: 'POST', body: data }),
+};
+
 // ── Gateway Admin ──
 
 export interface GatewayTarget {
@@ -660,3 +686,190 @@ export const llmSettingsApi = {
 
 
 
+
+
+export interface OperationalSummary {
+    tender_id: number;
+    contribution_count: number;
+    request_count: number;
+    open_rework_count: number;
+    open_gate_count: number;
+    call_count: number;
+}
+
+export interface ContributionUnitRecord {
+    id: number;
+    tender_id: number;
+    title: string;
+    description: string | null;
+    department_name: string | null;
+    owner_user_id: number | null;
+    proposal_section_id: number | null;
+    due_at: string | null;
+    status: string;
+}
+
+export interface ContributionRequestRecord {
+    id: number;
+    contribution_unit_id: number;
+    requested_to_user_id: number | null;
+    requested_to_label: string | null;
+    request_channel: string | null;
+    requested_at: string | null;
+    due_at: string | null;
+    sla_target_hours: number | null;
+    sla_max_hours: number | null;
+    response_received_at: string | null;
+    response_summary: string | null;
+    status: string;
+}
+
+export interface ReviewCycleRecord {
+    id: number;
+    contribution_unit_id: number;
+    reviewer_id: number | null;
+    stage_name: string;
+    started_at: string | null;
+    completed_at: string | null;
+    outcome: string | null;
+    notes: string | null;
+    status: string;
+}
+
+export interface ReworkRecord {
+    id: number;
+    contribution_unit_id: number;
+    review_cycle_id: number | null;
+    assigned_to_user_id: number | null;
+    severity: string;
+    is_blocking: boolean;
+    reason: string | null;
+    due_at: string | null;
+    requested_at: string | null;
+    resolved_at: string | null;
+    resolution_notes: string | null;
+    status: string;
+}
+
+export interface ComplianceGateRecord {
+    id: number;
+    tender_id: number;
+    contribution_unit_id: number | null;
+    owner_user_id: number | null;
+    gate_name: string;
+    due_at: string | null;
+    evaluated_at: string | null;
+    decision_notes: string | null;
+    status: string;
+}
+
+export interface AttendanceRecordItem {
+    id: number;
+    call_session_id: number;
+    user_id: number | null;
+    attendee_label: string | null;
+    attendance_status: string;
+    recorded_at: string | null;
+    notes: string | null;
+}
+
+export interface CallSessionRecord {
+    id: number;
+    tender_id: number;
+    title: string;
+    scheduled_at: string;
+    started_at: string | null;
+    ended_at: string | null;
+    status: string;
+    attendance?: AttendanceRecordItem[];
+}
+
+export interface OperationalWorkspace {
+    summary: OperationalSummary;
+    contributions: ContributionUnitRecord[];
+    requests: ContributionRequestRecord[];
+    reviews: ReviewCycleRecord[];
+    reworks: ReworkRecord[];
+    gates: ComplianceGateRecord[];
+    calls: CallSessionRecord[];
+}
+
+export interface ContributionUnitCreateRequest {
+    title: string;
+    description?: string;
+    department_name?: string;
+    owner_user_id?: number;
+    proposal_section_id?: number;
+    due_at?: string;
+}
+
+export interface ContributionRequestCreateRequest {
+    requested_to_user_id?: number;
+    requested_to_label?: string;
+    request_channel?: string;
+    requested_at?: string;
+    due_at?: string;
+    sla_target_hours?: number;
+    sla_max_hours?: number;
+    response_summary?: string;
+}
+
+export interface ContributionRequestReceiveRequest {
+    response_received_at?: string;
+    response_summary?: string;
+}
+
+export interface ReviewCycleCreateRequest {
+    reviewer_id?: number;
+    stage_name?: string;
+    started_at?: string;
+    notes?: string;
+}
+
+export interface ReviewCycleCompleteRequest {
+    completed_at?: string;
+    outcome?: string;
+    notes?: string;
+}
+
+export interface ReworkCreateRequest {
+    review_cycle_id?: number;
+    assigned_to_user_id?: number;
+    severity?: string;
+    is_blocking?: boolean;
+    reason?: string;
+    due_at?: string;
+    requested_at?: string;
+}
+
+export interface ReworkResolveRequest {
+    resolved_at?: string;
+    resolution_notes?: string;
+}
+
+export interface ComplianceGateCreateRequest {
+    gate_name: string;
+    contribution_unit_id?: number;
+    owner_user_id?: number;
+    due_at?: string;
+    decision_notes?: string;
+}
+
+export interface ComplianceGateDecisionRequest {
+    status: string;
+    evaluated_at?: string;
+    decision_notes?: string;
+}
+
+export interface CallSessionCreateRequest {
+    title: string;
+    scheduled_at: string;
+}
+
+export interface AttendanceRecordUpsertRequest {
+    user_id?: number;
+    attendee_label?: string;
+    attendance_status: string;
+    recorded_at?: string;
+    notes?: string;
+}

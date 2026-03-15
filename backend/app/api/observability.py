@@ -962,3 +962,224 @@ async def upsert_attendance_record(
         recorded_at=record.recorded_at,
         notes=record.notes,
     )
+
+class CallSessionDetailResponse(CallSessionResponse):
+    attendance: list[AttendanceRecordResponse] = []
+
+
+class OperationalWorkspaceResponse(BaseModel):
+    summary: OperationalSummaryResponse
+    contributions: list[ContributionUnitResponse]
+    requests: list[ContributionRequestResponse]
+    reviews: list[ReviewCycleResponse]
+    reworks: list[ReworkResponse]
+    gates: list[ComplianceGateResponse]
+    calls: list[CallSessionDetailResponse]
+
+
+def _build_operational_summary(
+    tender_id: int,
+    contributions: list[ContributionUnit],
+    requests: list[ContributionRequest],
+    reworks: list[ReworkAction],
+    gates: list[ComplianceGate],
+    calls: list[CallSession],
+) -> OperationalSummaryResponse:
+    return OperationalSummaryResponse(
+        tender_id=tender_id,
+        contribution_count=len(contributions),
+        request_count=len(requests),
+        open_rework_count=sum(1 for item in reworks if item.status == ReworkStatus.OPEN),
+        open_gate_count=sum(1 for item in gates if item.status == ComplianceGateStatus.OPEN),
+        call_count=len(calls),
+    )
+
+
+@router.get("/{tender_id}/observability/workspace", response_model=OperationalWorkspaceResponse)
+async def get_operational_workspace(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OperationalWorkspaceResponse:
+    await check_tender_access(tender_id, current_user, db)
+
+    contributions = list(
+        (
+            await db.execute(
+                select(ContributionUnit)
+                .where(ContributionUnit.tender_id == tender_id)
+                .order_by(ContributionUnit.created_at.desc(), ContributionUnit.id.desc())
+            )
+        ).scalars().all()
+    )
+    contribution_ids = [item.id for item in contributions]
+
+    requests: list[ContributionRequest] = []
+    reviews: list[ReviewCycle] = []
+    reworks: list[ReworkAction] = []
+    if contribution_ids:
+        requests = list(
+            (
+                await db.execute(
+                    select(ContributionRequest)
+                    .where(ContributionRequest.contribution_unit_id.in_(contribution_ids))
+                    .order_by(ContributionRequest.requested_at.desc(), ContributionRequest.id.desc())
+                )
+            ).scalars().all()
+        )
+        reviews = list(
+            (
+                await db.execute(
+                    select(ReviewCycle)
+                    .where(ReviewCycle.contribution_unit_id.in_(contribution_ids))
+                    .order_by(ReviewCycle.started_at.desc(), ReviewCycle.id.desc())
+                )
+            ).scalars().all()
+        )
+        reworks = list(
+            (
+                await db.execute(
+                    select(ReworkAction)
+                    .where(ReworkAction.contribution_unit_id.in_(contribution_ids))
+                    .order_by(ReworkAction.requested_at.desc(), ReworkAction.id.desc())
+                )
+            ).scalars().all()
+        )
+
+    gates = list(
+        (
+            await db.execute(
+                select(ComplianceGate)
+                .where(ComplianceGate.tender_id == tender_id)
+                .order_by(ComplianceGate.created_at.desc(), ComplianceGate.id.desc())
+            )
+        ).scalars().all()
+    )
+    calls = list(
+        (
+            await db.execute(
+                select(CallSession)
+                .where(CallSession.tender_id == tender_id)
+                .order_by(CallSession.scheduled_at.desc(), CallSession.id.desc())
+            )
+        ).scalars().all()
+    )
+    call_ids = [item.id for item in calls]
+    attendance_map: dict[int, list[AttendanceRecord]] = {call_id: [] for call_id in call_ids}
+    if call_ids:
+        attendance_rows = list(
+            (
+                await db.execute(
+                    select(AttendanceRecord)
+                    .where(AttendanceRecord.call_session_id.in_(call_ids))
+                    .order_by(AttendanceRecord.recorded_at.desc(), AttendanceRecord.id.desc())
+                )
+            ).scalars().all()
+        )
+        for record in attendance_rows:
+            attendance_map.setdefault(record.call_session_id, []).append(record)
+
+    summary = _build_operational_summary(tender_id, contributions, requests, reworks, gates, calls)
+    return OperationalWorkspaceResponse(
+        summary=summary,
+        contributions=[
+            ContributionUnitResponse(
+                id=item.id,
+                tender_id=item.tender_id,
+                title=item.title,
+                description=item.description,
+                department_name=item.department_name,
+                owner_user_id=item.owner_user_id,
+                proposal_section_id=item.proposal_section_id,
+                due_at=item.due_at,
+                status=str(_enum_value(item.status)),
+            )
+            for item in contributions
+        ],
+        requests=[
+            ContributionRequestResponse(
+                id=item.id,
+                contribution_unit_id=item.contribution_unit_id,
+                requested_to_user_id=item.requested_to_user_id,
+                requested_to_label=item.requested_to_label,
+                request_channel=item.request_channel,
+                requested_at=item.requested_at,
+                due_at=item.due_at,
+                sla_target_hours=item.sla_target_hours,
+                sla_max_hours=item.sla_max_hours,
+                response_received_at=item.response_received_at,
+                response_summary=item.response_summary,
+                status=str(_enum_value(item.status)),
+            )
+            for item in requests
+        ],
+        reviews=[
+            ReviewCycleResponse(
+                id=item.id,
+                contribution_unit_id=item.contribution_unit_id,
+                reviewer_id=item.reviewer_id,
+                stage_name=item.stage_name,
+                started_at=item.started_at,
+                completed_at=item.completed_at,
+                outcome=item.outcome,
+                notes=item.notes,
+                status=str(_enum_value(item.status)),
+            )
+            for item in reviews
+        ],
+        reworks=[
+            ReworkResponse(
+                id=item.id,
+                contribution_unit_id=item.contribution_unit_id,
+                review_cycle_id=item.review_cycle_id,
+                assigned_to_user_id=item.assigned_to_user_id,
+                severity=item.severity,
+                is_blocking=item.is_blocking,
+                reason=item.reason,
+                due_at=item.due_at,
+                requested_at=item.requested_at,
+                resolved_at=item.resolved_at,
+                resolution_notes=item.resolution_notes,
+                status=str(_enum_value(item.status)),
+            )
+            for item in reworks
+        ],
+        gates=[
+            ComplianceGateResponse(
+                id=item.id,
+                tender_id=item.tender_id,
+                contribution_unit_id=item.contribution_unit_id,
+                owner_user_id=item.owner_user_id,
+                gate_name=item.gate_name,
+                due_at=item.due_at,
+                evaluated_at=item.evaluated_at,
+                decision_notes=item.decision_notes,
+                status=str(_enum_value(item.status)),
+            )
+            for item in gates
+        ],
+        calls=[
+            CallSessionDetailResponse(
+                id=item.id,
+                tender_id=item.tender_id,
+                title=item.title,
+                scheduled_at=item.scheduled_at,
+                started_at=item.started_at,
+                ended_at=item.ended_at,
+                status=str(_enum_value(item.status)),
+                attendance=[
+                    AttendanceRecordResponse(
+                        id=record.id,
+                        call_session_id=record.call_session_id,
+                        user_id=record.user_id,
+                        attendee_label=record.attendee_label,
+                        attendance_status=str(_enum_value(record.attendance_status)),
+                        recorded_at=record.recorded_at,
+                        notes=record.notes,
+                    )
+                    for record in attendance_map.get(item.id, [])
+                ],
+            )
+            for item in calls
+        ],
+    )

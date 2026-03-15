@@ -21,6 +21,7 @@ import {
     type KpiTenderSnapshot,
     type Tender,
 } from '../api/client';
+import OperationalWorkspacePanel from '../components/observability/OperationalWorkspacePanel';
 
 function healthColors(health: string): { accent: string; soft: string; text: string } {
     switch (health) {
@@ -464,9 +465,17 @@ export default function ObservabilityKPI() {
                             </div>
                         </>
                     )}
+
+                    <OperationalWorkspacePanel
+                        tender={selectedTender}
+                        onDataChanged={() => {
+                            void loadPortfolio(true);
+                        }}
+                    />
                 </div>
             </div>
         </div>
     );
 }
+
 
