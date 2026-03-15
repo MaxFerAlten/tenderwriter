@@ -14,6 +14,7 @@ import {
     kpiAdminApi,
     observabilityApi,
     tenderApi,
+    type KpiAnalysisJob,
     type KpiBottleneckItem,
     type KpiDiagnostics,
     type KpiForecast,
@@ -82,6 +83,43 @@ function riskCount(items: KpiBottleneckItem[], health: string): number {
     return items.filter((item) => item.health === health).length;
 }
 
+function isAnalysisJobActive(job: KpiAnalysisJob | null): boolean {
+    return job?.job_status === 'queued' || job?.job_status === 'running';
+}
+
+function analysisJobLabel(jobStatus: string | null | undefined): string {
+    switch (jobStatus) {
+        case 'queued':
+            return 'Queued';
+        case 'running':
+            return 'Running';
+        case 'succeeded':
+            return 'Completed';
+        case 'failed':
+            return 'Failed';
+        case 'degraded':
+            return 'Service degraded';
+        default:
+            return 'Idle';
+    }
+}
+
+function analysisJobColors(jobStatus: string | null | undefined): { accent: string; soft: string } {
+    switch (jobStatus) {
+        case 'queued':
+            return { accent: '#38bdf8', soft: 'rgba(56, 189, 248, 0.14)' };
+        case 'running':
+            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)' };
+        case 'succeeded':
+            return { accent: '#10b981', soft: 'rgba(16, 185, 129, 0.14)' };
+        case 'failed':
+        case 'degraded':
+            return { accent: '#ef4444', soft: 'rgba(239, 68, 68, 0.14)' };
+        default:
+            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)' };
+    }
+}
+
 export default function ObservabilityKPI() {
     const [overview, setOverview] = useState<KpiPortfolioOverview | null>(null);
     const [bottlenecks, setBottlenecks] = useState<KpiBottleneckItem[]>([]);
@@ -93,21 +131,24 @@ export default function ObservabilityKPI() {
     const [diagnostics, setDiagnostics] = useState<KpiDiagnostics | null>(null);
     const [transitions, setTransitions] = useState<KpiTransitions | null>(null);
     const [forecast, setForecast] = useState<KpiForecast | null>(null);
+    const [analysisJob, setAnalysisJob] = useState<KpiAnalysisJob | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
+    const [isRecomputing, setIsRecomputing] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const loadTenderDetail = async (tenderId: number) => {
         setIsDetailLoading(true);
         try {
-            const [snapshotResponse, diagnosticsResponse, transitionsResponse, forecastResponse, tenderResponse, workspaceResponse] = await Promise.all([
+            const [snapshotResponse, diagnosticsResponse, transitionsResponse, forecastResponse, tenderResponse, workspaceResponse, analysisJobResponse] = await Promise.all([
                 kpiAdminApi.getTenderSnapshot(tenderId),
                 kpiAdminApi.getTenderDiagnostics(tenderId),
                 kpiAdminApi.getTenderTransitions(tenderId),
                 kpiAdminApi.getTenderForecast(tenderId),
                 tenderApi.get(tenderId),
                 observabilityApi.getWorkspace(tenderId),
+                kpiAdminApi.getLatestAnalysisJob(tenderId),
             ]);
             setSnapshot(snapshotResponse);
             setDiagnostics(diagnosticsResponse);
@@ -115,6 +156,8 @@ export default function ObservabilityKPI() {
             setForecast(forecastResponse);
             setTenderDetail(tenderResponse);
             setWorkspace(workspaceResponse);
+            setAnalysisJob(analysisJobResponse);
+            setIsRecomputing(isAnalysisJobActive(analysisJobResponse));
         } catch (detailError) {
             setError(detailError instanceof Error ? detailError.message : 'Failed to load KPI tender detail.');
         } finally {
@@ -167,6 +210,45 @@ export default function ObservabilityKPI() {
         void loadTenderDetail(selectedTenderId);
     }, [selectedTenderId]);
 
+    useEffect(() => {
+        if (selectedTenderId === null || !isAnalysisJobActive(analysisJob)) {
+            return;
+        }
+
+        let cancelled = false;
+        const intervalId = window.setInterval(() => {
+            void (async () => {
+                try {
+                    const latestJob = await kpiAdminApi.getLatestAnalysisJob(selectedTenderId);
+                    if (cancelled) {
+                        return;
+                    }
+                    setAnalysisJob(latestJob);
+                    if (!isAnalysisJobActive(latestJob)) {
+                        setIsRecomputing(false);
+                        window.clearInterval(intervalId);
+                        if (latestJob.job_status === 'succeeded') {
+                            await loadPortfolio(true);
+                        } else if (latestJob.error_message) {
+                            setError(latestJob.error_message);
+                        }
+                    }
+                } catch (jobError) {
+                    if (!cancelled) {
+                        setIsRecomputing(false);
+                        setError(jobError instanceof Error ? jobError.message : 'Failed to refresh KPI recompute status.');
+                        window.clearInterval(intervalId);
+                    }
+                }
+            })();
+        }, 1200);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, [analysisJob?.job_status, selectedTenderId]);
+
     const selectedTender = tenders.find((item) => item.id === selectedTenderId) || null;
     const selectedBottleneck = bottlenecks.find((item) => item.external_tender_id === String(selectedTenderId)) || null;
     const selectedHealth = snapshot?.health || selectedBottleneck?.health || 'unknown';
@@ -174,6 +256,23 @@ export default function ObservabilityKPI() {
     const leadingKpis = (snapshot?.kpis || []).filter((score) => ['A1', 'A4'].includes(score.kpi_code));
     const redCount = riskCount(bottlenecks, 'red');
     const amberCount = riskCount(bottlenecks, 'amber');
+    const analysisJobPalette = analysisJobColors(analysisJob?.job_status);
+    const recomputeDisabled = !selectedTenderId || isDetailLoading || isAnalysisJobActive(analysisJob);
+
+    const handleRecompute = async () => {
+        if (selectedTenderId === null) {
+            return;
+        }
+        setError(null);
+        setIsRecomputing(true);
+        try {
+            const response = await kpiAdminApi.recomputeTender(selectedTenderId);
+            setAnalysisJob(response);
+        } catch (recomputeError) {
+            setIsRecomputing(false);
+            setError(recomputeError instanceof Error ? recomputeError.message : 'Failed to trigger KPI recompute.');
+        }
+    };
 
     if (isLoading) {
         return <div className="loading-spinner"><div className="spinner" /></div>;
@@ -191,12 +290,21 @@ export default function ObservabilityKPI() {
                         Portfolio observability for the KPI reason engine, exposed through the TenderWriter admin BFF.
                     </p>
                 </div>
-                <button
-                    className={`btn btn-secondary btn-sm ${isRefreshing ? 'animate-pulse' : ''}`}
-                    onClick={() => void loadPortfolio(true)}
-                >
-                    <RefreshCcw size={14} /> Refresh
-                </button>
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button
+                        className={`btn btn-secondary btn-sm ${isRefreshing ? 'animate-pulse' : ''}`}
+                        onClick={() => void loadPortfolio(true)}
+                    >
+                        <RefreshCcw size={14} /> Refresh
+                    </button>
+                    <button
+                        className={`btn btn-primary btn-sm ${isRecomputing ? 'animate-pulse' : ''}`}
+                        onClick={() => void handleRecompute()}
+                        disabled={recomputeDisabled}
+                    >
+                        <RefreshCcw size={14} /> {isRecomputing ? 'Recomputing…' : 'Recompute KPI'}
+                    </button>
+                </div>
             </div>
 
             {error && (
@@ -371,7 +479,32 @@ export default function ObservabilityKPI() {
                                 <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Generated at</div>
                                 <div style={{ fontWeight: 600 }}>{formatGeneratedAt(snapshot?.generated_at || null)}</div>
                             </div>
+                            <div>
+                                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Analysis job</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <span style={{
+                                        padding: '0.25rem 0.6rem',
+                                        borderRadius: '999px',
+                                        background: analysisJobPalette.soft,
+                                        color: analysisJobPalette.accent,
+                                        border: `1px solid ${analysisJobPalette.accent}33`,
+                                        fontSize: '0.76rem',
+                                    }}>
+                                        {analysisJobLabel(analysisJob?.job_status)}
+                                    </span>
+                                    {analysisJob?.updated_at && (
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                            {formatGeneratedAt(analysisJob.updated_at)}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
                         </div>
+                        {analysisJob?.error_message && !isAnalysisJobActive(analysisJob) && (
+                            <p style={{ margin: '0.85rem 0 0 0', color: '#fecaca', fontSize: '0.82rem' }}>
+                                {analysisJob.error_message}
+                            </p>
+                        )}
                     </div>
 
                     {isDetailLoading ? (

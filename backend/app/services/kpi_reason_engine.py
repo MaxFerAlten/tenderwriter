@@ -140,6 +140,16 @@ class KpiReasonEngineClient:
     async def get_tender_forecast(self, external_tender_id: str) -> KpiClientResult:
         return await self._get(f"/v1/tenders/{external_tender_id}/forecast")
 
+    async def request_analysis_job(
+        self,
+        external_tender_id: str,
+        payload: dict[str, Any],
+    ) -> KpiClientResult:
+        return await self._post(f"/v1/tenders/{external_tender_id}/analysis-jobs", payload)
+
+    async def get_latest_analysis_job(self, external_tender_id: str) -> KpiClientResult:
+        return await self._get(f"/v1/tenders/{external_tender_id}/analysis-jobs/latest")
+
 
 def _safe_response_json(response: httpx.Response) -> dict[str, Any]:
     try:

@@ -15,6 +15,7 @@ AnalysisJobKind = Literal[
     "forecast_refresh",
     "full_recompute",
 ]
+AnalysisJobLifecycleStatus = Literal["queued", "running", "succeeded", "failed", "not_requested"]
 
 
 class ServiceHealthResponse(BaseModel):
@@ -108,6 +109,26 @@ class AnalysisJobAcceptedResponse(AcceptedResponse):
     """Accepted response enriched with the analysis job type."""
 
     job_type: AnalysisJobKind
+    job_id: int
+    job_status: AnalysisJobLifecycleStatus = "queued"
+
+
+class AnalysisJobStatusResponse(BaseModel):
+    """Current lifecycle state of an analysis job."""
+
+    external_tender_id: str
+    job_id: int | None = None
+    job_type: AnalysisJobKind | None = None
+    job_status: AnalysisJobLifecycleStatus = "not_requested"
+    requested_by: str | None = None
+    priority: str | None = None
+    reason: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime | None = None
+    latest_snapshot_generated_at: datetime | None = None
+    error_message: str | None = None
 
 
 class KpiScore(BaseModel):

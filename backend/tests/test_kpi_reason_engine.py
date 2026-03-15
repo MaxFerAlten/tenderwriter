@@ -330,6 +330,48 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["path"], "/v1/tenders/7/transitions")
         self.assertEqual(result.response_json["external_tender_id"], "7")
 
+    async def test_request_analysis_job_posts_to_expected_endpoint(self) -> None:
+        observed: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
+            observed["path"] = request.url.path
+            observed["payload"] = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(202, json={"external_tender_id": "7", "job_id": 99, "job_status": "queued"})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await client.request_analysis_job("7", {"job_type": "full_recompute"})
+
+        self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "POST")
+        self.assertEqual(observed["path"], "/v1/tenders/7/analysis-jobs")
+        self.assertEqual(observed["payload"], {"job_type": "full_recompute"})
+        self.assertEqual(result.response_json["job_id"], 99)
+
+    async def test_get_latest_analysis_job_queries_expected_endpoint(self) -> None:
+        observed: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed["method"] = request.method
+            observed["path"] = request.url.path
+            return httpx.Response(200, json={"external_tender_id": "7", "job_status": "running"})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await client.get_latest_analysis_job("7")
+
+        self.assertTrue(result.delivered)
+        self.assertEqual(observed["method"], "GET")
+        self.assertEqual(observed["path"], "/v1/tenders/7/analysis-jobs/latest")
+        self.assertEqual(result.response_json["job_status"], "running")
+
 
 class DeliveryStateTests(unittest.TestCase):
     def test_apply_delivery_result_marks_event_delivered(self) -> None:

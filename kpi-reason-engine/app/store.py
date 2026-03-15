@@ -194,10 +194,11 @@ class SqliteStore:
             )
             connection.commit()
 
-    def enqueue_analysis_job(self, external_tender_id: str, payload: dict[str, Any]) -> None:
+    def enqueue_analysis_job(self, external_tender_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = _utcnow_iso()
         with self._lock:
             connection = self._require_connection()
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO kpi_analysis_jobs (
                     external_tender_id,
@@ -207,8 +208,9 @@ class SqliteStore:
                     reason,
                     metadata_json,
                     status,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     external_tender_id,
@@ -218,8 +220,126 @@ class SqliteStore:
                     payload.get('reason'),
                     _to_json(payload.get('metadata', {})),
                     'queued',
-                    _utcnow_iso(),
+                    now,
+                    now,
                 ),
+            )
+            connection.commit()
+            job_id = int(cursor.lastrowid)
+        record = self.get_analysis_job(job_id)
+        if record is None:
+            raise RuntimeError('Failed to persist analysis job.')
+        return record
+
+    def get_analysis_job(self, job_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(
+                """
+                SELECT j.id, j.external_tender_id, j.job_type, j.requested_by, j.priority, j.reason,
+                       j.metadata_json, j.status, j.created_at, j.started_at, j.completed_at,
+                       j.updated_at, j.error_message, j.result_snapshot_id,
+                       s.generated_at AS latest_snapshot_generated_at
+                FROM kpi_analysis_jobs AS j
+                LEFT JOIN kpi_snapshots AS s ON s.id = j.result_snapshot_id
+                WHERE j.id = ?
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+        return self._deserialize_analysis_job(row)
+
+    def get_latest_analysis_job(self, external_tender_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(
+                """
+                SELECT j.id, j.external_tender_id, j.job_type, j.requested_by, j.priority, j.reason,
+                       j.metadata_json, j.status, j.created_at, j.started_at, j.completed_at,
+                       j.updated_at, j.error_message, j.result_snapshot_id,
+                       s.generated_at AS latest_snapshot_generated_at
+                FROM kpi_analysis_jobs AS j
+                LEFT JOIN kpi_snapshots AS s ON s.id = j.result_snapshot_id
+                WHERE j.external_tender_id = ?
+                ORDER BY j.id DESC
+                LIMIT 1
+                """,
+                (external_tender_id,),
+            ).fetchone()
+        return self._deserialize_analysis_job(row)
+
+    def claim_next_analysis_job(self) -> dict[str, Any] | None:
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(
+                """
+                SELECT id
+                FROM kpi_analysis_jobs
+                WHERE status = 'queued'
+                ORDER BY
+                    CASE priority
+                        WHEN 'high' THEN 0
+                        WHEN 'normal' THEN 1
+                        ELSE 2
+                    END,
+                    created_at ASC,
+                    id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+
+            now = _utcnow_iso()
+            cursor = connection.execute(
+                """
+                UPDATE kpi_analysis_jobs
+                SET status = 'running',
+                    started_at = COALESCE(started_at, ?),
+                    updated_at = ?,
+                    error_message = NULL
+                WHERE id = ? AND status = 'queued'
+                """,
+                (now, now, int(row['id'])),
+            )
+            connection.commit()
+            if cursor.rowcount != 1:
+                return None
+        return self.get_analysis_job(int(row['id']))
+
+    def mark_analysis_job_succeeded(self, job_id: int, *, snapshot_record: dict[str, Any]) -> None:
+        now = _utcnow_iso()
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """
+                UPDATE kpi_analysis_jobs
+                SET status = 'succeeded',
+                    completed_at = ?,
+                    updated_at = ?,
+                    error_message = NULL,
+                    result_snapshot_id = ?
+                WHERE id = ?
+                """,
+                (now, now, snapshot_record.get('id'), job_id),
+            )
+            connection.commit()
+
+    def mark_analysis_job_failed(self, job_id: int, *, error_message: str) -> None:
+        now = _utcnow_iso()
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """
+                UPDATE kpi_analysis_jobs
+                SET status = 'failed',
+                    completed_at = ?,
+                    updated_at = ?,
+                    error_message = ?,
+                    result_snapshot_id = NULL
+                WHERE id = ?
+                """,
+                (now, now, error_message[:1000], job_id),
             )
             connection.commit()
 
@@ -564,7 +684,7 @@ class SqliteStore:
     def _ensure_model_version(self, connection: sqlite3.Connection) -> int:
         descriptor = {
             'bundle': _MODEL_BUNDLE_VERSION,
-            'source': 'sprint9-persistence',
+            'source': 'sprint10-async-jobs',
             'kpis': ['A1', 'A4', 'B1', 'B2', 'B3', 'B4', 'E'],
         }
         connection.execute(
@@ -686,6 +806,26 @@ class SqliteStore:
                     created_at,
                 ),
             )
+
+    def _deserialize_analysis_job(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            'job_id': int(row['id']),
+            'external_tender_id': row['external_tender_id'],
+            'job_type': row['job_type'],
+            'job_status': row['status'],
+            'requested_by': row['requested_by'],
+            'priority': row['priority'],
+            'reason': row['reason'],
+            'metadata': json.loads(row['metadata_json'] or '{}'),
+            'created_at': row['created_at'],
+            'started_at': row['started_at'],
+            'completed_at': row['completed_at'],
+            'updated_at': row['updated_at'],
+            'latest_snapshot_generated_at': row['latest_snapshot_generated_at'],
+            'error_message': row['error_message'],
+        }
 
     def _require_connection(self) -> sqlite3.Connection:
         if self._connection is None:

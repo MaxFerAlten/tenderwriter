@@ -3,6 +3,7 @@
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
 from fastapi.testclient import TestClient
@@ -51,7 +52,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         )
 
     def test_store_schema_version_matches_current_migration(self) -> None:
-        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0001")
+        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0002")
 
 
     def test_protected_routes_require_service_credentials(self) -> None:
@@ -205,7 +206,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(diagnostics_response.status_code, 200)
         diagnostics = diagnostics_response.json()
         self.assertIn("Stored document contexts: 1.", diagnostics["findings"])
-        self.assertIn("Queued analysis jobs: 1.", diagnostics["findings"])
+        self.assertIn("Tracked analysis jobs: 1.", diagnostics["findings"])
 
     def test_snapshot_for_missing_tender_returns_not_ready_placeholder(self) -> None:
         response = self.client.get(
@@ -216,6 +217,75 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "not_ready")
         self.assertEqual(response.json()["notes"], ["Tender not synchronized yet."])
+
+    def test_analysis_job_worker_processes_recompute_and_exposes_latest_status(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-ASYNC",
+                "title": "Async Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "draft",
+                "departments": ["sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "reference": "1.1",
+                        "summary": "Provide a company profile",
+                        "priority": "medium",
+                        "compliance_status": "partially_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Company profile",
+                        "owner_department": "sales",
+                        "status": "in_progress",
+                    }
+                ],
+                "metadata": {"priority": "medium"},
+            },
+        )
+
+        request_response = self.client.post(
+            "/v1/tenders/TEN-ASYNC/analysis-jobs",
+            headers=self._auth_headers(),
+            json={
+                "job_type": "full_recompute",
+                "requested_by": "admin-1",
+                "priority": "high",
+                "reason": "Manual refresh",
+                "metadata": {"source": "admin-ui"},
+            },
+        )
+
+        self.assertEqual(request_response.status_code, 202)
+        accepted = request_response.json()
+        self.assertEqual(accepted["job_status"], "queued")
+        self.assertIsNotNone(accepted["job_id"])
+
+        latest_job: dict[str, object] | None = None
+        for _ in range(40):
+            latest_response = self.client.get(
+                "/v1/tenders/TEN-ASYNC/analysis-jobs/latest",
+                headers=self._auth_headers(),
+            )
+            self.assertEqual(latest_response.status_code, 200)
+            latest_job = latest_response.json()
+            if latest_job["job_status"] == "succeeded":
+                break
+            time.sleep(0.05)
+
+        self.assertIsNotNone(latest_job)
+        self.assertEqual(latest_job["job_status"], "succeeded")
+        self.assertIsNotNone(latest_job["latest_snapshot_generated_at"])
+        snapshot_record = self.client.app.state.store.get_latest_snapshot_record("TEN-ASYNC")
+        self.assertIsNotNone(snapshot_record)
+        self.assertEqual(latest_job["latest_snapshot_generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])
 
     def test_partial_snapshot_scores_a1_and_a4_after_requirements_and_section_updates(self) -> None:
         self.client.post(

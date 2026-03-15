@@ -102,6 +102,45 @@ describe('kpiAdminApi', () => {
             })
         );
     });
+
+    it('triggers a recompute request through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ external_tender_id: '12', job_id: 77, job_type: 'full_recompute', job_status: 'queued' }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.recomputeTender(12);
+
+        expect(response.job_id).toBe(77);
+        expect(response.job_status).toBe('queued');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/tenders/12/recompute',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        );
+    });
+
+    it('queries the latest recompute job through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ external_tender_id: '12', job_id: 77, job_type: 'full_recompute', job_status: 'running' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.getLatestAnalysisJob(12);
+
+        expect(response.job_status).toBe('running');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/tenders/12/analysis-jobs/latest',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
 });
 
 describe('chat context prefetch', () => {

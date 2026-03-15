@@ -473,6 +473,8 @@ export const kpiAdminApi = {
     getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
     getTenderTransitions: (tenderId: number) => request<KpiTransitions>(`/admin/kpi/tenders/${tenderId}/transitions`),
     getTenderForecast: (tenderId: number) => request<KpiForecast>(`/admin/kpi/tenders/${tenderId}/forecast`),
+    recomputeTender: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/recompute`, { method: 'POST' }),
+    getLatestAnalysisJob: (tenderId: number) => request<KpiAnalysisJob>(`/admin/kpi/tenders/${tenderId}/analysis-jobs/latest`),
 };
 
 export const observabilityApi = {
@@ -782,6 +784,22 @@ export interface KpiForecast {
     external_tender_id: string;
     generated_at: string | null;
     scenarios: KpiForecastScenario[];
+}
+
+export interface KpiAnalysisJob {
+    external_tender_id: string;
+    job_id: number | null;
+    job_type: string | null;
+    job_status: string;
+    requested_by: string | null;
+    priority: string | null;
+    reason: string | null;
+    created_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    updated_at: string | null;
+    latest_snapshot_generated_at: string | null;
+    error_message: string | null;
 }
 
 export interface KpiPortfolioOverview {
