@@ -24,6 +24,22 @@ _TERMINAL_PHASES = {
     "no_bid": "S13",
 }
 _OPERATIONAL_WEIGHTS = {"B1": 0.30, "B2": 0.30, "B3": 0.15, "B4": 0.25}
+_QUALITY_WEIGHTS = {"A1": 0.30, "A2": 0.20, "A3": 0.25, "A4": 0.25}
+_FORMULA_BUNDLE_VERSION = "quality-formulas-v2"
+_MODEL_BUNDLE_VERSION = "deterministic-proxy-model-v2"
+_PROMPT_BUNDLE_VERSION = "deterministic-no-prompt-v1"
+_KPI_VERSION_MAP = {
+    "A1": {"formula_version": "requirement-coverage-v2", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "A2": {"formula_version": "editorial-quality-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "A3": {"formula_version": "competitiveness-value-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "A4": {"formula_version": "compliance-readiness-v2", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "Q": {"formula_version": "qualitative-index-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "B1": {"formula_version": "deadline-adherence-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "B2": {"formula_version": "sla-responsiveness-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "B3": {"formula_version": "call-participation-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "B4": {"formula_version": "rework-stability-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "E": {"formula_version": "operational-efficiency-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+}
 
 
 @dataclass(slots=True)
@@ -33,6 +49,7 @@ class AnalysisSnapshot:
     kpis: list[KpiScore]
     notes: list[str]
     summary: str
+    analysis_metadata: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -81,6 +98,47 @@ def _health_from_score(value: float | None, *, green: float, amber: float) -> He
     return "red"
 
 
+def _severity_from_score(value: float | None, health: HealthClass) -> str:
+    if health == "unknown":
+        return "unknown"
+    if health == "green":
+        return "none" if value is not None and value >= 95.0 else "low"
+    if health == "amber":
+        return "medium"
+    if value is not None and value < 25.0:
+        return "critical"
+    return "high"
+
+
+def _combine_provenance(scores: list[KpiScore]) -> str:
+    provenances = {score.provenance for score in scores if score.provenance != "unknown"}
+    if not provenances:
+        return "unknown"
+    if "reconstructed" in provenances:
+        return "reconstructed"
+    if "inferred" in provenances:
+        return "inferred"
+    if provenances == {"measured"}:
+        return "measured"
+    return "unknown"
+
+
+def _weighted_confidence(scores: list[KpiScore], weights: dict[str, float] | None = None) -> float:
+    weighted_total = 0.0
+    total_weight = 0.0
+    for score in scores:
+        if score.confidence is None:
+            continue
+        weight = 1.0 if weights is None else weights.get(score.kpi_code, 0.0)
+        if weight <= 0:
+            continue
+        weighted_total += score.confidence * weight
+        total_weight += weight
+    if total_weight == 0:
+        return 0.0
+    return round(weighted_total / total_weight, 2)
+
+
 def _count_events(events: list[dict[str, Any]], event_type: str) -> int:
     target = _normalized(event_type)
     return sum(1 for event in events if _normalized(event.get("event_type")) == target)
@@ -125,6 +183,37 @@ def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _version_fields(kpi_code: str) -> dict[str, Any]:
+    return dict(_KPI_VERSION_MAP.get(kpi_code, {}))
+
+
+def _build_score(*, kpi_code: str, value: float | None = None, label: str | None = None, provenance: str = "unknown", health: HealthClass = "unknown", confidence: float | None = None, evidence: list[str] | None = None, recommendation: str | None = None, severity: str | None = None) -> KpiScore:
+    return KpiScore(
+        kpi_code=kpi_code,
+        value=value,
+        label=label,
+        provenance=provenance,
+        health=health,
+        confidence=confidence,
+        evidence=list(evidence or []),
+        recommendation=recommendation,
+        severity=severity or _severity_from_score(value, health),
+        **_version_fields(kpi_code),
+    )
+
+
+def _unknown_score(*, kpi_code: str, label: str, evidence: list[str], recommendation: str) -> KpiScore:
+    return _build_score(
+        kpi_code=kpi_code,
+        label=label,
+        provenance="unknown",
+        health="unknown",
+        confidence=0.0,
+        evidence=evidence,
+        recommendation=recommendation,
+        severity="unknown",
+    )
+
 def _score_a1(
     requirement_count: int,
     addressed_requirements: int,
@@ -136,16 +225,14 @@ def _score_a1(
     evidence: list[str] = []
     if requirement_count == 0:
         if not requirements_extracted:
-            return KpiScore(
+            return _unknown_score(
                 kpi_code="A1",
                 label="Requirement coverage is waiting for extracted requirements.",
-                provenance="unknown",
-                health="unknown",
-                confidence=0.0,
                 evidence=["No `requirements_extracted` event was observed yet."],
+                recommendation="Complete tender ingestion and requirement extraction before evaluating requirement coverage.",
             )
 
-        return KpiScore(
+        return _build_score(
             kpi_code="A1",
             value=0.0,
             label="No tender requirements were extracted from the uploaded document.",
@@ -153,6 +240,7 @@ def _score_a1(
             health="red",
             confidence=0.55,
             evidence=["The tender document was processed but yielded zero persisted requirements."],
+            recommendation="Review requirement extraction and create the missing requirement baseline before progressing the proposal.",
         )
 
     coverage_ratio = addressed_requirements / requirement_count
@@ -177,14 +265,202 @@ def _score_a1(
 
     provenance = "measured" if addressed_requirements > 0 else "inferred"
     confidence = 0.82 if addressed_requirements > 0 else round(min(0.78, 0.58 + (section_count * 0.04)), 2)
-    return KpiScore(
+    health = _health_from_score(value, green=75.0, amber=45.0)
+    if health == "green":
+        recommendation = "Keep the requirement-to-section mapping current and preserve traceability for final compliance review."
+    elif health == "amber":
+        recommendation = "Map the remaining requirements to concrete sections and close partially addressed items before the next gate."
+    else:
+        recommendation = "Stop adding new narrative until the missing requirements are mapped, assigned and addressed in the proposal structure."
+    return _build_score(
         kpi_code="A1",
         value=value,
         label="Requirement coverage proxy built from persisted requirements and proposal progress.",
         provenance=provenance,
-        health=_health_from_score(value, green=75.0, amber=45.0),
+        health=health,
         confidence=confidence,
         evidence=evidence,
+        recommendation=recommendation,
+    )
+
+
+def _score_a2(
+    *,
+    document_ingested: bool,
+    sections: list[dict[str, Any]],
+    requirement_count: int,
+    addressed_requirements: int,
+    completed_sections: int,
+    proposal_updates: int,
+    operational_state: OperationalState,
+) -> KpiScore:
+    if not document_ingested:
+        return _unknown_score(
+            kpi_code="A2",
+            label="Editorial quality becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document and sync proposal sections before evaluating editorial quality.",
+        )
+
+    section_count = len(sections)
+    if section_count == 0:
+        return _build_score(
+            kpi_code="A2",
+            value=0.0,
+            label="Editorial quality is blocked because no proposal sections are tracked yet.",
+            provenance="inferred",
+            health="red",
+            confidence=0.54,
+            evidence=["The tender has no mirrored proposal sections to evaluate narrative maturity."],
+            recommendation="Create and structure the proposal sections before evaluating narrative quality or readability.",
+        )
+
+    meaningful_titles = sum(1 for section in sections if len(str(section.get("title") or "").strip()) >= 8)
+    title_quality_ratio = meaningful_titles / section_count
+    progress_ratio = completed_sections / section_count if section_count else 0.0
+    review_closure_ratio = (
+        operational_state.reviews_completed / operational_state.reviews_started
+        if operational_state.reviews_started
+        else (0.65 if completed_sections > 0 else 0.25)
+    )
+    open_reworks = sum(1 for rework in operational_state.reworks if rework.get("resolved_at") is None)
+    rework_penalty = min((open_reworks + (len(operational_state.reworks) * 0.35)) / max(1, section_count), 1.0)
+    alignment_ratio = addressed_requirements / requirement_count if requirement_count else min(section_count / 3.0, 1.0)
+    update_ratio = min(proposal_updates / max(1, section_count), 1.0)
+
+    value = round(
+        (
+            (title_quality_ratio * 0.10)
+            + (progress_ratio * 0.25)
+            + (review_closure_ratio * 0.25)
+            + ((1.0 - rework_penalty) * 0.20)
+            + (alignment_ratio * 0.10)
+            + (update_ratio * 0.10)
+        )
+        * 100,
+        1,
+    )
+
+    provenance = "measured" if operational_state.reviews_started or operational_state.reworks else "inferred"
+    confidence = 0.86 if provenance == "measured" else round(min(0.79, 0.58 + (section_count * 0.05)), 2)
+    health = _health_from_score(value, green=78.0, amber=55.0)
+
+    if open_reworks > 0:
+        recommendation = "Resolve open rework loops and stabilize the latest section revisions before claiming editorial readiness."
+    elif health == "green":
+        recommendation = "Maintain the current editorial cadence and keep section reviews flowing to preserve narrative consistency."
+    elif health == "amber":
+        recommendation = "Tighten section wording, complete the pending reviews and push more sections into approved state."
+    else:
+        recommendation = "Formalize the proposal structure, complete section drafting and start review cycles before evaluating redaction quality."
+
+    return _build_score(
+        kpi_code="A2",
+        value=value,
+        label="Editorial quality proxy built from section maturity, review closure and rework pressure.",
+        provenance=provenance,
+        health=health,
+        confidence=confidence,
+        evidence=[
+            f"Proposal sections tracked: {section_count}, with {completed_sections} completed.",
+            f"Sections with meaningful titles: {meaningful_titles}/{section_count}.",
+            f"Review cycles started/completed: {operational_state.reviews_started}/{operational_state.reviews_completed}.",
+            f"Open rework loops: {open_reworks}; proposal section updates observed: {proposal_updates}.",
+        ],
+        recommendation=recommendation,
+    )
+
+
+def _score_a3(
+    *,
+    document_ingested: bool,
+    requirement_count: int,
+    addressed_requirements: int,
+    high_priority_requirements: int,
+    addressed_high_priority_requirements: int,
+    section_count: int,
+    completed_sections: int,
+    proposal_updates: int,
+    operational_state: OperationalState,
+) -> KpiScore:
+    if not document_ingested:
+        return _unknown_score(
+            kpi_code="A3",
+            label="Competitive and technical value becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document and establish requirement coverage before evaluating competitiveness.",
+        )
+
+    if requirement_count == 0:
+        return _build_score(
+            kpi_code="A3",
+            value=0.0,
+            label="Competitive and technical value is blocked because no requirements are available.",
+            provenance="inferred",
+            health="red",
+            confidence=0.56,
+            evidence=["The tender has no persisted requirement baseline to assess competitive fit."],
+            recommendation="Recover the requirement baseline first, then align the proposal with the highest-priority asks.",
+        )
+
+    high_priority_focus = (
+        addressed_high_priority_requirements / high_priority_requirements
+        if high_priority_requirements
+        else addressed_requirements / requirement_count
+    )
+    delivery_depth = completed_sections / section_count if section_count else 0.0
+    open_blocking_reworks = sum(
+        1 for rework in operational_state.reworks if rework.get("is_blocking") and rework.get("resolved_at") is None
+    )
+    failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
+    open_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "open")
+    blocker_ratio = min(
+        ((open_blocking_reworks * 1.0) + (failed_gates * 1.0) + (open_gates * 0.6))
+        / max(1, high_priority_requirements or requirement_count),
+        1.0,
+    )
+    review_depth = min((operational_state.reviews_completed + proposal_updates) / max(1, requirement_count), 1.0)
+    request_coverage = min(len(operational_state.requests) / max(1, section_count or requirement_count), 1.0)
+
+    value = round(
+        (
+            (high_priority_focus * 0.45)
+            + (delivery_depth * 0.20)
+            + ((1.0 - blocker_ratio) * 0.25)
+            + (review_depth * 0.05)
+            + (request_coverage * 0.05)
+        )
+        * 100,
+        1,
+    )
+
+    provenance = "measured" if (operational_state.gates or operational_state.reviews_started or operational_state.reworks) else "inferred"
+    confidence = 0.84 if provenance == "measured" else 0.72
+    health = _health_from_score(value, green=78.0, amber=55.0)
+
+    if open_blocking_reworks > 0 or failed_gates > 0:
+        recommendation = "Close blocking rework and failed gates on high-priority requirements before presenting the offer as competitive."
+    elif health == "green":
+        recommendation = "Protect the current technical positioning by keeping high-priority requirements fully covered through final submission."
+    elif health == "amber":
+        recommendation = "Increase coverage on the highest-priority requirements and complete more sections to strengthen the offer value."
+    else:
+        recommendation = "Refocus the proposal on the highest-priority requirements and remove unresolved blockers that weaken technical credibility."
+
+    return _build_score(
+        kpi_code="A3",
+        value=value,
+        label="Competitive and technical value proxy derived from high-priority coverage, delivery depth and blocker pressure.",
+        provenance=provenance,
+        health=health,
+        confidence=confidence,
+        evidence=[
+            f"High-priority requirements addressed: {addressed_high_priority_requirements}/{high_priority_requirements or requirement_count}.",
+            f"Completed proposal sections: {completed_sections}/{section_count or 0}.",
+            f"Blocking rework open: {open_blocking_reworks}; open/failed gates: {open_gates}/{failed_gates}.",
+            f"Review completions plus section updates observed: {operational_state.reviews_completed + proposal_updates}.",
+        ],
+        recommendation=recommendation,
     )
 
 
@@ -201,17 +477,15 @@ def _score_a4(
     now: datetime,
 ) -> KpiScore:
     if not document_ingested:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="A4",
             label="Compliance readiness becomes available after tender document ingestion.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document and extract requirements before evaluating compliance readiness.",
         )
 
     if requirement_count == 0:
-        return KpiScore(
+        return _build_score(
             kpi_code="A4",
             value=0.0,
             label="Compliance readiness is blocked because no requirements are available.",
@@ -219,6 +493,7 @@ def _score_a4(
             health="red",
             confidence=0.58,
             evidence=["The tender cannot establish compliance readiness without extracted requirements."],
+            recommendation="Restore the requirement baseline and map each item to a section before opening compliance gates.",
         )
 
     coverage_ratio = addressed_requirements / requirement_count
@@ -226,7 +501,6 @@ def _score_a4(
     high_priority_ratio = high_priority_requirements / requirement_count
     section_progress_ratio = active_sections / section_count if section_count else 0.0
     due_days = _days_until(due_at, now)
-
     if due_days is None:
         due_risk = 0.35
         due_evidence = "Tender deadline is missing from the synchronized mirror."
@@ -268,15 +542,24 @@ def _score_a4(
     ]
 
     confidence = 0.78 if due_at and requirement_count > 0 else 0.64
-    return KpiScore(
+    health = _health_from_score(value, green=75.0, amber=45.0)
+    if health == "green":
+        recommendation = "Keep the compliance map synchronized and preserve enough time buffer before submission."
+    elif health == "amber":
+        recommendation = "Close unresolved requirements and reduce deadline pressure before the next compliance gate."
+    else:
+        recommendation = "Escalate missing requirements and deadline risk immediately; the tender is not yet ready for a compliance decision."
+    return _build_score(
         kpi_code="A4",
         value=value,
         label="Compliance readiness proxy combining requirement backlog, proposal progress and deadline pressure.",
         provenance="inferred",
-        health=_health_from_score(value, green=75.0, amber=45.0),
+        health=health,
         confidence=confidence,
         evidence=evidence,
+        recommendation=recommendation,
     )
+
 
 def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState:
     requests: dict[str, dict[str, Any]] = {}
@@ -368,7 +651,6 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
                 "severity": _normalized(payload.get("severity")) or "medium",
             }
             continue
-
         if event_type == "rework_resolved":
             rework_id = str(payload.get("external_rework_id") or f"rework-resolved-{index}")
             current = reworks.setdefault(
@@ -386,11 +668,7 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
 
         if event_type == "compliance_gate_opened":
             gate_id = str(payload.get("external_gate_id") or f"gate-{index}")
-            gates[gate_id] = {
-                "gate_id": gate_id,
-                "status": "open",
-                "gate_name": payload.get("gate_name"),
-            }
+            gates[gate_id] = {"gate_id": gate_id, "status": "open", "gate_name": payload.get("gate_name")}
             continue
 
         if event_type in {"compliance_gate_passed", "compliance_gate_failed"}:
@@ -427,13 +705,11 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
 
 def _score_b1(requests: list[dict[str, Any]], now: datetime) -> KpiScore:
     if not requests:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="B1",
             label="Deadline adherence becomes available after at least one tracked contribution request.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["No `contribution_request_created` events were observed yet."],
+            recommendation="Track contribution requests and due dates before evaluating delivery adherence.",
         )
 
     scores: list[float] = []
@@ -474,30 +750,36 @@ def _score_b1(requests: list[dict[str, Any]], now: datetime) -> KpiScore:
         scores.append(75.0)
 
     value = round(sum(scores) / len(scores), 1)
-    return KpiScore(
+    health = _health_from_score(value, green=80.0, amber=55.0)
+    if health == "green":
+        recommendation = "Keep the current request management cadence and protect due dates on new contribution asks."
+    elif health == "amber":
+        recommendation = "Shorten the response queue and push overdue requests back on track before the next milestone."
+    else:
+        recommendation = "Escalate overdue contribution requests immediately and rebalance due dates before delivery adherence degrades further."
+    return _build_score(
         kpi_code="B1",
         value=value,
         label="Deadline adherence across tracked contribution requests.",
         provenance="measured",
-        health=_health_from_score(value, green=80.0, amber=55.0),
+        health=health,
         confidence=0.88,
         evidence=[
             f"Tracked contribution requests: {len(requests)}.",
             f"On-time deliveries: {on_time}, late deliveries: {late}, overdue open requests: {overdue_open}.",
         ],
+        recommendation=recommendation,
     )
 
 
 def _score_b2(requests: list[dict[str, Any]], now: datetime) -> KpiScore:
     eligible = [request for request in requests if request.get("requested_at") is not None]
     if not eligible:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="B2",
             label="Operational responsiveness becomes available after requests are tracked with timestamps.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["No request/response cycle with timestamps was observed yet."],
+            recommendation="Track request timestamps and SLA thresholds before evaluating responsiveness.",
         )
     scores: list[float] = []
     within_target = 0
@@ -523,7 +805,6 @@ def _score_b2(requests: list[dict[str, Any]], now: datetime) -> KpiScore:
             max_hours = max(target * 2.0, target)
         else:
             max_hours = max(max_hours, target)
-
         if request.get("received_at") is not None:
             if response_time <= target:
                 scores.append(100.0)
@@ -545,40 +826,44 @@ def _score_b2(requests: list[dict[str, Any]], now: datetime) -> KpiScore:
             breached += 1
 
     if not scores:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="B2",
             label="Operational responsiveness has no scoreable request cycle yet.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["Tracked requests were missing sufficient timing data."],
+            recommendation="Improve request telemetry completeness before evaluating SLA responsiveness.",
         )
 
     value = round(sum(scores) / len(scores), 1)
-    return KpiScore(
+    health = _health_from_score(value, green=80.0, amber=55.0)
+    if health == "green":
+        recommendation = "Maintain the current SLA response discipline and preserve fast turnaround on clarifications."
+    elif health == "amber":
+        recommendation = "Reduce SLA drift on slower requests before it starts affecting downstream reviews and gates."
+    else:
+        recommendation = "Escalate the breached request cycles and reallocate ownership until the response path returns inside SLA."
+    return _build_score(
         kpi_code="B2",
         value=value,
         label="Operational responsiveness against SLA target and maximum thresholds.",
         provenance="measured",
-        health=_health_from_score(value, green=80.0, amber=55.0),
+        health=health,
         confidence=0.86,
         evidence=[
             f"Requests scored for responsiveness: {len(scores)}.",
             f"Within SLA target: {within_target}, within SLA max: {within_max}, breached: {breached}.",
         ],
+        recommendation=recommendation,
     )
 
 
 def _score_b3(calls: list[dict[str, Any]], now: datetime) -> KpiScore:
     attendance_calls = [call for call in calls if call.get("attendance")]
     if not attendance_calls:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="B3",
             label="Call participation becomes available after attendance is recorded.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["No `call_attendance_recorded` events were observed yet."],
+            recommendation="Track call attendance before using participation as an operational health signal.",
         )
 
     scores: list[float] = []
@@ -599,48 +884,46 @@ def _score_b3(calls: list[dict[str, Any]], now: datetime) -> KpiScore:
         scores.append(round((attended / expected) * 100, 1))
 
     value = round(sum(scores) / len(scores), 1)
-    return KpiScore(
+    health = _health_from_score(value, green=80.0, amber=55.0)
+    if health == "green":
+        recommendation = "Keep the current coordination cadence and continue recording attendance consistently."
+    elif health == "amber":
+        recommendation = "Tighten call participation on key contributors before coordination gaps create rework."
+    else:
+        recommendation = "Escalate low participation and re-establish a reliable coordination forum for the tender workstream."
+    return _build_score(
         kpi_code="B3",
         value=value,
         label="Participation rate across scheduled tender calls with recorded attendance.",
         provenance="measured",
-        health=_health_from_score(value, green=80.0, amber=55.0),
+        health=health,
         confidence=0.84,
         evidence=[
             f"Calls with attendance records: {len(attendance_calls)}.",
             f"Recorded participants attended: {total_attended}/{total_expected or 0}.",
         ],
+        recommendation=recommendation,
     )
 
 
-def _score_b4(
-    reworks: list[dict[str, Any]],
-    *,
-    unique_contribution_ids: set[str],
-    reviews_completed: int,
-    requests: list[dict[str, Any]],
-) -> KpiScore:
+def _score_b4(reworks: list[dict[str, Any]], *, unique_contribution_ids: set[str], reviews_completed: int, requests: list[dict[str, Any]]) -> KpiScore:
     if not reworks:
         if reviews_completed == 0 and not requests:
-            return KpiScore(
+            return _unknown_score(
                 kpi_code="B4",
                 label="Contribution stability becomes available after review or rework telemetry is tracked.",
-                provenance="unknown",
-                health="unknown",
-                confidence=0.0,
                 evidence=["No `rework_requested` events were observed yet."],
+                recommendation="Track review and rework loops before using contribution stability as an operational KPI.",
             )
-        return KpiScore(
+        return _build_score(
             kpi_code="B4",
             value=100.0,
             label="Contribution stability is strong because no blocking rework was observed.",
             provenance="measured",
             health="green",
             confidence=0.82,
-            evidence=[
-                f"Observed completed reviews: {reviews_completed}.",
-                "No tracked rework loop is currently open.",
-            ],
+            evidence=[f"Observed completed reviews: {reviews_completed}.", "No tracked rework loop is currently open."],
+            recommendation="Keep the current review discipline and preserve fast closure on new findings to maintain stability.",
         )
 
     open_blocking = 0
@@ -664,76 +947,105 @@ def _score_b4(
 
     contribution_base = max(1, len(unique_contribution_ids) or len(rework_counts_by_contribution))
     repeat_penalty = 6 * sum(1 for count in rework_counts_by_contribution.values() if count > 1)
-    penalty = (
-        (open_blocking * 32)
-        + (resolved_blocking * 18)
-        + (open_non_blocking * 14)
-        + (resolved_non_blocking * 8)
-        + repeat_penalty
-    ) / contribution_base
+    penalty = ((open_blocking * 32) + (resolved_blocking * 18) + (open_non_blocking * 14) + (resolved_non_blocking * 8) + repeat_penalty) / contribution_base
     value = round(max(0.0, 100.0 - penalty), 1)
-    return KpiScore(
+    health = _health_from_score(value, green=80.0, amber=55.0)
+    if open_blocking > 0:
+        recommendation = "Close the blocking rework loops before new draft iterations amplify instability across contributions."
+    elif health == "green":
+        recommendation = "Keep rework closure tight and avoid repeated loops on the same contribution areas."
+    elif health == "amber":
+        recommendation = "Reduce recurring rework and push pending fixes to closure before the next review cycle."
+    else:
+        recommendation = "Stabilize the contribution flow immediately; recurring and unresolved rework is eroding delivery reliability."
+    return _build_score(
         kpi_code="B4",
         value=value,
         label="Contribution stability derived from blocking and recurring rework loops.",
         provenance="measured",
-        health=_health_from_score(value, green=80.0, amber=55.0),
+        health=health,
         confidence=0.85,
         evidence=[
             f"Blocking rework open/resolved: {open_blocking}/{resolved_blocking}.",
             f"Non-blocking rework open/resolved: {open_non_blocking}/{resolved_non_blocking}.",
         ],
+        recommendation=recommendation,
+    )
+
+
+def _score_q(scores: list[KpiScore]) -> KpiScore:
+    measured_scores = [score for score in scores if score.value is not None and score.kpi_code in _QUALITY_WEIGHTS]
+    if not measured_scores:
+        return _unknown_score(
+            kpi_code="Q",
+            label="Qualitative index becomes available when A1..A4 are scoreable.",
+            evidence=["No qualitative KPI is currently scoreable."],
+            recommendation="Score A1..A4 first so the overall qualitative index can be computed.",
+        )
+
+    weighted_total = 0.0
+    total_weight = 0.0
+    evidence: list[str] = []
+    for score in measured_scores:
+        weight = _QUALITY_WEIGHTS[score.kpi_code]
+        weighted_total += (score.value or 0.0) * weight
+        total_weight += weight
+        evidence.append(f"{score.kpi_code}: {score.value} ({score.health}).")
+
+    value = round(weighted_total / total_weight, 1)
+    health = _health_from_score(value, green=78.0, amber=55.0)
+    weakest = min(measured_scores, key=lambda score: score.value if score.value is not None else 0.0)
+    recommendation = weakest.recommendation or "Improve the weakest qualitative KPI before progressing the tender."
+    return _build_score(
+        kpi_code="Q",
+        value=value,
+        label="Qualitative quality index derived from A1..A4.",
+        provenance=_combine_provenance(measured_scores),
+        health=health,
+        confidence=_weighted_confidence(measured_scores, _QUALITY_WEIGHTS),
+        evidence=evidence,
+        recommendation=f"Priority focus: {weakest.kpi_code}. {recommendation}",
     )
 
 
 def _score_e(scores: list[KpiScore]) -> KpiScore:
     weighted_total = 0.0
     total_weight = 0.0
-    provenances: set[str] = set()
     evidence: list[str] = []
     measured_scores = [score for score in scores if score.value is not None and score.kpi_code in _OPERATIONAL_WEIGHTS]
     for score in measured_scores:
         weight = _OPERATIONAL_WEIGHTS[score.kpi_code]
-        weighted_total += score.value * weight
+        weighted_total += (score.value or 0.0) * weight
         total_weight += weight
-        provenances.add(score.provenance)
-        evidence.append(f"{score.kpi_code}: {score.value}.")
+        evidence.append(f"{score.kpi_code}: {score.value} ({score.health}).")
 
     if total_weight == 0:
-        return KpiScore(
+        return _unknown_score(
             kpi_code="E",
             label="Operational efficiency index becomes available when at least one B KPI is observed.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
             evidence=["No operational KPI is currently scoreable."],
+            recommendation="Track B1..B4 telemetry before using operational efficiency as a summary index.",
         )
 
     value = round(weighted_total / total_weight, 1)
-    provenance = "measured" if provenances == {"measured"} else "inferred"
-    confidence = round(sum(score.confidence or 0.0 for score in measured_scores) / max(1, len(measured_scores)), 2)
-    return KpiScore(
+    weakest = min(measured_scores, key=lambda score: score.value if score.value is not None else 0.0)
+    return _build_score(
         kpi_code="E",
         value=value,
         label="Operational efficiency index derived from B1..B4.",
-        provenance=provenance,
+        provenance=_combine_provenance(measured_scores),
         health=_health_from_score(value, green=80.0, amber=55.0),
-        confidence=confidence,
+        confidence=_weighted_confidence(measured_scores, _OPERATIONAL_WEIGHTS),
         evidence=evidence,
+        recommendation=f"Priority focus: {weakest.kpi_code}. {weakest.recommendation or 'Reduce the weakest operational bottleneck.'}",
     )
 
-
-def _compute_operational_snapshot(events: list[dict[str, Any]], now: datetime) -> OperationalSnapshot:
-    state = _collect_operational_state(events)
+def _compute_operational_snapshot(events: list[dict[str, Any]], now: datetime, *, state: OperationalState | None = None) -> OperationalSnapshot:
+    state = state or _collect_operational_state(events)
     b1 = _score_b1(state.requests, now)
     b2 = _score_b2(state.requests, now)
     b3 = _score_b3(state.calls, now)
-    b4 = _score_b4(
-        state.reworks,
-        unique_contribution_ids=state.unique_contribution_ids,
-        reviews_completed=state.reviews_completed,
-        requests=state.requests,
-    )
+    b4 = _score_b4(state.reworks, unique_contribution_ids=state.unique_contribution_ids, reviews_completed=state.reviews_completed, requests=state.requests)
     e = _score_e([b1, b2, b3, b4])
     notes = [
         f"Contribution requests tracked: {len(state.requests)}.",
@@ -747,6 +1059,7 @@ def _compute_operational_snapshot(events: list[dict[str, Any]], now: datetime) -
         summary = "Operational telemetry is not available yet, so B1..B4 remain pending."
     return OperationalSnapshot(b1=b1, b2=b2, b3=b3, b4=b4, e=e, notes=notes, summary=summary)
 
+
 def _derive_health(scores: list[KpiScore]) -> HealthClass:
     concrete = [score.health for score in scores if score.health != "unknown"]
     if not concrete:
@@ -758,68 +1071,52 @@ def _derive_health(scores: list[KpiScore]) -> HealthClass:
     return "green"
 
 
-def _derive_phase(
-    *,
-    current_status: str,
-    document_ingested: bool,
-    requirements_extracted: bool,
-    requirement_count: int,
-    active_sections: int,
-    proposal_updates: int,
-    a1_score: KpiScore,
-    outcome: str | None,
-    submitted: bool,
-    operational_state: OperationalState,
-) -> str:
+def _derive_phase(*, current_status: str, document_ingested: bool, requirements_extracted: bool, requirement_count: int, active_sections: int, proposal_updates: int, a1_score: KpiScore, outcome: str | None, submitted: bool, operational_state: OperationalState) -> str:
     if outcome in _TERMINAL_PHASES:
         return _TERMINAL_PHASES[outcome]
-
     if _normalized(current_status) in _TERMINAL_PHASES:
         return _TERMINAL_PHASES[_normalized(current_status)]
-
     if submitted or _normalized(current_status) == "submitted":
         return "S9"
 
-    open_blocking_reworks = sum(
-        1 for rework in operational_state.reworks if rework.get("is_blocking") and rework.get("resolved_at") is None
-    )
+    open_blocking_reworks = sum(1 for rework in operational_state.reworks if rework.get("is_blocking") and rework.get("resolved_at") is None)
     open_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "open")
     failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
     open_reviews = max(0, operational_state.reviews_started - operational_state.reviews_completed)
 
     if open_blocking_reworks > 0:
         return "S6"
-
     if open_gates > 0 or failed_gates > 0:
         return "S8"
-
     if open_reviews > 0:
         return "S5"
-
     if not document_ingested:
         return "S0"
-
     if not requirements_extracted and requirement_count == 0:
         return "S2"
-
     if requirements_extracted and proposal_updates == 0 and active_sections == 0:
         return "S3"
-
     if active_sections > 0 and (a1_score.value or 0.0) < 70.0:
         return "S4"
-
     if active_sections > 0:
         return "S7"
-
     return "S2"
 
 
-def compute_analysis_snapshot(
-    tender: dict[str, Any] | None,
-    events: list[dict[str, Any]],
-    *,
-    now: datetime | None = None,
-) -> AnalysisSnapshot:
+def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, section_count: int, scored_kpis: list[KpiScore]) -> dict[str, Any]:
+    return {
+        "formula_bundle_version": _FORMULA_BUNDLE_VERSION,
+        "model_bundle_version": _MODEL_BUNDLE_VERSION,
+        "prompt_bundle_version": _PROMPT_BUNDLE_VERSION,
+        "engine_kind": "deterministic_proxy",
+        "scored_kpis": [score.kpi_code for score in scored_kpis if score.value is not None],
+        "event_count": len(events),
+        "requirements_tracked": requirement_count,
+        "sections_tracked": section_count,
+    }
+
+
+def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[str, Any]], *, now: datetime | None = None) -> AnalysisSnapshot:
     if tender is None:
         return AnalysisSnapshot(
             analytical_phase=None,
@@ -827,6 +1124,7 @@ def compute_analysis_snapshot(
             kpis=[],
             notes=["Tender not synchronized yet."],
             summary="Tender not synchronized yet.",
+            analysis_metadata=_analysis_metadata(events=[], requirement_count=0, section_count=0, scored_kpis=[]),
         )
 
     now = now or datetime.now(timezone.utc)
@@ -844,73 +1142,36 @@ def compute_analysis_snapshot(
     addressed_requirements = sum(
         1
         for requirement in requirements
-        if _normalized(requirement.get("compliance_status")) in _ADDRESSED_REQUIREMENT_STATUSES
-        or bool(requirement.get("mapped_section_id"))
+        if _normalized(requirement.get("compliance_status")) in _ADDRESSED_REQUIREMENT_STATUSES or bool(requirement.get("mapped_section_id"))
     )
-    high_priority_requirements = sum(
-        1 for requirement in requirements if _normalized(requirement.get("priority")) == "high"
+    high_priority_requirements = sum(1 for requirement in requirements if _normalized(requirement.get("priority")) == "high")
+    addressed_high_priority_requirements = sum(
+        1
+        for requirement in requirements
+        if _normalized(requirement.get("priority")) == "high"
+        and (_normalized(requirement.get("compliance_status")) in _ADDRESSED_REQUIREMENT_STATUSES or bool(requirement.get("mapped_section_id")))
     )
-    active_sections = sum(
-        1 for section in sections if _normalized(section.get("status")) in _ACTIVE_SECTION_STATUSES
-    )
-    completed_sections = sum(
-        1 for section in sections if _normalized(section.get("status")) in _COMPLETED_SECTION_STATUSES
-    )
+    active_sections = sum(1 for section in sections if _normalized(section.get("status")) in _ACTIVE_SECTION_STATUSES)
+    completed_sections = sum(1 for section in sections if _normalized(section.get("status")) in _COMPLETED_SECTION_STATUSES)
 
     due_at = _parse_datetime(tender.get("due_at"))
-    if document_ingested:
-        a1 = _score_a1(
-            requirement_count=requirement_count,
-            addressed_requirements=addressed_requirements,
-            section_count=len(sections),
-            active_sections=active_sections,
-            proposal_updates=proposal_updates,
-            requirements_extracted=requirements_extracted,
-        )
-        a4 = _score_a4(
-            document_ingested=document_ingested,
-            requirement_count=requirement_count,
-            addressed_requirements=addressed_requirements,
-            high_priority_requirements=high_priority_requirements,
-            section_count=len(sections),
-            active_sections=active_sections,
-            due_at=due_at,
-            submitted=submitted,
-            now=now,
-        )
-    else:
-        a1 = KpiScore(
-            kpi_code="A1",
-            label="Requirement coverage becomes available after tender document ingestion.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
-            evidence=["No `tender_document_ingested` event was observed yet."],
-        )
-        a4 = KpiScore(
-            kpi_code="A4",
-            label="Compliance readiness becomes available after tender document ingestion.",
-            provenance="unknown",
-            health="unknown",
-            confidence=0.0,
-            evidence=["No `tender_document_ingested` event was observed yet."],
-        )
-
-    operational = _compute_operational_snapshot(events, now)
     operational_state = _collect_operational_state(events)
-    health = _derive_health([a1, a4, operational.b1, operational.b2, operational.b3, operational.b4, operational.e])
-    analytical_phase = _derive_phase(
-        current_status=current_status,
-        document_ingested=document_ingested,
-        requirements_extracted=requirements_extracted,
-        requirement_count=requirement_count,
-        active_sections=active_sections,
-        proposal_updates=proposal_updates,
-        a1_score=a1,
-        outcome=outcome,
-        submitted=submitted,
-        operational_state=operational_state,
-    )
+    if document_ingested:
+        a1 = _score_a1(requirement_count=requirement_count, addressed_requirements=addressed_requirements, section_count=len(sections), active_sections=active_sections, proposal_updates=proposal_updates, requirements_extracted=requirements_extracted)
+        a2 = _score_a2(document_ingested=document_ingested, sections=sections, requirement_count=requirement_count, addressed_requirements=addressed_requirements, completed_sections=completed_sections, proposal_updates=proposal_updates, operational_state=operational_state)
+        a3 = _score_a3(document_ingested=document_ingested, requirement_count=requirement_count, addressed_requirements=addressed_requirements, high_priority_requirements=high_priority_requirements, addressed_high_priority_requirements=addressed_high_priority_requirements, section_count=len(sections), completed_sections=completed_sections, proposal_updates=proposal_updates, operational_state=operational_state)
+        a4 = _score_a4(document_ingested=document_ingested, requirement_count=requirement_count, addressed_requirements=addressed_requirements, high_priority_requirements=high_priority_requirements, section_count=len(sections), active_sections=active_sections, due_at=due_at, submitted=submitted, now=now)
+    else:
+        a1 = _unknown_score(kpi_code="A1", label="Requirement coverage becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before computing requirement coverage.")
+        a2 = _unknown_score(kpi_code="A2", label="Editorial quality becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating editorial quality.")
+        a3 = _unknown_score(kpi_code="A3", label="Competitive and technical value becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating competitive and technical value.")
+        a4 = _unknown_score(kpi_code="A4", label="Compliance readiness becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating compliance readiness.")
+
+    q = _score_q([a1, a2, a3, a4])
+    operational = _compute_operational_snapshot(events, now, state=operational_state)
+    all_scores = [a1, a2, a3, a4, q, operational.b1, operational.b2, operational.b3, operational.b4, operational.e]
+    health = _derive_health(all_scores)
+    analytical_phase = _derive_phase(current_status=current_status, document_ingested=document_ingested, requirements_extracted=requirements_extracted, requirement_count=requirement_count, active_sections=active_sections, proposal_updates=proposal_updates, a1_score=a1, outcome=outcome, submitted=submitted, operational_state=operational_state)
 
     notes = [
         f"Requirements tracked in mirror: {requirement_count}.",
@@ -924,21 +1185,15 @@ def compute_analysis_snapshot(
     elif requirement_count == 0:
         summary = "Tender document ingestion exists, but extracted requirements are still missing or empty."
     elif any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
-        summary = (
-            "Partial analytical snapshot is available for A1, A4 and B1..B4 using persisted requirements, "
-            "proposal progress and observed workflow telemetry."
-        )
+        summary = "Analytical snapshot is available for A1..A4, Q and B1..B4/E using persisted requirements, proposal progress and observed workflow telemetry."
     else:
-        summary = (
-            "Partial analytical snapshot is available for A1 and A4 using persisted requirements, "
-            "proposal progress and base tender telemetry."
-        )
+        summary = "Analytical snapshot is available for A1..A4 and Q using persisted requirements, proposal progress and base tender telemetry."
 
     return AnalysisSnapshot(
         analytical_phase=analytical_phase,
         health=health,
-        kpis=[a1, a4, operational.b1, operational.b2, operational.b3, operational.b4, operational.e],
+        kpis=all_scores,
         notes=notes,
         summary=summary,
+        analysis_metadata=_analysis_metadata(events=events, requirement_count=requirement_count, section_count=len(sections), scored_kpis=all_scores),
     )
-

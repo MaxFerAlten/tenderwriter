@@ -306,6 +306,7 @@ async def get_snapshot(
             generated_at=_snapshot_generated_at(snapshot_record),
             kpis=_placeholder_scores(),
             notes=["Tender not synchronized yet."],
+            analysis_metadata={},
         )
 
     stored_scores = _snapshot_scores(snapshot_record)
@@ -322,6 +323,7 @@ async def get_snapshot(
         generated_at=_snapshot_generated_at(snapshot_record),
         kpis=[*stored_scores, *_placeholder_scores(concrete_codes)],
         notes=notes,
+        analysis_metadata=snapshot_record.get("analysis_metadata", {}),
     )
 
 
@@ -341,6 +343,7 @@ async def get_diagnostics(
             generated_at=datetime.now(timezone.utc),
             summary="Tender not synchronized yet.",
             findings=[],
+            analysis_metadata={},
         )
 
     findings = list(snapshot_record.get('findings', []))
@@ -350,6 +353,7 @@ async def get_diagnostics(
         generated_at=_snapshot_generated_at(snapshot_record),
         summary=str(snapshot_record.get("summary") or "Diagnostics unavailable."),
         findings=findings,
+        analysis_metadata=snapshot_record.get("analysis_metadata", {}),
     )
 
 

@@ -253,7 +253,10 @@ export default function ObservabilityKPI() {
     const selectedBottleneck = bottlenecks.find((item) => item.external_tender_id === String(selectedTenderId)) || null;
     const selectedHealth = snapshot?.health || selectedBottleneck?.health || 'unknown';
     const palette = healthColors(selectedHealth);
-    const leadingKpis = (snapshot?.kpis || []).filter((score) => ['A1', 'A4'].includes(score.kpi_code));
+    const qualitativeKpis = (snapshot?.kpis || []).filter((score) => ['A1', 'A2', 'A3', 'A4', 'Q'].includes(score.kpi_code));
+    const operationalKpis = (snapshot?.kpis || []).filter((score) => ['B1', 'B2', 'B3', 'B4', 'E'].includes(score.kpi_code));
+    const scoredKpis = (snapshot?.kpis || []).filter((score) => score.value !== null || score.evidence.length > 0 || Boolean(score.recommendation));
+    const analysisMetadata = snapshot?.analysis_metadata || diagnostics?.analysis_metadata || null;
     const redCount = riskCount(bottlenecks, 'red');
     const amberCount = riskCount(bottlenecks, 'amber');
     const analysisJobPalette = analysisJobColors(analysisJob?.job_status);
@@ -514,35 +517,64 @@ export default function ObservabilityKPI() {
                     ) : (
                         <>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                                {leadingKpis.map((score) => {
+                                {qualitativeKpis.map((score) => {
                                     const scorePalette = healthColors(score.health);
                                     return (
                                         <div key={score.kpi_code} className="card" style={{ borderColor: `${scorePalette.accent}33` }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
                                                 <div>
                                                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{score.kpi_code}</div>
                                                     <div style={{ fontSize: '2rem', fontWeight: 700, marginTop: '0.25rem' }}>{formatScoreValue(score)}</div>
                                                 </div>
-                                                <div style={{
-                                                    padding: '0.3rem 0.65rem',
-                                                    borderRadius: '999px',
-                                                    background: scorePalette.soft,
-                                                    color: scorePalette.accent,
-                                                    textTransform: 'capitalize',
-                                                    fontSize: '0.75rem',
-                                                }}>
-                                                    {score.health}
+                                                <div style={{ display: 'grid', gap: '0.35rem', justifyItems: 'end' }}>
+                                                    <div style={{ padding: '0.3rem 0.65rem', borderRadius: '999px', background: scorePalette.soft, color: scorePalette.accent, textTransform: 'capitalize', fontSize: '0.75rem' }}>
+                                                        {score.health}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                                                        Severity: {score.severity}
+                                                    </div>
                                                 </div>
                                             </div>
                                             <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                                                 {score.label || 'No label available.'}
                                             </p>
+                                            {score.recommendation && (
+                                                <p style={{ margin: '0.6rem 0 0 0', fontSize: '0.78rem', color: '#dbeafe' }}>
+                                                    Recommendation: {score.recommendation}
+                                                </p>
+                                            )}
                                             <p style={{ margin: '0.6rem 0 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                                                 Provenance: {score.provenance} | Confidence: {score.confidence ?? 0}
+                                            </p>
+                                            <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                                Formula: {score.formula_version || 'n/a'}
                                             </p>
                                         </div>
                                     );
                                 })}
+                            </div>
+
+                            <div className="card">
+                                <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Gauge size={18} color="#38bdf8" /> Operational scorecards
+                                </h3>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.85rem' }}>
+                                    {operationalKpis.map((score) => {
+                                        const scorePalette = healthColors(score.health);
+                                        return (
+                                            <div key={score.kpi_code} style={{ padding: '0.85rem', borderRadius: '12px', border: `1px solid ${scorePalette.accent}22`, background: 'rgba(15, 23, 42, 0.3)' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                    <span style={{ fontWeight: 600 }}>{score.kpi_code}</span>
+                                                    <span style={{ fontSize: '0.78rem', color: scorePalette.accent, textTransform: 'capitalize' }}>{score.health}</span>
+                                                </div>
+                                                <div style={{ fontSize: '1.4rem', fontWeight: 700, marginTop: '0.45rem' }}>{formatScoreValue(score)}</div>
+                                                <div style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                    {score.recommendation || score.label || 'No recommendation available.'}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
 
                             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)', gap: '1rem' }}>
@@ -551,9 +583,19 @@ export default function ObservabilityKPI() {
                                         <FileSearch size={18} color="#38bdf8" /> KPI evidence
                                     </h3>
                                     <div style={{ display: 'grid', gap: '0.9rem' }}>
-                                        {leadingKpis.map((score) => (
+                                        {scoredKpis.map((score) => (
                                             <div key={`${score.kpi_code}-evidence`} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
-                                                <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{score.kpi_code} evidence</div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                    <div style={{ fontWeight: 600 }}>{score.kpi_code} evidence</div>
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                        {score.provenance} | {score.formula_version || 'n/a'}
+                                                    </div>
+                                                </div>
+                                                {score.recommendation && (
+                                                    <p style={{ margin: '0 0 0.55rem 0', fontSize: '0.8rem', color: '#dbeafe' }}>
+                                                        {score.recommendation}
+                                                    </p>
+                                                )}
                                                 {score.evidence.length === 0 ? (
                                                     <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No evidence available.</div>
                                                 ) : (
@@ -576,8 +618,16 @@ export default function ObservabilityKPI() {
                                         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                             {diagnostics?.summary || 'Diagnostics not available.'}
                                         </p>
+                                        {analysisMetadata && (
+                                            <div style={{ display: 'grid', gap: '0.45rem', marginTop: '0.75rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                                                <div>Formula bundle: {analysisMetadata.formula_bundle_version || 'n/a'}</div>
+                                                <div>Model bundle: {analysisMetadata.model_bundle_version || 'n/a'}</div>
+                                                <div>Prompt bundle: {analysisMetadata.prompt_bundle_version || 'n/a'}</div>
+                                                <div>Scored KPI: {(analysisMetadata.scored_kpis || []).join(', ') || 'n/a'}</div>
+                                            </div>
+                                        )}
                                         <div style={{ display: 'grid', gap: '0.55rem', marginTop: '0.75rem' }}>
-                                            {(diagnostics?.findings || snapshot.notes).slice(0, 6).map((item) => (
+                                            {(diagnostics?.findings || snapshot.notes).slice(0, 8).map((item) => (
                                                 <div key={item} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.65rem 0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '10px' }}>
                                                     {item}
                                                 </div>

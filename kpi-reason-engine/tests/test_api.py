@@ -52,7 +52,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         )
 
     def test_store_schema_version_matches_current_migration(self) -> None:
-        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0002")
+        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0003")
 
 
     def test_protected_routes_require_service_credentials(self) -> None:
@@ -371,7 +371,10 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(snapshot_response.status_code, 200)
         snapshot = snapshot_response.json()
         a1 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A1")
+        a2 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A2")
+        a3 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A3")
         a4 = next(score for score in snapshot["kpis"] if score["kpi_code"] == "A4")
+        q = next(score for score in snapshot["kpis"] if score["kpi_code"] == "Q")
         self.assertEqual(snapshot["analytical_phase"], "S4")
         self.assertEqual(snapshot["health"], "amber")
         self.assertEqual(a1["value"], 67.5)
@@ -379,6 +382,14 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(a1["provenance"], "measured")
         self.assertEqual(a4["value"], 65.5)
         self.assertEqual(a4["health"], "amber")
+        self.assertIsNotNone(a2["value"])
+        self.assertIsNotNone(a3["value"])
+        self.assertIsNotNone(q["value"])
+        self.assertTrue(a2["recommendation"])
+        self.assertTrue(a3["recommendation"])
+        self.assertEqual(snapshot["analysis_metadata"]["formula_bundle_version"], "quality-formulas-v2")
+        self.assertIn("A3", snapshot["analysis_metadata"]["scored_kpis"])
+        self.assertEqual(a2["formula_version"], "editorial-quality-v1")
         stored = self.client.app.state.store.get_tender("TEN-777")
         self.assertEqual(stored["health"], "amber")
         self.assertEqual(stored["analytical_phase"], "S4")
@@ -932,6 +943,9 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         self.assertEqual(transitions_response.json()["items"][0]["to_state"], "S8")
         self.assertEqual(transitions_response.json()["generated_at"].replace("Z", "+00:00"), snapshot_record["generated_at"])
         self.assertIn("A1", " ".join(snapshot_record["findings"]))
+        self.assertEqual(snapshot_record["analysis_metadata"]["formula_bundle_version"], "quality-formulas-v2")
+        self.assertEqual(diagnostics_response.json()["analysis_metadata"]["model_bundle_version"], "deterministic-proxy-model-v2")
+        self.assertIn("formula=editorial-quality-v1", " ".join(snapshot_record["findings"]))
 
     def test_transitions_endpoint_surfaces_phase_drivers_and_requirement_focus(self) -> None:
         self.client.post(

@@ -25,9 +25,6 @@ _REQUIRED_TABLES = {
     'kpi_phase_transitions',
 }
 
-_MODEL_BUNDLE_VERSION = 'deterministic-v1'
-
-
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -353,7 +350,8 @@ class SqliteStore:
         generated_at = _utcnow_iso()
         with self._lock:
             connection = self._require_connection()
-            model_version_id = self._ensure_model_version(connection)
+            analysis_metadata = dict(analysis.analysis_metadata or {})
+            model_version_id = self._ensure_model_versions(connection, analysis_metadata)
             kpis_payload = [score.model_dump(mode='json') for score in analysis.kpis]
             notes_payload = list(analysis.notes)
             snapshot_payload = {
@@ -362,7 +360,7 @@ class SqliteStore:
                 'summary': analysis.summary,
                 'kpis': kpis_payload,
                 'notes': notes_payload,
-                'model_bundle_version': _MODEL_BUNDLE_VERSION,
+                'analysis_metadata': analysis_metadata,
             }
             snapshot_hash = hashlib.sha256(_to_json(snapshot_payload).encode('utf-8')).hexdigest()
             cursor = connection.execute(
@@ -375,10 +373,11 @@ class SqliteStore:
                     summary,
                     kpis_json,
                     notes_json,
+                    analysis_metadata_json,
                     model_version_id,
                     generated_at,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     external_tender_id,
@@ -388,6 +387,7 @@ class SqliteStore:
                     analysis.summary,
                     _to_json_list(kpis_payload),
                     _to_json_list(notes_payload),
+                    _to_json(analysis_metadata),
                     model_version_id,
                     generated_at,
                     generated_at,
@@ -455,6 +455,7 @@ class SqliteStore:
             row = connection.execute(
                 """
                 SELECT s.id, s.generated_at, s.analytical_phase, s.health, s.summary, s.kpis_json, s.notes_json,
+                       s.analysis_metadata_json,
                        mv.version_code AS model_version_code
                 FROM kpi_snapshots AS s
                 LEFT JOIN kpi_model_versions AS mv ON mv.id = s.model_version_id
@@ -483,6 +484,7 @@ class SqliteStore:
             'summary': row['summary'],
             'kpis': json.loads(row['kpis_json'] or '[]'),
             'notes': json.loads(row['notes_json'] or '[]'),
+            'analysis_metadata': json.loads(row['analysis_metadata_json'] or '{}'),
             'model_version_code': row['model_version_code'],
             'findings': [item['content'] for item in findings],
         }
@@ -681,34 +683,45 @@ class SqliteStore:
             )
         return items
 
-    def _ensure_model_version(self, connection: sqlite3.Connection) -> int:
-        descriptor = {
-            'bundle': _MODEL_BUNDLE_VERSION,
-            'source': 'sprint10-async-jobs',
-            'kpis': ['A1', 'A4', 'B1', 'B2', 'B3', 'B4', 'E'],
-        }
-        connection.execute(
-            """
-            INSERT OR IGNORE INTO kpi_model_versions (
-                version_type,
-                version_code,
-                descriptor_json,
-                created_at
-            ) VALUES (?, ?, ?, ?)
-            """,
-            ('formula_bundle', _MODEL_BUNDLE_VERSION, _to_json(descriptor), _utcnow_iso()),
-        )
-        row = connection.execute(
-            """
-            SELECT id FROM kpi_model_versions
-            WHERE version_type = ? AND version_code = ?
-            LIMIT 1
-            """,
-            ('formula_bundle', _MODEL_BUNDLE_VERSION),
-        ).fetchone()
-        if row is None:
-            raise RuntimeError('Unable to resolve KPI model version.')
-        return int(row['id'])
+    def _ensure_model_versions(self, connection: sqlite3.Connection, analysis_metadata: dict[str, Any]) -> int | None:
+        version_specs = [
+            ('formula_bundle', analysis_metadata.get('formula_bundle_version')),
+            ('model_bundle', analysis_metadata.get('model_bundle_version')),
+            ('prompt_bundle', analysis_metadata.get('prompt_bundle_version')),
+        ]
+        primary_version_id: int | None = None
+        for version_type, version_code in version_specs:
+            if not version_code:
+                continue
+            descriptor = {
+                'bundle': version_code,
+                'engine_kind': analysis_metadata.get('engine_kind'),
+                'scored_kpis': analysis_metadata.get('scored_kpis', []),
+            }
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO kpi_model_versions (
+                    version_type,
+                    version_code,
+                    descriptor_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (version_type, version_code, _to_json(descriptor), _utcnow_iso()),
+            )
+            row = connection.execute(
+                """
+                SELECT id FROM kpi_model_versions
+                WHERE version_type = ? AND version_code = ?
+                LIMIT 1
+                """,
+                (version_type, version_code),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f'Unable to resolve KPI model version for {version_type}.')
+            if version_type == 'formula_bundle':
+                primary_version_id = int(row['id'])
+        return primary_version_id
 
     def _insert_snapshot_findings(
         self,
@@ -723,6 +736,13 @@ class SqliteStore:
             VALUES (?, ?, ?, ?, ?)
             """,
             (snapshot_id, 'summary', 'summary', analysis.summary, created_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (snapshot_id, 'analysis_metadata', 'analysis_metadata', _to_json(analysis.analysis_metadata), created_at),
         )
         for note in analysis.notes:
             connection.execute(
@@ -747,6 +767,22 @@ class SqliteStore:
                         created_at,
                     ),
                 )
+            if score.recommendation:
+                connection.execute(
+                    """
+                    INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (snapshot_id, 'kpi_recommendation', score.kpi_code, score.recommendation, created_at),
+                )
+            version_label = f"formula={score.formula_version}, model={score.model_version}, prompt={score.prompt_version}"
+            connection.execute(
+                """
+                INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (snapshot_id, 'kpi_version', score.kpi_code, version_label, created_at),
+            )
             for evidence in score.evidence:
                 connection.execute(
                     """

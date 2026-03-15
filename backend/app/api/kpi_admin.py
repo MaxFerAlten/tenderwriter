@@ -64,6 +64,7 @@ def _snapshot_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "generated_at": None,
         "kpis": [],
         "notes": [detail],
+        "analysis_metadata": {},
     }
 
 
@@ -74,6 +75,7 @@ def _diagnostics_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "generated_at": None,
         "summary": "KPI service temporarily unavailable.",
         "findings": [detail],
+        "analysis_metadata": {},
     }
 
 

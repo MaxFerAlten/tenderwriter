@@ -713,14 +713,30 @@ export interface TenderPermissionOverview {
     permissions: TenderPermissionEntry[];
 }
 
+export interface KpiAnalysisMetadata {
+    formula_bundle_version: string | null;
+    model_bundle_version: string | null;
+    prompt_bundle_version: string | null;
+    engine_kind: string | null;
+    scored_kpis: string[];
+    event_count: number | null;
+    requirements_tracked: number | null;
+    sections_tracked: number | null;
+}
+
 export interface KpiScore {
     kpi_code: string;
     value: number | null;
     label: string | null;
     health: string;
+    severity: string;
     provenance: string;
     confidence: number | null;
     evidence: string[];
+    recommendation: string | null;
+    formula_version: string | null;
+    model_version: string | null;
+    prompt_version: string | null;
 }
 
 export interface KpiTenderSnapshot {
@@ -731,6 +747,7 @@ export interface KpiTenderSnapshot {
     generated_at: string | null;
     kpis: KpiScore[];
     notes: string[];
+    analysis_metadata: KpiAnalysisMetadata;
 }
 
 export interface KpiDiagnostics {
@@ -739,6 +756,7 @@ export interface KpiDiagnostics {
     generated_at: string | null;
     summary: string;
     findings: string[];
+    analysis_metadata: KpiAnalysisMetadata;
 }
 
 export interface KpiTransitionItem {

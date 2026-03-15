@@ -9,6 +9,7 @@ HealthStatus = Literal["healthy"]
 StubStatus = Literal["accepted", "not_ready"]
 HealthClass = Literal["green", "amber", "red", "unknown"]
 DataProvenance = Literal["measured", "inferred", "reconstructed", "unknown"]
+ScoreSeverity = Literal["none", "low", "medium", "high", "critical", "unknown"]
 AnalysisJobKind = Literal[
     "snapshot_refresh",
     "diagnostics_refresh",
@@ -131,6 +132,19 @@ class AnalysisJobStatusResponse(BaseModel):
     error_message: str | None = None
 
 
+class AnalysisMetadata(BaseModel):
+    """Versioning and runtime metadata attached to analytical snapshots."""
+
+    formula_bundle_version: str | None = None
+    model_bundle_version: str | None = None
+    prompt_bundle_version: str | None = None
+    engine_kind: str | None = None
+    scored_kpis: list[str] = Field(default_factory=list)
+    event_count: int | None = None
+    requirements_tracked: int | None = None
+    sections_tracked: int | None = None
+
+
 class KpiScore(BaseModel):
     """Structured KPI score payload."""
 
@@ -138,9 +152,14 @@ class KpiScore(BaseModel):
     value: float | None = None
     label: str | None = None
     health: HealthClass = "unknown"
+    severity: ScoreSeverity = "unknown"
     provenance: DataProvenance = "unknown"
     confidence: float | None = None
     evidence: list[str] = Field(default_factory=list)
+    recommendation: str | None = None
+    formula_version: str | None = None
+    model_version: str | None = None
+    prompt_version: str | None = None
 
 
 class TenderSnapshotResponse(BaseModel):
@@ -153,6 +172,7 @@ class TenderSnapshotResponse(BaseModel):
     generated_at: datetime | None = None
     kpis: list[KpiScore] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    analysis_metadata: AnalysisMetadata = Field(default_factory=AnalysisMetadata)
 
 
 class DiagnosticsResponse(BaseModel):
@@ -163,6 +183,7 @@ class DiagnosticsResponse(BaseModel):
     generated_at: datetime | None = None
     summary: str = "Diagnostics are not implemented in Sprint 1."
     findings: list[str] = Field(default_factory=list)
+    analysis_metadata: AnalysisMetadata = Field(default_factory=AnalysisMetadata)
 
 
 class TransitionItem(BaseModel):
