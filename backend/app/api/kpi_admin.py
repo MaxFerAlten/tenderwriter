@@ -7,9 +7,12 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import UserResponse, get_current_user
-from app.services.kpi_reason_engine import KpiClientResult, KpiReasonEngineClient
+from app.db.database import get_db
+from app.models import KpiEventDeliveryStatus
+from app.services.kpi_reason_engine import KpiClientResult, KpiReasonEngineClient, publish_tender_sync
 
 logger = structlog.get_logger(__name__)
 
@@ -163,6 +166,43 @@ def _query_or_fallback(result: KpiClientResult, *, action: str, fallback: dict[s
     return fallback
 
 
+def _sync_result_metadata(result: KpiClientResult) -> dict[str, Any]:
+    return {
+        "delivered": result.delivered,
+        "upstream_status_code": result.status_code,
+        "error_message": result.error_message,
+    }
+
+
+async def _sync_tender_before_analysis_job(
+    *,
+    tender_id: int,
+    current_user: UserResponse,
+    db: AsyncSession,
+    client: KpiReasonEngineClient,
+) -> KpiClientResult:
+    sync_event = await publish_tender_sync(
+        db,
+        tender_id=tender_id,
+        actor_id=current_user.id,
+        source="tw-backend",
+        client=client,
+    )
+    if sync_event is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tender {tender_id} not found.",
+        )
+
+    delivery_status = getattr(sync_event.delivery_status, "value", sync_event.delivery_status)
+    return KpiClientResult(
+        delivered=delivery_status == KpiEventDeliveryStatus.DELIVERED.value,
+        status_code=sync_event.response_status_code,
+        response_json=dict(sync_event.response_json or {}),
+        error_message=sync_event.error_message,
+    )
+
+
 @router.get("/portfolio/overview", response_model=dict[str, Any])
 async def get_kpi_portfolio_overview(
     current_user: UserResponse = Depends(get_current_user),
@@ -261,48 +301,82 @@ async def get_kpi_tender_forecast(
 async def recompute_kpi_tender(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     client = KpiReasonEngineClient()
-    result = await client.request_analysis_job(
-            str(tender_id),
-            {
-                "job_type": "full_recompute",
-                "requested_by": str(current_user.id),
-                "priority": "high",
-                "reason": "Manual admin recompute",
-                "metadata": {
-                    "source": "admin-ui",
-                    "requested_by_name": current_user.name,
-                },
-            },
+    sync_result = await _sync_tender_before_analysis_job(
+        tender_id=tender_id,
+        current_user=current_user,
+        db=db,
+        client=client,
+    )
+    _audit_admin_event(action="tender_resync_before_recompute", current_user=current_user, tender_id=tender_id, result=sync_result)
+    if not sync_result.delivered:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_error_detail(sync_result, "tender resync before recompute"),
         )
+
+    result = await client.request_analysis_job(
+        str(tender_id),
+        {
+            "job_type": "full_recompute",
+            "requested_by": str(current_user.id),
+            "priority": "high",
+            "reason": "Manual admin recompute",
+            "metadata": {
+                "source": "admin-ui",
+                "requested_by_name": current_user.name,
+                "resync_before_job": True,
+            },
+        },
+    )
     _audit_admin_event(action="tender_recompute_request", current_user=current_user, tender_id=tender_id, result=result)
-    return _unwrap_action_result(result, action="tender recompute request")
+    payload = _unwrap_action_result(result, action="tender recompute request")
+    payload.setdefault("tender_sync", _sync_result_metadata(sync_result))
+    return payload
 
 
 @router.post("/tenders/{tender_id}/history/backfill", response_model=dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
 async def backfill_kpi_tender_history(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     client = KpiReasonEngineClient()
-    result = await client.request_analysis_job(
-            str(tender_id),
-            {
-                "job_type": "history_backfill",
-                "requested_by": str(current_user.id),
-                "priority": "high",
-                "reason": "Manual admin history backfill",
-                "metadata": {
-                    "source": "admin-ui",
-                    "requested_by_name": current_user.name,
-                },
-            },
+    sync_result = await _sync_tender_before_analysis_job(
+        tender_id=tender_id,
+        current_user=current_user,
+        db=db,
+        client=client,
+    )
+    _audit_admin_event(action="tender_resync_before_history_backfill", current_user=current_user, tender_id=tender_id, result=sync_result)
+    if not sync_result.delivered:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_error_detail(sync_result, "tender resync before history backfill"),
         )
+
+    result = await client.request_analysis_job(
+        str(tender_id),
+        {
+            "job_type": "history_backfill",
+            "requested_by": str(current_user.id),
+            "priority": "high",
+            "reason": "Manual admin history backfill",
+            "metadata": {
+                "source": "admin-ui",
+                "requested_by_name": current_user.name,
+                "resync_before_job": True,
+            },
+        },
+    )
     _audit_admin_event(action="tender_history_backfill_request", current_user=current_user, tender_id=tender_id, result=result)
-    return _unwrap_action_result(result, action="tender history backfill request")
+    payload = _unwrap_action_result(result, action="tender history backfill request")
+    payload.setdefault("tender_sync", _sync_result_metadata(sync_result))
+    return payload
 
 
 @router.get("/tenders/{tender_id}/analysis-jobs/latest", response_model=dict[str, Any])

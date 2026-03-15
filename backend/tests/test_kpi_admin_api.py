@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -22,6 +22,7 @@ for key, value in _TEST_ENV.items():
 
 from app.api.auth import UserResponse, get_current_user
 from app.api.kpi_admin import router
+from app.db.database import get_db
 from app.services.kpi_reason_engine import KpiClientResult
 
 
@@ -29,11 +30,13 @@ class _MockKpiClient:
     def __init__(self, *, snapshot_result: KpiClientResult | None = None, recompute_result: KpiClientResult | None = None) -> None:
         self.snapshot_result = snapshot_result or KpiClientResult(True, 200, {"external_tender_id": "12", "status": "not_ready"})
         self.recompute_result = recompute_result or KpiClientResult(True, 202, {"external_tender_id": "12", "job_id": 81, "job_status": "queued"})
+        self.analysis_job_calls: list[tuple[str, dict[str, object]]] = []
 
     async def get_tender_snapshot(self, external_tender_id: str) -> KpiClientResult:
         return self.snapshot_result
 
     async def request_analysis_job(self, external_tender_id: str, payload: dict[str, object]) -> KpiClientResult:
+        self.analysis_job_calls.append((external_tender_id, payload))
         return self.recompute_result
 
     async def get_latest_analysis_job(self, external_tender_id: str) -> KpiClientResult:
@@ -61,6 +64,7 @@ class KpiAdminApiTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(router, prefix="/admin/kpi")
         app.dependency_overrides[get_current_user] = lambda: UserResponse(id=1, email="admin@test.local", name="Admin", role="admin")
+        app.dependency_overrides[get_db] = lambda: object()
         cls.client = TestClient(app)
 
     def test_snapshot_query_falls_back_when_kpi_service_is_unavailable(self) -> None:
@@ -83,7 +87,7 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertTrue(payload["degraded"])
         self.assertEqual(payload["degraded_reason"], "KPI service timeout")
 
-    def test_recompute_endpoint_forwards_admin_request(self) -> None:
+    def test_recompute_endpoint_resyncs_tender_before_requesting_analysis_job(self) -> None:
         mock_client = _MockKpiClient(
             recompute_result=KpiClientResult(
                 delivered=True,
@@ -96,15 +100,30 @@ class KpiAdminApiTests(unittest.TestCase):
                 },
             )
         )
-        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+        sync_mock = AsyncMock(return_value=KpiClientResult(True, 202, {"external_tender_id": "12"}))
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client), patch("app.api.kpi_admin._sync_tender_before_analysis_job", sync_mock):
             response = self.client.post("/admin/kpi/tenders/12/recompute")
 
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(payload["job_id"], 81)
         self.assertEqual(payload["job_status"], "queued")
+        self.assertTrue(payload["tender_sync"]["delivered"])
+        self.assertEqual(len(mock_client.analysis_job_calls), 1)
+        sync_mock.assert_awaited_once()
 
-    def test_backfill_endpoint_forwards_admin_request(self) -> None:
+    def test_recompute_returns_502_when_tender_resync_fails(self) -> None:
+        mock_client = _MockKpiClient()
+        sync_mock = AsyncMock(return_value=KpiClientResult(False, None, {}, "KPI service timeout"))
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client), patch("app.api.kpi_admin._sync_tender_before_analysis_job", sync_mock):
+            response = self.client.post("/admin/kpi/tenders/12/recompute")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"], "KPI service timeout")
+        self.assertEqual(len(mock_client.analysis_job_calls), 0)
+        sync_mock.assert_awaited_once()
+
+    def test_backfill_endpoint_resyncs_tender_before_requesting_analysis_job(self) -> None:
         mock_client = _MockKpiClient(
             recompute_result=KpiClientResult(
                 delivered=True,
@@ -117,7 +136,8 @@ class KpiAdminApiTests(unittest.TestCase):
                 },
             )
         )
-        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+        sync_mock = AsyncMock(return_value=KpiClientResult(True, 202, {"external_tender_id": "12"}))
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client), patch("app.api.kpi_admin._sync_tender_before_analysis_job", sync_mock):
             response = self.client.post("/admin/kpi/tenders/12/history/backfill")
 
         self.assertEqual(response.status_code, 202)
@@ -125,6 +145,9 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["job_id"], 91)
         self.assertEqual(payload["job_type"], "history_backfill")
         self.assertEqual(payload["job_status"], "queued")
+        self.assertTrue(payload["tender_sync"]["delivered"])
+        self.assertEqual(len(mock_client.analysis_job_calls), 1)
+        sync_mock.assert_awaited_once()
 
     def test_forecast_query_preserves_rich_payload(self) -> None:
         mock_client = _MockKpiClient()
