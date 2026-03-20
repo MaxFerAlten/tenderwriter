@@ -238,6 +238,7 @@ export const chatApi = {
 
 
 const CHAT_PREFETCH_TTL_MS = 45_000;
+const CHAT_PREFETCH_MAX_ENTRIES = 24;
 
 type TenderChatContextCacheEntry = {
     value: TenderChatContextSnapshot | null;
@@ -253,6 +254,38 @@ type TenderChatRetrospectiveCacheEntry = {
 
 const tenderChatContextCache = new Map<number, TenderChatContextCacheEntry>();
 const tenderChatRetrospectiveCache = new Map<number, TenderChatRetrospectiveCacheEntry>();
+
+function pruneTenderChatContextCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of tenderChatContextCache.entries()) {
+        if (!entry.promise && now - entry.cached_at > CHAT_PREFETCH_TTL_MS) {
+            tenderChatContextCache.delete(key);
+        }
+    }
+    while (tenderChatContextCache.size > CHAT_PREFETCH_MAX_ENTRIES) {
+        const oldestKey = tenderChatContextCache.keys().next().value;
+        if (oldestKey === undefined) {
+            break;
+        }
+        tenderChatContextCache.delete(oldestKey);
+    }
+}
+
+function pruneTenderChatRetrospectiveCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of tenderChatRetrospectiveCache.entries()) {
+        if (!entry.promise && now - entry.cached_at > CHAT_PREFETCH_TTL_MS) {
+            tenderChatRetrospectiveCache.delete(key);
+        }
+    }
+    while (tenderChatRetrospectiveCache.size > CHAT_PREFETCH_MAX_ENTRIES) {
+        const oldestKey = tenderChatRetrospectiveCache.keys().next().value;
+        if (oldestKey === undefined) {
+            break;
+        }
+        tenderChatRetrospectiveCache.delete(oldestKey);
+    }
+}
 
 function isTenderChatContextFresh(entry: TenderChatContextCacheEntry | undefined): boolean {
     return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
@@ -288,12 +321,12 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
 
     const preferCached = options.preferCached ?? true;
     const existing = tenderChatContextCache.get(tenderId);
+    if (existing?.promise) {
+        return existing.promise;
+    }
     if (preferCached && isTenderChatContextFresh(existing)) {
         if (existing?.value) {
             return existing.value;
-        }
-        if (existing?.promise) {
-            return existing.promise;
         }
     }
 
@@ -304,6 +337,7 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
                 promise: null,
                 cached_at: Date.now(),
             });
+            pruneTenderChatContextCache();
             return value;
         })
         .catch((error) => {
@@ -319,6 +353,7 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
         promise,
         cached_at: Date.now(),
     });
+    pruneTenderChatContextCache();
 
     return promise;
 }
@@ -330,12 +365,12 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
 
     const preferCached = options.preferCached ?? true;
     const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (existing?.promise) {
+        return existing.promise;
+    }
     if (preferCached && isTenderChatRetrospectiveFresh(existing)) {
         if (existing?.value) {
             return existing.value;
-        }
-        if (existing?.promise) {
-            return existing.promise;
         }
     }
 
@@ -346,6 +381,7 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
                 promise: null,
                 cached_at: Date.now(),
             });
+            pruneTenderChatRetrospectiveCache();
             return value;
         })
         .catch((error) => {
@@ -361,6 +397,7 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
         promise,
         cached_at: Date.now(),
     });
+    pruneTenderChatRetrospectiveCache();
 
     return promise;
 }
@@ -457,13 +494,39 @@ export const ragApi = {
 // ── System ──
 
 export const systemApi = {
-    getContainers: () => request<any[]>('/system/containers'),
+    getCapabilities: () => request<SystemCapabilitiesData>('/system/capabilities'),
+    getContainers: () => request<SystemContainer[]>('/system/containers'),
     getLogs: (containerName: string, tail?: number) => request<{ logs: string }>(`/system/logs/${containerName}${tail ? `?tail=${tail}` : ''}`),
-    getStats: (containerName: string) => request<any>(`/system/stats/${containerName}`),
+    getStats: (containerName: string) => request<SystemContainerStats>(`/system/stats/${containerName}`),
     updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
     getAppSettings: () => request<AppSettingsData>('/system/app-settings'),
     updateAppSettings: (data: Partial<AppSettingsData>) => request<AppSettingsData>('/system/app-settings', { method: 'PUT', body: data }),
 };
+
+export interface SystemCapabilityStatus {
+    available: boolean;
+    reason: string | null;
+}
+
+export interface SystemCapabilitiesData {
+    ops_agent: SystemCapabilityStatus;
+    ops_monitoring: SystemCapabilityStatus;
+    nginx_hot_reload: SystemCapabilityStatus;
+}
+
+export interface SystemContainer {
+    id: string;
+    name: string;
+    status: string;
+    health: string;
+}
+
+export interface SystemContainerStats {
+    cpu_percent: number;
+    memory_usage_mb: number;
+    memory_limit_mb: number;
+    memory_percent: number;
+}
 
 export interface AppSettingsData {
     rag_model?: string;

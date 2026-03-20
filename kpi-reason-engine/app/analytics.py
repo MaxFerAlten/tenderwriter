@@ -830,7 +830,7 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
                 unique_contribution_ids.add(contribution_id)
             continue
 
-        if event_type == "contribution_review_completed":
+        if event_type in {"contribution_review_completed", "review_approved", "review_changes_requested"}:
             reviews_completed += 1
             contribution_id = str(payload.get("external_contribution_id") or "")
             if contribution_id:
@@ -1194,6 +1194,13 @@ def _score_q(scores: list[KpiScore]) -> KpiScore:
 
     value = round(weighted_total / total_weight, 1)
     health = _health_from_score(value, green=GREEN_Q_THRESHOLD, amber=AMBER_Q_THRESHOLD)
+    if not measured_scores:
+        return _unknown_score(
+            kpi_code="Q",
+            label="Qualitative index becomes available when A1..A4 are scoreable.",
+            evidence=["No qualitative KPI is currently scoreable."],
+            recommendation="Score A1..A4 first so the overall qualitative index can be computed.",
+        )
     weakest = min(measured_scores, key=lambda score: score.value if score.value is not None else 0.0)
     recommendation = weakest.recommendation or "Improve the weakest qualitative KPI before progressing the tender."
     return _build_score(
@@ -1228,6 +1235,13 @@ def _score_e(scores: list[KpiScore]) -> KpiScore:
         )
 
     value = round(weighted_total / total_weight, 1)
+    if not measured_scores:
+        return _unknown_score(
+            kpi_code="E",
+            label="Operational efficiency index becomes available when at least one B KPI is observed.",
+            evidence=["No operational KPI is currently scoreable."],
+            recommendation="Track B1..B4 telemetry before using operational efficiency as a summary index.",
+        )
     weakest = min(measured_scores, key=lambda score: score.value if score.value is not None else 0.0)
     return _build_score(
         kpi_code="E",

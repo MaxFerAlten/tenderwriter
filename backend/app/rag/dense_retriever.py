@@ -52,9 +52,9 @@ class DenseRetriever:
 
         # Create default collections if they don't exist
         for collection_name in ["documents", "content_blocks"]:
-            await self._ensure_collection(collection_name)
+            self._ensure_collection(collection_name)
 
-    async def _ensure_collection(self, name: str):
+    def _ensure_collection(self, name: str):
         """Create a Qdrant collection if it doesn't exist."""
         full_name = f"{self.collection_prefix}{name}"
         collections = self.client.get_collections().collections

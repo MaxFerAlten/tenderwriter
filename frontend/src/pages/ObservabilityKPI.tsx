@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
     Activity,
@@ -278,8 +278,12 @@ export default function ObservabilityKPI() {
     const [isPortfolioResyncing, setIsPortfolioResyncing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [actionNotice, setActionNotice] = useState<string | null>(null);
+    const portfolioRequestIdRef = useRef(0);
+    const detailRequestIdRef = useRef(0);
+    const pollInFlightRef = useRef(false);
 
     const loadTenderDetail = async (tenderId: number) => {
+        const requestId = ++detailRequestIdRef.current;
         setIsDetailLoading(true);
         try {
             const [snapshotResponse, diagnosticsResponse, transitionsResponse, forecastResponse, tenderResponse, workspaceResponse, analysisJobResponse] = await Promise.all([
@@ -291,6 +295,9 @@ export default function ObservabilityKPI() {
                 observabilityApi.getWorkspace(tenderId),
                 kpiAdminApi.getLatestAnalysisJob(tenderId),
             ]);
+            if (requestId !== detailRequestIdRef.current) {
+                return;
+            }
             setSnapshot(snapshotResponse);
             setDiagnostics(diagnosticsResponse);
             setTransitions(transitionsResponse);
@@ -300,13 +307,19 @@ export default function ObservabilityKPI() {
             setAnalysisJob(analysisJobResponse);
             setIsRecomputing(isAnalysisJobActive(analysisJobResponse));
         } catch (detailError) {
+            if (requestId !== detailRequestIdRef.current) {
+                return;
+            }
             setError(detailError instanceof Error ? detailError.message : 'Failed to load KPI tender detail.');
         } finally {
-            setIsDetailLoading(false);
+            if (requestId === detailRequestIdRef.current) {
+                setIsDetailLoading(false);
+            }
         }
     };
 
     const loadPortfolio = async (refresh = false) => {
+        const requestId = ++portfolioRequestIdRef.current;
         if (refresh) {
             setIsRefreshing(true);
         } else {
@@ -321,6 +334,9 @@ export default function ObservabilityKPI() {
                 kpiAdminApi.getPortfolioIntelligence(),
                 tenderApi.list({ limit: '100' }),
             ]);
+            if (requestId !== portfolioRequestIdRef.current) {
+                return;
+            }
             setOverview(overviewResponse);
             setBottlenecks(bottlenecksResponse.items);
             setPortfolioIntelligence(intelligenceResponse);
@@ -334,10 +350,15 @@ export default function ObservabilityKPI() {
                 await loadTenderDetail(selectedTenderId);
             }
         } catch (loadError) {
+            if (requestId !== portfolioRequestIdRef.current) {
+                return;
+            }
             setError(loadError instanceof Error ? loadError.message : 'Failed to load KPI observability.');
         } finally {
-            setIsLoading(false);
-            setIsRefreshing(false);
+            if (requestId === portfolioRequestIdRef.current) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
     };
 
@@ -361,6 +382,10 @@ export default function ObservabilityKPI() {
         let cancelled = false;
         const intervalId = window.setInterval(() => {
             void (async () => {
+                if (pollInFlightRef.current) {
+                    return;
+                }
+                pollInFlightRef.current = true;
                 try {
                     const latestJob = await kpiAdminApi.getLatestAnalysisJob(selectedTenderId);
                     if (cancelled) {
@@ -382,12 +407,17 @@ export default function ObservabilityKPI() {
                         setError(jobError instanceof Error ? jobError.message : 'Failed to refresh KPI recompute status.');
                         window.clearInterval(intervalId);
                     }
+                } finally {
+                    if (!cancelled) {
+                        pollInFlightRef.current = false;
+                    }
                 }
             })();
         }, 1200);
 
         return () => {
             cancelled = true;
+            pollInFlightRef.current = false;
             window.clearInterval(intervalId);
         };
     }, [analysisJob?.job_status, selectedTenderId]);
@@ -568,16 +598,16 @@ export default function ObservabilityKPI() {
                 </motion.div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 360px) minmax(0, 1fr)', gap: '1.5rem', alignItems: 'start' }}>
-                <div style={{ display: 'grid', gap: '1rem' }}>
-                    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="observability-layout">
+                <div className="observability-sidebar">
+                    <div className="card observability-focus-card">
                         <div style={{ padding: '1rem 1rem 0.5rem 1rem' }}>
                             <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Tender focus list</h3>
                             <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                                 Admin drilldown on the tenders already mirrored by the KPI engine.
                             </p>
                         </div>
-                        <div style={{ maxHeight: '620px', overflowY: 'auto', padding: '0.75rem' }}>
+                        <div className="observability-focus-list">
                             {tenders.length === 0 ? (
                                 <div style={{ padding: '1rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No tenders available yet.</div>
                             ) : (
@@ -596,7 +626,7 @@ export default function ObservabilityKPI() {
                                                 background: isSelected ? itemPalette.soft : 'rgba(255,255,255,0.02)',
                                                 borderRadius: '14px',
                                                 padding: '0.9rem',
-                                                marginBottom: '0.75rem',
+                                                marginBottom: 0,
                                                 cursor: 'pointer',
                                                 color: 'inherit',
                                             }}
@@ -716,7 +746,7 @@ export default function ObservabilityKPI() {
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gap: '1rem' }}>
+                <div className="observability-main">
                     <div className="card" style={{
                         background: `linear-gradient(135deg, ${palette.soft} 0%, rgba(15, 23, 42, 0.85) 100%)`,
                         border: `1px solid ${palette.accent}33`,
@@ -895,7 +925,7 @@ export default function ObservabilityKPI() {
                                 </div>
                             </div>
 
-                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)', gap: '1rem' }}>
+                            <div className="observability-evidence-grid">
                                 <div className="card">
                                     <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <FileSearch size={18} color="#38bdf8" /> KPI evidence

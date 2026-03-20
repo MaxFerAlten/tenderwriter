@@ -8,17 +8,20 @@ for OnlyOffice Document Server integration.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
+import secrets
 import time
 import jwt
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import httpx
 import structlog
 from docx import Document as DocxDocument
 from docx.shared import Pt
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from minio import Minio
 from minio.error import S3Error
 from pydantic import BaseModel
@@ -119,13 +122,14 @@ class MinioDocumentStore:
         try:
             objects = self.client.list_objects(self.bucket_name)
             deleted_count = 0
-            cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
             
             for obj in objects:
-                if obj.last_modified and obj.last_modified.replace(tzinfo=None) < cutoff_time:
+                last_modified = obj.last_modified
+                if last_modified and last_modified.astimezone(timezone.utc) < cutoff_time:
                     self.client.remove_object(self.bucket_name, obj.object_name)
                     deleted_count += 1
-                    logger.info("Old document deleted", doc_key=obj.object_name, last_modified=obj.last_modified)
+                    logger.info("Old document deleted", doc_key=obj.object_name, last_modified=last_modified)
             
             return deleted_count
         except S3Error as e:
@@ -219,22 +223,97 @@ def _generate_document_key(proposal_id: int, section_id: int, updated_at: dateti
     """
     ts = int(updated_at.timestamp()) if updated_at else 0
     raw = f"p{proposal_id}_s{section_id}_{ts}"
-    return hashlib.md5(raw.encode()).hexdigest()[:20]
+    return hmac.new(
+        settings.onlyoffice_jwt_secret.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
 
 
 def _generate_library_document_key(block_id: int, updated_at: datetime | None) -> str:
     """Generate a dynamic document key for a library block."""
     ts = int(updated_at.timestamp()) if updated_at else 0
     raw = f"lib_{block_id}_{ts}"
-    return hashlib.md5(raw.encode()).hexdigest()[:20]
+    return hmac.new(
+        settings.onlyoffice_jwt_secret.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
 
 
 def _generate_create_document_key() -> str:
     """Generate a unique document key for a new document creation.
     We keep this one unique as it's for a temporary 'new' doc.
     """
-    raw = f"create_{int(time.time())}"
-    return hashlib.md5(raw.encode()).hexdigest()[:20]
+    raw = f"create_{time.time_ns()}_{secrets.token_hex(8)}"
+    return hmac.new(
+        settings.onlyoffice_jwt_secret.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+
+
+def _build_file_signature(doc_key: str, expires_at: int) -> str:
+    payload = f"{doc_key}:{expires_at}"
+    return hmac.new(
+        settings.onlyoffice_jwt_secret.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _build_download_token(*, doc_key: str, user_id: int | str) -> str:
+    return jwt.encode(
+        {
+            "sub": str(user_id),
+            "doc_key": doc_key,
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=settings.onlyoffice_file_token_ttl_seconds),
+        },
+        settings.onlyoffice_jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def _verify_download_token(doc_key: str, metadata: dict, download_token: str) -> bool:
+    try:
+        payload = jwt.decode(download_token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return False
+    if str(payload.get("doc_key") or "") != doc_key:
+        return False
+    owner_user_id = metadata.get("owner_user_id")
+    return not owner_user_id or str(owner_user_id) == str(payload.get("sub") or "")
+
+
+def _validate_callback_token(payload_token: str | None, doc_key: str) -> bool:
+    if not payload_token:
+        return False
+    try:
+        decoded = jwt.decode(payload_token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return False
+    direct_key = str(decoded.get("key") or "")
+    document_key = str((decoded.get("document") or {}).get("key") or "")
+    return doc_key in {direct_key, document_key}
+
+
+def _build_signed_file_url(doc_key: str, *, download_token: str) -> str:
+    expires_at = int(time.time()) + settings.onlyoffice_file_token_ttl_seconds
+    query = urlencode(
+        {
+            "expires": expires_at,
+            "signature": _build_file_signature(doc_key, expires_at),
+            "download_token": download_token,
+        }
+    )
+    return f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}?{query}"
+
+
+def _verify_file_signature(doc_key: str, expires_at: int, signature: str) -> bool:
+    if expires_at < int(time.time()):
+        return False
+    expected = _build_file_signature(doc_key, expires_at)
+    return hmac.compare_digest(expected, signature)
 
 
 def _section_content_to_text(content: dict | None) -> str:
@@ -388,11 +467,13 @@ async def get_document_config(
         "type": "section",
         "proposal_id": proposal_id,
         "section_id": section_id,
-        "object_name": object_name
+        "object_name": object_name,
+        "owner_user_id": current_user.id,
     })
     
     # Build URLs
-    file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
+    download_token = _build_download_token(doc_key=doc_key, user_id=current_user.id)
+    file_url = _build_signed_file_url(doc_key, download_token=download_token)
     callback_url = f"{settings.backend_public_url}/api/onlyoffice/callback"
     
     logger.info(
@@ -438,13 +519,15 @@ async def get_create_document_config(
     await _document_store.save(doc_key, docx_bytes)
     
     # Build URLs
-    file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
+    download_token = _build_download_token(doc_key=doc_key, user_id=current_user.id)
+    file_url = _build_signed_file_url(doc_key, download_token=download_token)
     callback_url = f"{settings.backend_public_url}/api/onlyoffice/callback"
     
     # Store metadata in Redis
     await save_session_metadata(doc_key, {
         "type": "create",
-        "object_name": doc_key  # For 'create', the doc_key itself is unique enough
+        "object_name": doc_key,  # For 'create', the doc_key itself is unique enough
+        "owner_user_id": current_user.id,
     })
     
     config = _build_config_dict(
@@ -499,11 +582,13 @@ async def get_library_document_config(
     await save_session_metadata(doc_key, {
         "type": "library_block",
         "block_id": block_id,
-        "object_name": object_name
+        "object_name": object_name,
+        "owner_user_id": current_user.id,
     })
     
     # Build URLs
-    file_url = f"{settings.backend_public_url}/api/onlyoffice/files/{doc_key}"
+    download_token = _build_download_token(doc_key=doc_key, user_id=current_user.id)
+    file_url = _build_signed_file_url(doc_key, download_token=download_token)
     callback_url = f"{settings.backend_public_url}/api/onlyoffice/callback"
     
     logger.info(
@@ -532,14 +617,19 @@ async def get_library_document_config(
 
 
 @router.get("/files/{doc_key}")
-async def serve_document(doc_key: str):
+async def serve_document(doc_key: str, expires: int, signature: str, download_token: str):
     """Serve a .docx file to OnlyOffice Document Server."""
+    if not _verify_file_signature(doc_key, expires, signature):
+        raise HTTPException(status_code=403, detail="Invalid or expired file token")
+
     # Find metadata to get the actual MinIO object name
     metadata = await get_session_metadata(doc_key)
-    object_name = doc_key  # Fallback
-    
-    if metadata and "object_name" in metadata:
-        object_name = metadata["object_name"]
+    if not metadata or "object_name" not in metadata:
+        logger.warning("Document metadata missing for OnlyOffice download", key=doc_key)
+        raise HTTPException(status_code=404, detail="Document session not found")
+    if not _verify_download_token(doc_key, metadata, download_token):
+        raise HTTPException(status_code=403, detail="Invalid download token")
+    object_name = metadata["object_name"]
     
     docx_bytes = await _document_store.get(object_name)
     if not docx_bytes:
@@ -577,10 +667,13 @@ async def onlyoffice_callback(
     Handles both POST (data) and GET (ping).
     """
     if request.method == "GET":
-        return {"error": 0}
+        return JSONResponse(status_code=405, content={"error": 1})
     
     if not payload:
-         return {"error": 0}
+        return JSONResponse(status_code=400, content={"error": 1})
+    if not _validate_callback_token(payload.token, payload.key):
+        logger.warning("Rejected OnlyOffice callback with invalid token", key=payload.key)
+        return JSONResponse(status_code=401, content={"error": 1})
 
     logger.info("OnlyOffice callback received", key=payload.key, status=payload.status)
     
@@ -589,7 +682,7 @@ async def onlyoffice_callback(
         metadata = await get_session_metadata(payload.key)
         if not metadata:
             logger.warning("Unknown document key in callback (Redis lookup failed)", key=payload.key)
-            return {"error": 0}
+            return JSONResponse(status_code=404, content={"error": 1})
             
         is_library_block = metadata.get("type") == "library_block"
         is_section = metadata.get("type") == "section"
@@ -737,6 +830,7 @@ async def onlyoffice_callback(
                 error=str(e),
                 key=payload.key,
             )
+            return JSONResponse(status_code=500, content={"error": 1})
     
     # OnlyOffice expects {"error": 0} on success
     return {"error": 0}

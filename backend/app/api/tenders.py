@@ -8,7 +8,7 @@ All endpoints are protected with JWT auth and granular RBAC.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
@@ -360,7 +360,7 @@ async def update_tender(
             event_type="tender_outcome_recorded",
             event_payload=build_tender_outcome_recorded_event_payload(
                 outcome=tender.status.value,
-                recorded_at=datetime.utcnow(),
+                recorded_at=datetime.now(timezone.utc),
             ),
         )
     else:
@@ -601,7 +601,7 @@ _ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "no_bid", "stopped"
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
-    return value or datetime.utcnow()
+    return value or datetime.now(timezone.utc)
 
 
 def _clone_tender_metadata(tender: Tender) -> dict:

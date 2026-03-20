@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { contentApi, type ContentBlock } from '../api/client';
 import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
+import { ONLYOFFICE_URL } from '../config/runtime';
 
 const CATEGORIES = [
     'All',
@@ -232,7 +233,7 @@ export default function ContentLibrary() {
                             <LazyOnlyOfficeEditor
                                 mode="create"
                                 title={formTitle || 'Nuovo Blocco'}
-                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                onlyofficeApiUrl={ONLYOFFICE_URL}
                                 onConfigLoaded={(cfg) => setCreateDocKey(cfg.config.document.key)}
                                 minHeight="600px"
                             />
@@ -336,7 +337,7 @@ export default function ContentLibrary() {
                             mode="library"
                             libraryBlockId={editingBlock.id}
                             title={editingBlock.title}
-                            onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                            onlyofficeApiUrl={ONLYOFFICE_URL}
                             minHeight="600px"
                         />
                     </div>
@@ -463,10 +464,11 @@ export default function ContentLibrary() {
                         </div>
                         <div className="modal-body" style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
                             <LazyOnlyOfficeEditor
-                                key="lib-create-new"
-                                mode="create"
-                                title="Nuovo Blocco"
-                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                key={`lib-edit-full-${editingBlock.id}`}
+                                mode="library"
+                                libraryBlockId={editingBlock.id}
+                                title={editingBlock.title}
+                                onlyofficeApiUrl={ONLYOFFICE_URL}
                                 minHeight="760px"
                             />
                         </div>

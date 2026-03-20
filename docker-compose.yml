@@ -235,6 +235,25 @@ services:
       - "8025:8025" # Web UI
       - "1025:1025" # SMTP
 
+  # --- Privileged Ops Agent ---
+  ops-agent:
+    build:
+      context: ./ops-agent
+      dockerfile: Dockerfile
+    container_name: tw-ops-agent
+    restart: unless-stopped
+    environment:
+      OPS_AGENT_TOKEN: ${OPS_AGENT_TOKEN}
+      OPS_ALLOWED_PREFIX: ${OPS_ALLOWED_PREFIX:-tw-}
+      OPS_FRONTEND_CONTAINER: ${OPS_FRONTEND_CONTAINER:-tw-frontend}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8070/health" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
   # --- Backend (FastAPI) ---
   backend:
     build:
@@ -284,11 +303,13 @@ services:
       SMTP_TLS: ${SMTP_TLS}
       KPI_REASON_ENGINE_BASE_URL: ${KPI_REASON_ENGINE_BASE_URL:-http://tw-kpi-reason-engine:8010}
       KPI_REASON_ENGINE_SERVICE_TOKEN: ${KPI_REASON_ENGINE_SERVICE_TOKEN:-changeme-kpi-service-token}
+      OPS_AGENT_BASE_URL: ${OPS_AGENT_BASE_URL:-http://tw-ops-agent:8070}
+      OPS_AGENT_TOKEN: ${OPS_AGENT_TOKEN}
+      OPS_AGENT_TIMEOUT: ${OPS_AGENT_TIMEOUT:-5}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
-      - /var/run/docker.sock:/var/run/docker.sock
 
   # --- OnlyOffice Document Server ---
   onlyoffice:

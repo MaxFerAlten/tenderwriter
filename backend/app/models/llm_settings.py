@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, Float, String, DateTime
 
@@ -12,4 +12,8 @@ class LLMSettings(Base):
     max_tokens = Column(Integer, nullable=True)
     temperature = Column(Float, nullable=True)
     stop_tokens = Column(String, nullable=True)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

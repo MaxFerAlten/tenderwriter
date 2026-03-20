@@ -79,6 +79,9 @@ class Settings(BaseSettings):
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
+    redis_socket_timeout_seconds: float = 5.0
+    redis_connect_timeout_seconds: float = 5.0
+    redis_health_check_interval_seconds: int = 30
 
     # --- SMTP (Email) --- REALI
     # smtp_host: str = ""
@@ -116,11 +119,17 @@ class Settings(BaseSettings):
     onlyoffice_jwt_secret: str = ""
     onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
     backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
+    onlyoffice_file_token_ttl_seconds: int = 3600
 
     # --- KPI Reason Engine ---
     kpi_reason_engine_base_url: str = "http://tw-kpi-reason-engine:8010"
     kpi_reason_engine_service_token: str = ""
     kpi_reason_engine_timeout: float = 10.0
+
+    # --- Ops Agent ---
+    ops_agent_base_url: str = ""
+    ops_agent_token: str = ""
+    ops_agent_timeout: float = 5.0
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

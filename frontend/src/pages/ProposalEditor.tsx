@@ -20,6 +20,7 @@ import {
     type RAGResponse,
 } from '../api/client';
 import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
+import { ONLYOFFICE_URL } from '../config/runtime';
 
 export default function ProposalEditor() {
     const location = useLocation();
@@ -58,7 +59,7 @@ export default function ProposalEditor() {
         if (!newSectionTitle || !proposal) return;
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8000/api/proposals/${proposal.id}/sections`, {
+            const res = await fetch(`/api/proposals/${proposal.id}/sections`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ title: newSectionTitle, content: {}, order: proposal.sections.length })
@@ -217,7 +218,7 @@ export default function ProposalEditor() {
             const section = proposal.sections[activeSection];
             
             // Update section content in database
-            await fetch(`http://localhost:8000/api/proposals/${proposal.id}/sections/${section.id}`, {
+            await fetch(`/api/proposals/${proposal.id}/sections/${section.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ title: section.title, content: aiResult.answer, order: section.order })
@@ -501,7 +502,7 @@ export default function ProposalEditor() {
                                     proposalId={proposal.id}
                                     sectionId={currentSection.id}
                                     title={currentSection.title}
-                                    onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                    onlyofficeApiUrl={ONLYOFFICE_URL}
                                     minHeight="520px"
                                 />
                             </div>
@@ -658,7 +659,7 @@ export default function ProposalEditor() {
                                 proposalId={proposal.id}
                                 sectionId={currentSection.id}
                                 title={currentSection.title}
-                                onlyofficeApiUrl={(import.meta as any).env?.VITE_ONLYOFFICE_URL || 'http://localhost:8443'}
+                                onlyofficeApiUrl={ONLYOFFICE_URL}
                                 minHeight="720px"
                             />
                         </div>

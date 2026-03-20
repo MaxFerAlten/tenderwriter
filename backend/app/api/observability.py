@@ -668,10 +668,6 @@ async def complete_review_cycle(
         actor_id=current_user.id,
         events=[
             (
-                "contribution_review_completed",
-                review_payload,
-            ),
-            (
                 "review_approved" if str(review.outcome).strip().casefold() == "approved" else "review_changes_requested",
                 review_payload,
             )
