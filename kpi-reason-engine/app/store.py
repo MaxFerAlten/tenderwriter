@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import defaultdict
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -536,6 +537,7 @@ class SqliteStore:
                 'cause': row['cause'],
                 'confidence': row['confidence'],
                 'source_event_type': row['source_event_type'],
+                'source_type': 'inferred' if str(row['source_event_type'] or '').startswith('inferred_') else 'observed' if row['source_event_type'] else 'unknown',
                 'related_entity_id': row['related_entity_id'],
             }
             for row in rows
@@ -565,9 +567,37 @@ class SqliteStore:
                     'health': row['health'] or 'unknown',
                     'summary': row['summary'],
                     'reconstructed': bool(metadata.get('reconstructed', False)),
+                    'source_type': 'reconstructed' if bool(metadata.get('reconstructed', False)) else 'observed',
                     'replay_until': metadata.get('replay_until'),
                     'source_job_type': metadata.get('source_job_type'),
                     'replay_source_event_type': metadata.get('replay_source_event_type'),
+                }
+            )
+        return items
+
+    def list_markov_history_points(self) -> list[dict[str, Any]]:
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                """
+                SELECT external_tender_id, id, generated_at, analytical_phase, analysis_metadata_json
+                FROM kpi_snapshots
+                WHERE analytical_phase IS NOT NULL
+                ORDER BY external_tender_id ASC, generated_at ASC, id ASC
+                """
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            source_type = 'reconstructed' if bool(metadata.get('reconstructed', False)) else 'observed'
+            items.append(
+                {
+                    'external_tender_id': row['external_tender_id'],
+                    'snapshot_id': int(row['id']),
+                    'generated_at': row['generated_at'],
+                    'analytical_phase': row['analytical_phase'],
+                    'reconstructed': bool(metadata.get('reconstructed', False)),
+                    'source_type': source_type,
                 }
             )
         return items
@@ -659,6 +689,79 @@ class SqliteStore:
             type_status_rows = connection.execute(
                 'SELECT job_type, status, COUNT(*) AS count FROM kpi_analysis_jobs GROUP BY job_type, status ORDER BY job_type, status'
             ).fetchall()
+            latest_job_row = connection.execute(
+                'SELECT MAX(updated_at) AS latest_updated_at FROM kpi_analysis_jobs'
+            ).fetchone()
+            snapshot_rows = connection.execute(
+                '''
+                SELECT generated_at, analysis_metadata_json, kpis_json
+                FROM kpi_snapshots
+                ORDER BY generated_at DESC, id DESC
+                '''
+            ).fetchall()
+            model_version_rows = connection.execute(
+                '''
+                SELECT version_type, version_code, descriptor_json, created_at
+                FROM kpi_model_versions
+                ORDER BY version_type ASC, created_at ASC, id ASC
+                '''
+            ).fetchall()
+            schema_row = connection.execute('SELECT version_num FROM alembic_version LIMIT 1').fetchone()
+
+        snapshot_output_schema_versions: dict[str, int] = defaultdict(int)
+        contract_versions: dict[str, int] = defaultdict(int)
+        semantic_bundle_versions: dict[str, int] = defaultdict(int)
+        shadow_bundle_versions: dict[str, int] = defaultdict(int)
+        source_job_types: dict[str, int] = defaultdict(int)
+        semantic_fallback_total = 0
+        semantic_official_total = 0
+        shadow_mode_total = 0
+        reconstructed_total = 0
+        latest_snapshot_generated_at = snapshot_rows[0]['generated_at'] if snapshot_rows else None
+
+        for row in snapshot_rows:
+            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            if metadata.get('reconstructed'):
+                reconstructed_total += 1
+            if metadata.get('shadow_mode_enabled'):
+                shadow_mode_total += 1
+            if metadata.get('semantic_official_enabled'):
+                semantic_official_total += 1
+
+            snapshot_output_schema_version = metadata.get('snapshot_output_schema_version')
+            if snapshot_output_schema_version:
+                snapshot_output_schema_versions[str(snapshot_output_schema_version)] += 1
+            contract_version = metadata.get('contract_version')
+            if contract_version:
+                contract_versions[str(contract_version)] += 1
+            semantic_bundle_version = metadata.get('semantic_bundle_version')
+            if semantic_bundle_version:
+                semantic_bundle_versions[str(semantic_bundle_version)] += 1
+            shadow_bundle_version = metadata.get('shadow_bundle_version')
+            if shadow_bundle_version:
+                shadow_bundle_versions[str(shadow_bundle_version)] += 1
+            source_job_type = metadata.get('source_job_type')
+            if source_job_type:
+                source_job_types[str(source_job_type)] += 1
+
+            kpis = json.loads(row['kpis_json'] or '[]')
+            if any(
+                isinstance(score, dict)
+                and isinstance(score.get('semantic'), dict)
+                and score['semantic'].get('status') == 'fallback'
+                for score in kpis
+            ):
+                semantic_fallback_total += 1
+
+        model_versions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in model_version_rows:
+            model_versions[str(row['version_type'])].append(
+                {
+                    'version_code': row['version_code'],
+                    'created_at': row['created_at'],
+                    'descriptor': json.loads(row['descriptor_json'] or '{}'),
+                }
+            )
 
         return {
             'analysis_jobs': {
@@ -671,6 +774,7 @@ class SqliteStore:
                     }
                     for row in type_status_rows
                 ],
+                'latest_updated_at': None if latest_job_row is None else latest_job_row['latest_updated_at'],
             },
             'persistence': {
                 'mirrored_tenders': int(tender_row['count'] or 0),
@@ -680,6 +784,23 @@ class SqliteStore:
                 'persisted_findings': int(finding_row['count'] or 0),
                 'persisted_phase_transitions': int(transition_row['count'] or 0),
             },
+            'snapshots': {
+                'persisted_total': int(snapshot_row['count'] or 0),
+                'latest_generated_at': latest_snapshot_generated_at,
+                'reconstructed_total': reconstructed_total,
+                'shadow_mode_total': shadow_mode_total,
+                'semantic_official_total': semantic_official_total,
+                'semantic_fallback_total': semantic_fallback_total,
+            },
+            'version_governance': {
+                'schema_version': None if schema_row is None else schema_row['version_num'],
+                'snapshot_output_schema_versions': dict(sorted(snapshot_output_schema_versions.items())),
+                'contract_versions': dict(sorted(contract_versions.items())),
+                'semantic_bundle_versions': dict(sorted(semantic_bundle_versions.items())),
+                'shadow_bundle_versions': dict(sorted(shadow_bundle_versions.items())),
+                'source_job_types': dict(sorted(source_job_types.items())),
+                'model_versions': dict(sorted(model_versions.items())),
+            },
         }
 
     def get_schema_version(self) -> str | None:
@@ -688,20 +809,117 @@ class SqliteStore:
             row = connection.execute('SELECT version_num FROM alembic_version LIMIT 1').fetchone()
         return None if row is None else row['version_num']
 
+    def list_model_versions(self) -> list[dict[str, Any]]:
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                '''
+                SELECT version_type, version_code, descriptor_json, created_at
+                FROM kpi_model_versions
+                ORDER BY version_type ASC, created_at ASC, id ASC
+                '''
+            ).fetchall()
+        return [
+            {
+                'version_type': row['version_type'],
+                'version_code': row['version_code'],
+                'descriptor': json.loads(row['descriptor_json'] or '{}'),
+                'created_at': row['created_at'],
+            }
+            for row in rows
+        ]
+
+
+    def _portfolio_phase_label(self, phase: str | None) -> str:
+        labels = {
+            'S0': 'Intake Opportunity',
+            'S1': 'Go / No-Go',
+            'S2': 'Bid Planning',
+            'S3': 'Request Contributions',
+            'S4': 'Coordination & Collection',
+            'S5': 'Quality / Technical Review',
+            'S6': 'Rework / Clarifications',
+            'S7': 'Integrated Draft',
+            'S8': 'Compliance Gate',
+            'S9': 'Submission',
+            'S10': 'Post-Submission Clarifications',
+            'S11': 'Win',
+            'S12': 'Loss',
+            'S13': 'Excluded / Withdrawn / No-Bid',
+            'analysis_pending': 'Analysis Pending',
+        }
+        return labels.get(phase or 'analysis_pending', phase or 'Analysis Pending')
+
+    def _portfolio_bottleneck_fields(self, *, health: str, phase: str) -> dict[str, str]:
+        normalized_phase = phase or 'analysis_pending'
+        if health == 'unknown':
+            return {
+                'bottleneck_type': 'analysis_pending',
+                'severity': 'unknown',
+                'description': 'The tender has not produced a stable analytical mirror yet, so admin should resync or recompute before making decisions.',
+            }
+        if normalized_phase in {'S8', 'S10'}:
+            return {
+                'bottleneck_type': 'compliance_pressure',
+                'severity': 'critical' if health == 'red' else 'high',
+                'description': 'Compliance or clarification pressure is dominating the journey and can still reroute the tender away from a clean closure.',
+            }
+        if normalized_phase in {'S5', 'S6'}:
+            return {
+                'bottleneck_type': 'review_loop_pressure',
+                'severity': 'high' if health == 'red' else 'medium',
+                'description': 'The tender is circulating between review and rework, so admin should compress blockers before they become structural churn.',
+            }
+        if normalized_phase in {'S1', 'S2', 'S3'}:
+            return {
+                'bottleneck_type': 'orchestration_pressure',
+                'severity': 'high' if health == 'red' else 'medium',
+                'description': 'Early lifecycle orchestration is still unstable and requires explicit decisions, planning discipline and assignment closure.',
+            }
+        if normalized_phase == 'S13':
+            return {
+                'bottleneck_type': 'terminal_stop',
+                'severity': 'critical',
+                'description': 'The tender has already reached a stop state and should be classified clearly for retrospective learning and portfolio reporting.',
+            }
+        return {
+            'bottleneck_type': 'analytical_risk',
+            'severity': 'high' if health == 'red' else 'medium' if health == 'amber' else 'low',
+            'description': 'The tender remains analytically fragile and should stay on the admin watchlist until the main drivers stabilize.',
+        }
+
     def get_portfolio_overview(self) -> dict[str, Any]:
         with self._lock:
             connection = self._require_connection()
             total_row = connection.execute('SELECT COUNT(*) AS count FROM kpi_tenders').fetchone()
             health_rows = connection.execute(
-                'SELECT health, COUNT(*) AS count FROM kpi_tenders GROUP BY health'
+                "SELECT COALESCE(health, 'unknown') AS health, COUNT(*) AS count FROM kpi_tenders GROUP BY COALESCE(health, 'unknown')"
+            ).fetchall()
+            phase_rows = connection.execute(
+                "SELECT COALESCE(analytical_phase, 'analysis_pending') AS phase, COUNT(*) AS count FROM kpi_tenders GROUP BY COALESCE(analytical_phase, 'analysis_pending')"
+            ).fetchall()
+            critical_rows = connection.execute(
+                """
+                SELECT external_tender_id
+                FROM kpi_tenders
+                WHERE COALESCE(health, 'unknown') IN ('red', 'amber')
+                ORDER BY
+                    CASE COALESCE(health, 'unknown')
+                        WHEN 'red' THEN 0
+                        WHEN 'amber' THEN 1
+                        ELSE 2
+                    END,
+                    updated_at DESC,
+                    external_tender_id ASC
+                LIMIT 8
+                """
             ).fetchall()
 
-        tenders_by_health = {
-            row['health'] or 'unknown': int(row['count'] or 0)
-            for row in health_rows
-        }
+        tenders_by_health = {row['health'] or 'unknown': int(row['count'] or 0) for row in health_rows}
         if not tenders_by_health:
             tenders_by_health = {'unknown': 0}
+
+        analytical_phases = {row['phase'] or 'analysis_pending': int(row['count'] or 0) for row in phase_rows}
 
         if tenders_by_health.get('red'):
             portfolio_health = 'red'
@@ -716,6 +934,8 @@ class SqliteStore:
             'total_tenders': int(total_row['count'] or 0),
             'portfolio_health': portfolio_health,
             'tenders_by_health': tenders_by_health,
+            'analytical_phases': analytical_phases,
+            'critical_tenders': [str(row['external_tender_id']) for row in critical_rows],
         }
 
     def list_bottlenecks(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -723,16 +943,17 @@ class SqliteStore:
             connection = self._require_connection()
             rows = connection.execute(
                 """
-                SELECT external_tender_id, title, current_status, health, analytical_phase
+                SELECT external_tender_id, title, current_status, health, analytical_phase, updated_at
                 FROM kpi_tenders
                 ORDER BY
-                    CASE health
+                    CASE COALESCE(health, 'unknown')
                         WHEN 'red' THEN 0
                         WHEN 'amber' THEN 1
                         WHEN 'green' THEN 2
                         ELSE 3
                     END,
-                    updated_at DESC
+                    updated_at DESC,
+                    external_tender_id ASC
                 LIMIT ?
                 """,
                 (limit,),
@@ -742,16 +963,136 @@ class SqliteStore:
         for row in rows:
             health = row['health'] or 'unknown'
             phase = row['analytical_phase'] or 'analysis_pending'
-            bottleneck_type = 'analysis_pending' if health == 'unknown' else 'analytical_risk'
+            bottleneck_fields = self._portfolio_bottleneck_fields(health=health, phase=phase)
             items.append(
                 {
                     'external_tender_id': row['external_tender_id'],
-                    'bottleneck_type': bottleneck_type,
-                    'summary': f"{row['title']} is tracked in {phase} with {health} KPI health.",
+                    'bottleneck_type': bottleneck_fields['bottleneck_type'],
+                    'summary': f"{row['title']} is in {self._portfolio_phase_label(phase)} with {health} KPI health.",
+                    'description': bottleneck_fields['description'],
                     'health': health,
+                    'severity': bottleneck_fields['severity'],
                 }
             )
         return items
+
+    def get_portfolio_intelligence(self, limit: int = 5) -> dict[str, Any]:
+        with self._lock:
+            connection = self._require_connection()
+            tender_rows = connection.execute(
+                """
+                SELECT external_tender_id, title, current_status, health, analytical_phase, updated_at
+                FROM kpi_tenders
+                ORDER BY updated_at DESC, external_tender_id ASC
+                """
+            ).fetchall()
+            snapshot_rows = connection.execute(
+                """
+                SELECT s.external_tender_id, s.summary, s.kpis_json
+                FROM kpi_snapshots AS s
+                INNER JOIN (
+                    SELECT external_tender_id, MAX(id) AS snapshot_id
+                    FROM kpi_snapshots
+                    GROUP BY external_tender_id
+                ) AS latest
+                    ON latest.external_tender_id = s.external_tender_id
+                   AND latest.snapshot_id = s.id
+                """
+            ).fetchall()
+
+        snapshot_map = {}
+        for row in snapshot_rows:
+            snapshot_map[str(row['external_tender_id'])] = {
+                'summary': row['summary'],
+                'kpis': json.loads(row['kpis_json'] or '[]'),
+            }
+
+        phase_counts = {}
+        outcome_trends = {'S11': 0, 'S12': 0, 'S13': 0}
+        watchlist = []
+        risk_counts = {
+            'A1': {'count': 0, 'severity': 'medium'},
+            'A4': {'count': 0, 'severity': 'high'},
+            'B1': {'count': 0, 'severity': 'high'},
+            'B2': {'count': 0, 'severity': 'medium'},
+            'B4': {'count': 0, 'severity': 'medium'},
+        }
+        risk_summaries = {
+            'A1': 'Requirement coverage gaps are concentrating across the portfolio.',
+            'A4': 'Compliance risk remains a dominant cross-tender blocker.',
+            'B1': 'Deadline pressure is becoming a portfolio-level risk.',
+            'B2': 'Responsiveness slippage is extending the operational corridor.',
+            'B4': 'Contribution instability is generating repeated reopenings.',
+        }
+
+        for row in tender_rows:
+            external_tender_id = str(row['external_tender_id'])
+            phase = row['analytical_phase'] or 'analysis_pending'
+            health = row['health'] or 'unknown'
+            phase_counts[phase] = phase_counts.get(phase, 0) + 1
+            if phase in outcome_trends:
+                outcome_trends[phase] += 1
+
+            snapshot = snapshot_map.get(external_tender_id, {})
+            summary = snapshot.get('summary') or f"{row['title']} is currently mirrored in {self._portfolio_phase_label(phase)}."
+            if health in {'red', 'amber'}:
+                watchlist.append(
+                    {
+                        'external_tender_id': external_tender_id,
+                        'title': row['title'],
+                        'analytical_phase': phase,
+                        'health': health,
+                        'summary': summary,
+                    }
+                )
+
+            for score in snapshot.get('kpis') or []:
+                if not isinstance(score, dict):
+                    continue
+                code = str(score.get('kpi_code') or '')
+                score_health = str(score.get('health') or 'unknown')
+                if code not in risk_counts or score_health not in {'amber', 'red'}:
+                    continue
+                risk_counts[code]['count'] += 1
+                if score_health == 'red' and risk_counts[code]['severity'] != 'critical':
+                    risk_counts[code]['severity'] = 'critical' if code in {'A4', 'B1'} else 'high'
+
+        phase_hotspots = [
+            {
+                'phase': phase,
+                'count': count,
+                'summary': f'{count} tenders are currently concentrated in {self._portfolio_phase_label(phase)}.',
+            }
+            for phase, count in sorted(phase_counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ]
+        risk_hotspots = [
+            {
+                'code': code,
+                'count': spec['count'],
+                'severity': spec['severity'],
+                'summary': risk_summaries[code],
+            }
+            for code, spec in sorted(risk_counts.items(), key=lambda item: (-item[1]['count'], item[0]))
+            if spec['count'] > 0
+        ][:limit]
+        watchlist.sort(key=lambda item: (0 if item['health'] == 'red' else 1, item['analytical_phase'] not in {'S8', 'S10', 'S13'}, item['external_tender_id']))
+        watchlist = watchlist[:limit]
+
+        notes = []
+        if phase_hotspots:
+            notes.append(phase_hotspots[0]['summary'])
+        if risk_hotspots:
+            notes.append(f"Primary hotspot is {risk_hotspots[0]['code']} with {risk_hotspots[0]['count']} mirrored tenders.")
+        if watchlist:
+            notes.append(f'{len(watchlist)} tenders currently require active admin intervention.')
+
+        return {
+            'phase_hotspots': phase_hotspots,
+            'risk_hotspots': risk_hotspots,
+            'outcome_trends': outcome_trends,
+            'watchlist': watchlist,
+            'notes': notes,
+        }
 
     def _ensure_model_versions(self, connection: sqlite3.Connection, analysis_metadata: dict[str, Any]) -> int | None:
         version_specs = [
@@ -833,7 +1174,7 @@ class SqliteStore:
                         snapshot_id,
                         'kpi_value',
                         score.kpi_code,
-                        f"{score.kpi_code}: {score.value} ({score.health}) [{score.provenance}]",
+                        f"{score.kpi_code}: {score.value} ({score.health}) [{score.source_type or score.provenance}]",
                         created_at,
                     ),
                 )
@@ -853,7 +1194,15 @@ class SqliteStore:
                 """,
                 (snapshot_id, 'kpi_version', score.kpi_code, version_label, created_at),
             )
-            for evidence in score.evidence:
+            for criticality in score.criticalities:
+                connection.execute(
+                    """
+                    INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (snapshot_id, 'kpi_criticality', score.kpi_code, criticality, created_at),
+                )
+            for evidence in score.evidences or score.evidence:
                 connection.execute(
                     """
                     INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
@@ -861,6 +1210,58 @@ class SqliteStore:
                     """,
                     (snapshot_id, 'kpi_evidence', score.kpi_code, evidence, created_at),
                 )
+            if score.shadow and score.shadow.shadow_score is not None:
+                shadow = score.shadow
+                connection.execute(
+                    """
+                    INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        'kpi_shadow_value',
+                        score.kpi_code,
+                        f"{score.kpi_code} shadow: {shadow.shadow_score} ({shadow.health}) delta={shadow.delta_vs_proxy} [{shadow.source_type}]",
+                        created_at,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        'kpi_shadow_version',
+                        score.kpi_code,
+                        f"formula={shadow.formula_version}, model={shadow.model_version}, prompt={shadow.prompt_version}",
+                        created_at,
+                    ),
+                )
+                for recommendation in shadow.recommendations:
+                    connection.execute(
+                        """
+                        INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (snapshot_id, 'kpi_shadow_recommendation', score.kpi_code, recommendation, created_at),
+                    )
+                for criticality in shadow.criticalities:
+                    connection.execute(
+                        """
+                        INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (snapshot_id, 'kpi_shadow_criticality', score.kpi_code, criticality, created_at),
+                    )
+                for evidence in shadow.evidences:
+                    connection.execute(
+                        """
+                        INSERT INTO kpi_findings (snapshot_id, finding_kind, finding_key, content, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (snapshot_id, 'kpi_shadow_evidence', score.kpi_code, evidence, created_at),
+                    )
 
     def _insert_phase_transitions(
         self,

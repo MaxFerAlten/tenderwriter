@@ -15,9 +15,11 @@ import {
     observabilityApi,
     tenderApi,
     type KpiAnalysisJob,
+    type KpiAnalysisMetadata,
     type KpiBottleneckItem,
     type KpiDiagnostics,
     type KpiForecast,
+    type KpiPortfolioIntelligence,
     type KpiPortfolioOverview,
     type KpiScore,
     type KpiTenderSnapshot,
@@ -28,6 +30,7 @@ import {
 } from '../api/client';
 import ComplianceDrilldownPanel from '../components/observability/ComplianceDrilldownPanel';
 import OperationalWorkspacePanel from '../components/observability/OperationalWorkspacePanel';
+import LifecycleControlPanel from '../components/observability/LifecycleControlPanel';
 import TransitionTimelinePanel from '../components/observability/TransitionTimelinePanel';
 
 function healthColors(health: string): { accent: string; soft: string; text: string } {
@@ -127,9 +130,138 @@ function analysisJobColors(jobStatus: string | null | undefined): { accent: stri
     }
 }
 
+function signalTone(signal: string | null | undefined): { accent: string; soft: string } {
+    switch (signal) {
+        case 'observed':
+            return { accent: '#10b981', soft: 'rgba(16, 185, 129, 0.12)' };
+        case 'inferred':
+            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)' };
+        case 'reconstructed':
+        case 'predicted':
+            return { accent: '#38bdf8', soft: 'rgba(56, 189, 248, 0.14)' };
+        case 'shadow':
+            return { accent: '#14b8a6', soft: 'rgba(20, 184, 166, 0.14)' };
+        case 'calibrated':
+            return { accent: '#22c55e', soft: 'rgba(34, 197, 94, 0.14)' };
+        case 'locked':
+            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)' };
+        default:
+            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)' };
+    }
+}
+
+function chipStyle(accent: string, soft: string) {
+    return {
+        padding: '0.24rem 0.62rem',
+        borderRadius: '999px',
+        fontSize: '0.72rem',
+        background: soft,
+        color: accent,
+        border: `1px solid ${accent}33`,
+        textTransform: 'capitalize' as const,
+    };
+}
+
+function formatConfidenceValue(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+        return '--';
+    }
+    return value.toFixed(2);
+}
+
+function scoreEvidenceItems(score: KpiScore): string[] {
+    return score.evidences.length > 0 ? score.evidences : score.evidence;
+}
+
+function scoreRecommendations(score: KpiScore): string[] {
+    return score.recommendations.length > 0
+        ? score.recommendations
+        : (score.recommendation ? [score.recommendation] : []);
+}
+
+function semanticStatusTone(status: string | null | undefined): { accent: string; soft: string } {
+    switch (status) {
+        case 'official':
+            return { accent: '#22c55e', soft: 'rgba(34, 197, 94, 0.14)' };
+        case 'fallback':
+            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)' };
+        case 'shadow':
+            return { accent: '#14b8a6', soft: 'rgba(20, 184, 166, 0.14)' };
+        default:
+            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)' };
+    }
+}
+
+function semanticStatusLabel(status: string | null | undefined): string {
+    switch (status) {
+        case 'official':
+            return 'semantic official';
+        case 'fallback':
+            return 'semantic fallback';
+        case 'shadow':
+            return 'semantic shadow';
+        default:
+            return status || 'semantic';
+    }
+}
+
+function actionPriorityTone(priority: string | null | undefined): { accent: string; soft: string } {
+    switch (priority) {
+        case 'now':
+            return { accent: '#ef4444', soft: 'rgba(239, 68, 68, 0.14)' };
+        case 'next':
+            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)' };
+        default:
+            return { accent: '#38bdf8', soft: 'rgba(56, 189, 248, 0.14)' };
+    }
+}
+
+function mergeAnalysisMetadata(...items: Array<KpiAnalysisMetadata | null | undefined>): KpiAnalysisMetadata | null {
+    const present = items.filter(Boolean) as KpiAnalysisMetadata[];
+    if (present.length === 0) {
+        return null;
+    }
+
+    return present.reduce<KpiAnalysisMetadata>((accumulator, current) => ({
+        ...accumulator,
+        ...current,
+        markov_phase_scope: current.markov_phase_scope.length > 0 ? current.markov_phase_scope : accumulator.markov_phase_scope,
+        markov_reliable_phase_scope: current.markov_reliable_phase_scope.length > 0 ? current.markov_reliable_phase_scope : accumulator.markov_reliable_phase_scope,
+        semantic_priority: current.semantic_priority.length > 0 ? current.semantic_priority : accumulator.semantic_priority,
+        canonical_source_types: current.canonical_source_types.length > 0 ? current.canonical_source_types : accumulator.canonical_source_types,
+        semantic_kpis: current.semantic_kpis.length > 0 ? current.semantic_kpis : accumulator.semantic_kpis,
+        semantic_fallback_kpis: current.semantic_fallback_kpis.length > 0 ? current.semantic_fallback_kpis : accumulator.semantic_fallback_kpis,
+        shadow_kpis: current.shadow_kpis.length > 0 ? current.shadow_kpis : accumulator.shadow_kpis,
+        forecast_engine_candidates: current.forecast_engine_candidates.length > 0 ? current.forecast_engine_candidates : accumulator.forecast_engine_candidates,
+        markov_state_scope: current.markov_state_scope.length > 0 ? current.markov_state_scope : accumulator.markov_state_scope,
+        markov_absorbing_states: current.markov_absorbing_states.length > 0 ? current.markov_absorbing_states : accumulator.markov_absorbing_states,
+        markov_projected_path: current.markov_projected_path.length > 0 ? current.markov_projected_path : accumulator.markov_projected_path,
+        forecast_driver_kpis: current.forecast_driver_kpis.length > 0 ? current.forecast_driver_kpis : accumulator.forecast_driver_kpis,
+        scored_kpis: current.scored_kpis.length > 0 ? current.scored_kpis : accumulator.scored_kpis,
+        markov_source_mix: Object.keys(current.markov_source_mix).length > 0 ? current.markov_source_mix : accumulator.markov_source_mix,
+        forecast_driver_scores: Object.keys(current.forecast_driver_scores).length > 0 ? current.forecast_driver_scores : accumulator.forecast_driver_scores,
+    }), present[0]);
+}
+
+function forecastSignalLabel(signalType: string | null | undefined): string {
+    switch (signalType) {
+        case 'predicted':
+            return 'predicted forecast';
+        case 'calibrated':
+            return 'calibrated forecast';
+        case 'locked':
+            return 'locked outcome';
+        case 'not_ready':
+            return 'forecast pending';
+        default:
+            return signalType || 'forecast signal';
+    }
+}
+
 export default function ObservabilityKPI() {
     const [overview, setOverview] = useState<KpiPortfolioOverview | null>(null);
     const [bottlenecks, setBottlenecks] = useState<KpiBottleneckItem[]>([]);
+    const [portfolioIntelligence, setPortfolioIntelligence] = useState<KpiPortfolioIntelligence | null>(null);
     const [tenders, setTenders] = useState<Tender[]>([]);
     const [selectedTenderId, setSelectedTenderId] = useState<number | null>(null);
     const [tenderDetail, setTenderDetail] = useState<TenderDetail | null>(null);
@@ -183,13 +315,15 @@ export default function ObservabilityKPI() {
         setError(null);
 
         try {
-            const [overviewResponse, bottlenecksResponse, tendersResponse] = await Promise.all([
+            const [overviewResponse, bottlenecksResponse, intelligenceResponse, tendersResponse] = await Promise.all([
                 kpiAdminApi.getPortfolioOverview(),
                 kpiAdminApi.getPortfolioBottlenecks(),
+                kpiAdminApi.getPortfolioIntelligence(),
                 tenderApi.list({ limit: '100' }),
             ]);
             setOverview(overviewResponse);
             setBottlenecks(bottlenecksResponse.items);
+            setPortfolioIntelligence(intelligenceResponse);
             setTenders(tendersResponse.items);
 
             if (tendersResponse.items.length > 0 && selectedTenderId === null) {
@@ -264,10 +398,12 @@ export default function ObservabilityKPI() {
     const palette = healthColors(selectedHealth);
     const qualitativeKpis = (snapshot?.kpis || []).filter((score) => ['A1', 'A2', 'A3', 'A4', 'Q'].includes(score.kpi_code));
     const operationalKpis = (snapshot?.kpis || []).filter((score) => ['B1', 'B2', 'B3', 'B4', 'E'].includes(score.kpi_code));
-    const scoredKpis = (snapshot?.kpis || []).filter((score) => score.value !== null || score.evidence.length > 0 || Boolean(score.recommendation));
-    const analysisMetadata = snapshot?.analysis_metadata || diagnostics?.analysis_metadata || null;
+    const scoredKpis = (snapshot?.kpis || []).filter((score) => score.value !== null || scoreEvidenceItems(score).length > 0 || scoreRecommendations(score).length > 0 || Boolean(score.semantic) || Boolean(score.shadow));
+    const analysisMetadata = mergeAnalysisMetadata(snapshot?.analysis_metadata ?? null, diagnostics?.analysis_metadata ?? null, forecast?.analysis_metadata ?? null);
+    const forecastMetadata = forecast?.analysis_metadata ? mergeAnalysisMetadata(snapshot?.analysis_metadata ?? null, diagnostics?.analysis_metadata ?? null, forecast.analysis_metadata) : analysisMetadata;
     const redCount = riskCount(bottlenecks, 'red');
     const amberCount = riskCount(bottlenecks, 'amber');
+    const watchlistCount = portfolioIntelligence?.watchlist.length ?? 0;
     const analysisJobPalette = analysisJobColors(analysisJob?.job_status);
     const recomputeDisabled = !selectedTenderId || isDetailLoading || isAnalysisJobActive(analysisJob);
     const backfillDisabled = recomputeDisabled;
@@ -356,7 +492,7 @@ export default function ObservabilityKPI() {
                         onClick={() => void handlePortfolioResync()}
                         disabled={portfolioResyncDisabled}
                     >
-                        <RefreshCcw size={14} /> {isPortfolioResyncing ? 'Resyncing portfolio…' : 'Resync Portfolio'}
+                        <RefreshCcw size={14} /> {isPortfolioResyncing ? 'Resyncing portfolio...' : 'Resync Portfolio'}
                     </button>
                     <button
                         className={`btn btn-secondary btn-sm ${isRecomputing && activeJobType === 'history_backfill' ? 'animate-pulse' : ''}`}
@@ -425,7 +561,7 @@ export default function ObservabilityKPI() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>Amber watchlist</div>
-                            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{amberCount}</div>
+                            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{Math.max(amberCount, watchlistCount)}</div>
                         </div>
                         <TrendingUp size={22} color="#f59e0b" />
                     </div>
@@ -518,6 +654,66 @@ export default function ObservabilityKPI() {
                             </div>
                         )}
                     </div>
+
+
+                    <div className="card">
+                        <h3 style={{ marginTop: 0, marginBottom: '0.6rem', fontSize: '0.95rem' }}>Portfolio intelligence</h3>
+                        {!portfolioIntelligence ? (
+                            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>Portfolio intelligence not available yet.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '0.9rem' }}>
+                                <div>
+                                    <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.45rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phase hotspots</div>
+                                    <div style={{ display: 'grid', gap: '0.55rem' }}>
+                                        {portfolioIntelligence.phase_hotspots.slice(0, 3).map((item) => (
+                                            <div key={`phase-${item.phase}`} style={{ padding: '0.7rem 0.8rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.28)', border: '1px solid var(--border-color)' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                    <span style={{ fontWeight: 600 }}>{phaseLabel(item.phase)}</span>
+                                                    <span style={{ fontSize: '0.74rem', color: '#38bdf8' }}>{item.count}</span>
+                                                </div>
+                                                <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>{item.summary}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.45rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Risk hotspots</div>
+                                    <div style={{ display: 'grid', gap: '0.55rem' }}>
+                                        {portfolioIntelligence.risk_hotspots.slice(0, 3).map((item) => {
+                                            const tone = healthColors(item.severity === 'critical' || item.severity === 'high' ? 'red' : item.severity === 'medium' ? 'amber' : 'green');
+                                            return (
+                                                <div key={`risk-${item.code}`} style={{ padding: '0.7rem 0.8rem', borderRadius: '12px', background: tone.soft, border: `1px solid ${tone.accent}33` }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                        <span style={{ fontWeight: 600 }}>{item.code}</span>
+                                                        <span style={{ fontSize: '0.74rem', color: tone.accent }}>{item.count}</span>
+                                                    </div>
+                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{item.summary}</div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.45rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Admin watchlist</div>
+                                    <div style={{ display: 'grid', gap: '0.55rem' }}>
+                                        {portfolioIntelligence.watchlist.slice(0, 3).map((item) => {
+                                            const tone = healthColors(item.health);
+                                            return (
+                                                <div key={`watch-${item.external_tender_id}`} style={{ padding: '0.7rem 0.8rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.28)', border: `1px solid ${tone.accent}33` }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                        <span style={{ fontWeight: 600 }}>{item.title}</span>
+                                                        <span style={{ fontSize: '0.74rem', color: tone.accent, textTransform: 'capitalize' }}>{item.health}</span>
+                                                    </div>
+                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>{phaseLabel(item.analytical_phase)}</div>
+                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{item.summary}</div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div style={{ display: 'grid', gap: '1rem' }}>
@@ -593,6 +789,10 @@ export default function ObservabilityKPI() {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
                                 {qualitativeKpis.map((score) => {
                                     const scorePalette = healthColors(score.health);
+                                    const provenanceTone = signalTone(score.source_type || score.provenance);
+                                    const shadowTone = signalTone('shadow');
+                                    const semanticTone = score.semantic ? semanticStatusTone(score.semantic.status) : null;
+                                    const recommendations = scoreRecommendations(score);
                                     return (
                                         <div key={score.kpi_code} className="card" style={{ borderColor: `${scorePalette.accent}33` }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
@@ -609,20 +809,64 @@ export default function ObservabilityKPI() {
                                                     </div>
                                                 </div>
                                             </div>
+                                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.7rem' }}>
+                                                <span style={chipStyle(provenanceTone.accent, provenanceTone.soft)}>{score.source_type || score.provenance || 'unknown'}</span>
+                                                {score.semantic && semanticTone && <span style={chipStyle(semanticTone.accent, semanticTone.soft)}>{semanticStatusLabel(score.semantic.status)}</span>}
+                                                {score.shadow && <span style={chipStyle(shadowTone.accent, shadowTone.soft)}>shadow</span>}
+                                            </div>
                                             <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                                                 {score.label || 'No label available.'}
                                             </p>
-                                            {score.recommendation && (
+                                            {recommendations.length > 0 && (
                                                 <p style={{ margin: '0.6rem 0 0 0', fontSize: '0.78rem', color: '#dbeafe' }}>
-                                                    Recommendation: {score.recommendation}
+                                                    Recommendation: {recommendations[0]}
                                                 </p>
                                             )}
                                             <p style={{ margin: '0.6rem 0 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                                Provenance: {score.provenance} | Confidence: {score.confidence ?? 0}
+                                                Confidence: {formatConfidenceValue(score.confidence)} | Formula: {score.formula_version || 'n/a'}
                                             </p>
-                                            <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                                                Formula: {score.formula_version || 'n/a'}
-                                            </p>
+                                            {score.semantic && semanticTone && (
+                                                <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.8rem', borderRadius: '12px', background: semanticTone.soft, border: `1px solid ${semanticTone.accent}33` }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: semanticTone.accent }}>{semanticStatusLabel(score.semantic.status)}</span>
+                                                        <span style={{ fontSize: '0.72rem', color: semanticTone.accent, textTransform: 'capitalize' }}>{score.semantic.health}</span>
+                                                    </div>
+                                                    <div style={{ marginTop: '0.45rem', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                                                        Semantic score {score.semantic.semantic_score ?? '--'} | Proxy {score.semantic.proxy_score ?? '--'} | Delta {score.semantic.delta_vs_proxy ?? '--'}
+                                                    </div>
+                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                                        Source {score.semantic.source_type} | Confidence {formatConfidenceValue(score.semantic.confidence)}{score.semantic.fallback_reason ? ` | Fallback ${score.semantic.fallback_reason}` : ''}
+                                                    </div>
+                                                    {score.semantic.criticalities.length > 0 && (
+                                                        <ul style={{ margin: '0.45rem 0 0 0', paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                                            {score.semantic.criticalities.slice(0, 2).map((item) => (
+                                                                <li key={`${score.kpi_code}-semantic-${item}`} style={{ fontSize: '0.76rem', marginBottom: '0.3rem' }}>{item}</li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                    {(score.semantic.coverage_gaps.length > 0 || score.semantic.risk_items.length > 0 || score.semantic.dimension_items.length > 0) && (
+                                                        <div style={{ marginTop: '0.45rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                                            {score.semantic.coverage_gaps.length > 0 ? `Coverage gaps ${score.semantic.coverage_gaps.length}. ` : ''}
+                                                            {score.semantic.risk_items.length > 0 ? `Risk items ${score.semantic.risk_items.length}. ` : ''}
+                                                            {score.semantic.dimension_items.length > 0 ? `Rubric dimensions ${score.semantic.dimension_items.length}.` : ''}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {score.shadow && (
+                                                <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.8rem', borderRadius: '12px', background: 'rgba(20, 184, 166, 0.08)', border: '1px solid rgba(20, 184, 166, 0.2)' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                                                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#99f6e4' }}>Semantic shadow</span>
+                                                        <span style={{ fontSize: '0.72rem', color: '#99f6e4', textTransform: 'capitalize' }}>{score.shadow.health}</span>
+                                                    </div>
+                                                    <div style={{ marginTop: '0.45rem', fontSize: '0.76rem', color: '#ccfbf1' }}>
+                                                        Shadow score {score.shadow.shadow_score ?? '--'} | Delta vs proxy {score.shadow.delta_vs_proxy ?? '--'}
+                                                    </div>
+                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.74rem', color: 'rgba(204, 251, 241, 0.8)' }}>
+                                                        Source {score.shadow.source_type} | Confidence {formatConfidenceValue(score.shadow.confidence)}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -657,30 +901,84 @@ export default function ObservabilityKPI() {
                                         <FileSearch size={18} color="#38bdf8" /> KPI evidence
                                     </h3>
                                     <div style={{ display: 'grid', gap: '0.9rem' }}>
-                                        {scoredKpis.map((score) => (
-                                            <div key={`${score.kpi_code}-evidence`} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                                                    <div style={{ fontWeight: 600 }}>{score.kpi_code} evidence</div>
-                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                                        {score.provenance} | {score.formula_version || 'n/a'}
+                                        {scoredKpis.map((score) => {
+                                            const evidenceItems = scoreEvidenceItems(score);
+                                            const recommendations = scoreRecommendations(score);
+                                            const provenanceTone = signalTone(score.source_type || score.provenance);
+                                            const shadowTone = signalTone('shadow');
+                                            const semanticTone = score.semantic ? semanticStatusTone(score.semantic.status) : null;
+                                            return (
+                                                <div key={`${score.kpi_code}-evidence`} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                        <div style={{ fontWeight: 600 }}>{score.kpi_code} evidence</div>
+                                                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                            <span style={chipStyle(provenanceTone.accent, provenanceTone.soft)}>{score.source_type || score.provenance || 'unknown'}</span>
+                                                            {score.semantic && semanticTone && <span style={chipStyle(semanticTone.accent, semanticTone.soft)}>{semanticStatusLabel(score.semantic.status)}</span>}
+                                                            {score.shadow && <span style={chipStyle(shadowTone.accent, shadowTone.soft)}>shadow</span>}
+                                                        </div>
                                                     </div>
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                                        {score.formula_version || 'n/a'} | Confidence {formatConfidenceValue(score.confidence)}
+                                                    </div>
+                                                    {recommendations.length > 0 && (
+                                                        <p style={{ margin: '0 0 0.55rem 0', fontSize: '0.8rem', color: '#dbeafe' }}>
+                                                            {recommendations[0]}
+                                                        </p>
+                                                    )}
+                                                    {evidenceItems.length === 0 ? (
+                                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No evidence available.</div>
+                                                    ) : (
+                                                        <ul style={{ margin: 0, paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                                            {evidenceItems.slice(0, 4).map((item) => (
+                                                                <li key={item} style={{ marginBottom: '0.4rem', fontSize: '0.82rem' }}>{item}</li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                    {score.semantic && semanticTone && (
+                                                        <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.8rem', borderRadius: '12px', background: semanticTone.soft, border: `1px solid ${semanticTone.accent}33` }}>
+                                                            <div style={{ fontWeight: 600, fontSize: '0.78rem', color: semanticTone.accent }}>{semanticStatusLabel(score.semantic.status)}</div>
+                                                            <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                                                Score {score.semantic.semantic_score ?? '--'} | Proxy {score.semantic.proxy_score ?? '--'} | Delta {score.semantic.delta_vs_proxy ?? '--'} | Source {score.semantic.source_type}
+                                                            </div>
+                                                            {score.semantic.dimension_items.length > 0 && (
+                                                                <ul style={{ margin: '0.45rem 0 0 0', paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                                                    {score.semantic.dimension_items.slice(0, 2).map((item) => (
+                                                                        <li key={`${score.kpi_code}-dimension-${item.code}`} style={{ fontSize: '0.76rem', marginBottom: '0.3rem' }}>{item.summary}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            )}
+                                                            {score.semantic.risk_items.length > 0 && (
+                                                                <ul style={{ margin: '0.45rem 0 0 0', paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                                                    {score.semantic.risk_items.slice(0, 2).map((item) => (
+                                                                        <li key={`${score.kpi_code}-risk-${item.code}-${item.summary}`} style={{ fontSize: '0.76rem', marginBottom: '0.3rem' }}>{item.summary}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            )}
+                                                            {score.semantic.coverage_gaps.length > 0 && (
+                                                                <div style={{ marginTop: '0.45rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                                                    Coverage gaps surfaced: {score.semantic.coverage_gaps.length}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {score.shadow && (
+                                                        <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.8rem', borderRadius: '12px', background: 'rgba(20, 184, 166, 0.08)', border: '1px solid rgba(20, 184, 166, 0.2)' }}>
+                                                            <div style={{ fontWeight: 600, fontSize: '0.78rem', color: '#99f6e4' }}>Shadow semantic view</div>
+                                                            <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#ccfbf1' }}>
+                                                                Score {score.shadow.shadow_score ?? '--'} | Delta {score.shadow.delta_vs_proxy ?? '--'} | Source {score.shadow.source_type}
+                                                            </div>
+                                                            {score.shadow.criticalities.length > 0 && (
+                                                                <ul style={{ margin: '0.45rem 0 0 0', paddingLeft: '1rem', color: 'rgba(204, 251, 241, 0.85)' }}>
+                                                                    {score.shadow.criticalities.slice(0, 2).map((item) => (
+                                                                        <li key={`${score.kpi_code}-${item}`} style={{ fontSize: '0.76rem', marginBottom: '0.3rem' }}>{item}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                {score.recommendation && (
-                                                    <p style={{ margin: '0 0 0.55rem 0', fontSize: '0.8rem', color: '#dbeafe' }}>
-                                                        {score.recommendation}
-                                                    </p>
-                                                )}
-                                                {score.evidence.length === 0 ? (
-                                                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No evidence available.</div>
-                                                ) : (
-                                                    <ul style={{ margin: 0, paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
-                                                        {score.evidence.slice(0, 4).map((item) => (
-                                                            <li key={item} style={{ marginBottom: '0.4rem', fontSize: '0.82rem' }}>{item}</li>
-                                                        ))}
-                                                    </ul>
-                                                )}
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
@@ -693,12 +991,43 @@ export default function ObservabilityKPI() {
                                             {diagnostics?.summary || 'Diagnostics not available.'}
                                         </p>
                                         {analysisMetadata && (
-                                            <div style={{ display: 'grid', gap: '0.45rem', marginTop: '0.75rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                                                <div>Formula bundle: {analysisMetadata.formula_bundle_version || 'n/a'}</div>
-                                                <div>Model bundle: {analysisMetadata.model_bundle_version || 'n/a'}</div>
-                                                <div>Prompt bundle: {analysisMetadata.prompt_bundle_version || 'n/a'}</div>
-                                                <div>Scored KPI: {(analysisMetadata.scored_kpis || []).join(', ') || 'n/a'}</div>
-                                            </div>
+                                            <>
+                                                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                                                    {analysisMetadata.rollout_policy && (
+                                                        <span style={chipStyle('#38bdf8', 'rgba(56, 189, 248, 0.14)')}>rollout {analysisMetadata.rollout_policy}</span>
+                                                    )}
+                                                    <span style={chipStyle(analysisMetadata.semantic_official_enabled ? '#22c55e' : '#64748b', analysisMetadata.semantic_official_enabled ? 'rgba(34, 197, 94, 0.14)' : 'rgba(100, 116, 139, 0.14)')}>
+                                                        {analysisMetadata.qualitative_engine_mode || 'proxy_only'}
+                                                    </span>
+                                                    {analysisMetadata.shadow_mode_enabled && (
+                                                        <span style={chipStyle('#14b8a6', 'rgba(20, 184, 166, 0.14)')}>
+                                                            shadow control
+                                                        </span>
+                                                    )}
+                                                    {analysisMetadata.forecast_signal_type && (
+                                                        <span style={chipStyle(signalTone(analysisMetadata.forecast_signal_type).accent, signalTone(analysisMetadata.forecast_signal_type).soft)}>
+                                                            {forecastSignalLabel(analysisMetadata.forecast_signal_type)}
+                                                        </span>
+                                                    )}
+                                                    {analysisMetadata.reconstructed && (
+                                                        <span style={chipStyle('#f59e0b', 'rgba(245, 158, 11, 0.14)')}>reconstructed history</span>
+                                                    )}
+                                                </div>
+                                                <div style={{ display: 'grid', gap: '0.45rem', marginTop: '0.75rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                                                    <div>Contract: {analysisMetadata.contract_version || 'n/a'}</div>
+                                                    <div>Formula bundle: {analysisMetadata.formula_bundle_version || 'n/a'}</div>
+                                                    <div>Model bundle: {analysisMetadata.model_bundle_version || 'n/a'}</div>
+                                                    <div>Prompt bundle: {analysisMetadata.prompt_bundle_version || 'n/a'}</div>
+                                                    <div>Qualitative engine: {analysisMetadata.qualitative_engine_kind || 'n/a'}</div>
+                                                    <div>Semantic bundle: {analysisMetadata.semantic_bundle_version || 'n/a'}</div>
+                                                    <div>Semantic KPI: {analysisMetadata.semantic_kpis.join(', ') || 'n/a'}</div>
+                                                    <div>Semantic fallback KPI: {analysisMetadata.semantic_fallback_kpis.join(', ') || 'n/a'}</div>
+                                                    <div>Forecast engine: {analysisMetadata.forecast_engine_active || 'n/a'}</div>
+                                                    <div>Fallback: {analysisMetadata.forecast_fallback_reason || 'n/a'}</div>
+                                                    <div>Markov samples: {analysisMetadata.markov_transition_samples ?? 'n/a'}</div>
+                                                    <div>Scored KPI: {analysisMetadata.scored_kpis.join(', ') || 'n/a'}</div>
+                                                </div>
+                                            </>
                                         )}
                                         <div style={{ display: 'grid', gap: '0.55rem', marginTop: '0.75rem' }}>
                                             {(diagnostics?.findings || snapshot.notes).slice(0, 8).map((item) => (
@@ -719,29 +1048,92 @@ export default function ObservabilityKPI() {
                                             </p>
                                         )}
                                         <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
-                                            <span style={{
-                                                padding: '0.24rem 0.62rem',
-                                                borderRadius: '999px',
-                                                fontSize: '0.72rem',
-                                                background: 'rgba(56, 189, 248, 0.14)',
-                                                color: '#38bdf8',
-                                                border: '1px solid rgba(56, 189, 248, 0.2)',
-                                            }}>
+                                            <span style={chipStyle('#38bdf8', 'rgba(56, 189, 248, 0.14)')}>
                                                 Overall confidence: {formatProbability(forecast?.overall_confidence)}
                                             </span>
-                                            {analysisMetadata?.reconstructed && (
-                                                <span style={{
-                                                    padding: '0.24rem 0.62rem',
-                                                    borderRadius: '999px',
-                                                    fontSize: '0.72rem',
-                                                    background: 'rgba(245, 158, 11, 0.14)',
-                                                    color: '#f59e0b',
-                                                    border: '1px solid rgba(245, 158, 11, 0.2)',
-                                                }}>
+                                            {forecastMetadata?.forecast_signal_type && (
+                                                <span style={chipStyle(signalTone(forecastMetadata.forecast_signal_type).accent, signalTone(forecastMetadata.forecast_signal_type).soft)}>
+                                                    {forecastSignalLabel(forecastMetadata.forecast_signal_type)}
+                                                </span>
+                                            )}
+                                            {forecastMetadata?.forecast_engine_active && (
+                                                <span style={chipStyle('#22c55e', 'rgba(34, 197, 94, 0.14)')}>
+                                                    {forecastMetadata.forecast_engine_active}
+                                                </span>
+                                            )}
+                                            {forecastMetadata?.forecast_fallback_reason && (
+                                                <span style={chipStyle('#f59e0b', 'rgba(245, 158, 11, 0.14)')}>
+                                                    fallback {forecastMetadata.forecast_fallback_reason}
+                                                </span>
+                                            )}
+                                            {forecastMetadata?.markov_transition_samples ? (
+                                                <span style={chipStyle('#38bdf8', 'rgba(56, 189, 248, 0.14)')}>
+                                                    samples {forecastMetadata.markov_transition_samples}
+                                                </span>
+                                            ) : null}
+                                            {forecastMetadata?.markov_full_journey_enabled && (
+                                                <span style={chipStyle('#22c55e', 'rgba(34, 197, 94, 0.14)')}>
+                                                    full journey markov
+                                                </span>
+                                            )}
+                                            {forecastMetadata?.markov_coverage_ratio !== null && forecastMetadata?.markov_coverage_ratio !== undefined ? (
+                                                <span style={chipStyle('#14b8a6', 'rgba(20, 184, 166, 0.14)')}>
+                                                    coverage {formatProbability(forecastMetadata.markov_coverage_ratio)}
+                                                </span>
+                                            ) : null}
+                                            {forecastMetadata?.markov_backtest_submission_accuracy !== null && forecastMetadata?.markov_backtest_submission_accuracy !== undefined ? (
+                                                <span style={chipStyle('#a78bfa', 'rgba(167, 139, 250, 0.14)')}>
+                                                    backtest {formatProbability(forecastMetadata.markov_backtest_submission_accuracy)}
+                                                </span>
+                                            ) : null}
+                                            {forecastMetadata?.reconstructed && (
+                                                <span style={chipStyle('#f59e0b', 'rgba(245, 158, 11, 0.14)')}>
                                                     Snapshot includes reconstructed history
                                                 </span>
                                             )}
                                         </div>
+                                        {forecastMetadata?.markov_projected_path?.length ? (
+                                            <div style={{ marginBottom: '0.85rem', padding: '0.75rem 0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.28)', border: '1px solid var(--border-color)' }}>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>Projected path</div>
+                                                <div style={{ fontSize: '0.84rem', color: '#dbeafe' }}>
+                                                    {forecastMetadata.markov_projected_path.map((item) => phaseLabel(item)).join(' -> ')}
+                                                </div>
+                                                {forecastMetadata.forecast_driver_kpis.length > 0 && (
+                                                    <div style={{ marginTop: '0.45rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                        Drivers: {forecastMetadata.forecast_driver_kpis.join(', ')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : null}
+                                        {(forecast?.next_best_actions || []).length > 0 && (
+                                            <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '0.9rem' }}>
+                                                {forecast?.next_best_actions?.map((action) => {
+                                                    const tone = actionPriorityTone(action.priority);
+                                                    return (
+                                                        <div key={action.code} style={{ padding: '0.8rem', borderRadius: '12px', background: tone.soft, border: `1px solid ${tone.accent}33` }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                                                                <div style={{ fontWeight: 600 }}>{action.title}</div>
+                                                                <span style={chipStyle(tone.accent, tone.soft)}>{action.priority}</span>
+                                                            </div>
+                                                            <div style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{action.rationale}</div>
+                                                            {action.expected_impact && (
+                                                                <div style={{ marginTop: '0.45rem', fontSize: '0.76rem', color: '#bae6fd' }}>Expected impact: {action.expected_impact}</div>
+                                                            )}
+                                                            <div style={{ marginTop: '0.45rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                                                Confidence {formatProbability(action.confidence)}
+                                                            </div>
+                                                            {action.drivers.length > 0 && (
+                                                                <div style={{ display: 'grid', gap: '0.3rem', marginTop: '0.5rem' }}>
+                                                                    {action.drivers.slice(0, 3).map((driver) => (
+                                                                        <div key={`${action.code}-${driver}`} style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>- {driver}</div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                         {(forecast?.scenarios || []).length === 0 ? (
                                             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>Forecast not available.</p>
                                         ) : (
@@ -783,6 +1175,15 @@ export default function ObservabilityKPI() {
                                     </div>
                                 </div>
                             </div>
+
+                            <LifecycleControlPanel
+                                tender={selectedTender}
+                                tenderDetail={tenderDetail}
+                                analyticalPhase={snapshot?.analytical_phase || null}
+                                onDataChanged={() => {
+                                    void loadPortfolio(true);
+                                }}
+                            />
 
                             <ComplianceDrilldownPanel
                                 tenderDetail={tenderDetail}

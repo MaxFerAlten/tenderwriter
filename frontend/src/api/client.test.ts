@@ -5,6 +5,7 @@ import {
     observabilityApi,
     prefetchTenderChatContext,
     prefetchTenderChatRetrospective,
+    proposalApi,
     resetTenderChatContextCacheForTest,
     resolveTenderChatContext,
     resolveTenderChatRetrospective,
@@ -85,6 +86,35 @@ describe('kpiAdminApi', () => {
         );
     });
 
+    it('queries portfolio intelligence through the admin KPI BFF', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                status: 'not_ready',
+                generated_at: '2026-03-20T09:30:00Z',
+                phase_hotspots: [{ phase: 'S6', count: 3, summary: '3 tenders are concentrated in Rework / Clarifications.' }],
+                risk_hotspots: [{ code: 'A4', count: 2, severity: 'critical', summary: 'Compliance risk remains a dominant cross-tender blocker.' }],
+                outcome_trends: { S11: 1, S12: 1, S13: 2 },
+                watchlist: [{ external_tender_id: 'TEN-RED', title: 'Critical tender', analytical_phase: 'S8', health: 'red', summary: 'Compliance gate remains blocked.' }],
+                notes: ['Primary hotspot is A4 with 2 mirrored tenders.'],
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.getPortfolioIntelligence();
+
+        expect(response.phase_hotspots[0].phase).toBe('S6');
+        expect(response.risk_hotspots[0].code).toBe('A4');
+        expect(response.watchlist[0].external_tender_id).toBe('TEN-RED');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/portfolio/intelligence',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
     it('queries tender snapshot through the admin KPI BFF', async () => {
         fetchMock.mockResolvedValue(
             new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready' }), {
@@ -106,7 +136,7 @@ describe('kpiAdminApi', () => {
 
     it('queries tender transitions through the admin KPI BFF', async () => {
         fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready', summary: 'ok', items: [], requirement_items: [], history_items: [] }), {
+            new Response(JSON.stringify({ external_tender_id: '12', status: 'not_ready', summary: 'ok', items: [{ from_state: 'S4', to_state: 'S5', source_type: 'observed', confidence: 0.82 }], requirement_items: [], history_items: [{ snapshot_id: 1, source_type: 'reconstructed', reconstructed: true }] }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             })
@@ -115,8 +145,87 @@ describe('kpiAdminApi', () => {
         const response = await kpiAdminApi.getTenderTransitions(12);
 
         expect(response.external_tender_id).toBe('12');
+        expect(response.items[0].source_type).toBe('observed');
+        expect(response.history_items[0].source_type).toBe('reconstructed');
         expect(fetchMock).toHaveBeenCalledWith(
             '/api/admin/kpi/tenders/12/transitions',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('queries tender forecast through the admin KPI BFF with analysis metadata', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                external_tender_id: '12',
+                status: 'not_ready',
+                summary: 'Forecast leans toward submission.',
+                overall_confidence: 0.72,
+                scenarios: [],
+                analysis_metadata: {
+                    rollout_policy: 'full',
+                    shadow_rollout_enabled: true,
+                    markov_rollout_enabled: true,
+                    calibrated_forecast_enabled: true,
+                    forecast_engine_active: 'markov_full_lifecycle_v1',
+                    forecast_signal_type: 'calibrated',
+                    forecast_engine_candidates: ['markov_full_lifecycle_v1', 'heuristic_rule_v1'],
+                    markov_model_active: true,
+                    markov_model_version: 'markov-full-lifecycle-v1',
+                    markov_phase_scope: ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13'],
+                    markov_reliable_phase_scope: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13'],
+                    semantic_priority: ['A1', 'A4'],
+                    canonical_source_types: ['observed', 'inferred', 'reconstructed'],
+                    shadow_kpis: ['A1', 'A4'],
+                    markov_state_scope: ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13'],
+                    markov_absorbing_states: ['S11', 'S12', 'S13'],
+                    markov_source_mix: { observed: 4, reconstructed: 1 },
+                    markov_bundle_kind: 'full_journey',
+                    markov_full_journey_enabled: true,
+                    markov_coverage_ratio: 0.56,
+                    markov_projected_path: ['S6', 'S8', 'S9'],
+                    markov_backtest_version: 'markov-backtest-v1',
+                    markov_backtest_sample_count: 8,
+                    markov_backtest_submission_accuracy: 0.75,
+                    markov_backtest_calibration_gap: 0.19,
+                    forecast_driver_kpis: ['A1', 'A4'],
+                    forecast_driver_scores: { A1: 72.5, A4: 68.0 },
+                    forecast_primary_action_code: 'protect_submission_corridor',
+                    forecast_primary_action_confidence: 0.81,
+                    forecast_decision_bundle_version: 'forecast-decision-support-v1',
+                    scored_kpis: ['A1', 'A4'],
+                    reconstructed: false,
+                },
+                next_best_actions: [
+                    {
+                        code: 'protect_submission_corridor',
+                        title: 'Protect the submission corridor',
+                        priority: 'now',
+                        rationale: 'The tender is leaning toward the submission path.',
+                        expected_impact: 'Keep the tender on the shortest path to submission.',
+                        confidence: 0.81,
+                        drivers: ['Projected path: S6 -> S8 -> S9'],
+                    },
+                ],
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await kpiAdminApi.getTenderForecast(12);
+
+        expect(response.analysis_metadata.forecast_signal_type).toBe('calibrated');
+        expect(response.analysis_metadata.forecast_engine_active).toBe('markov_full_lifecycle_v1');
+        expect(response.analysis_metadata.markov_model_version).toBe('markov-full-lifecycle-v1');
+        expect(response.analysis_metadata.markov_bundle_kind).toBe('full_journey');
+        expect(response.analysis_metadata.markov_projected_path).toEqual(['S6', 'S8', 'S9']);
+        expect(response.analysis_metadata.forecast_primary_action_code).toBe('protect_submission_corridor');
+        expect(response.next_best_actions[0].code).toBe('protect_submission_corridor');
+        expect(response.analysis_metadata.markov_rollout_enabled).toBe(true);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/admin/kpi/tenders/12/forecast',
             expect.objectContaining({
                 method: 'GET',
             })
@@ -326,6 +435,7 @@ describe('tenderApi', () => {
                 created_by: 1,
                 created_by_name: 'Admin',
                 requirement_count: 1,
+                lifecycle_metadata: { decision: { decision: 'go' } },
                 requirements: [
                     {
                         id: 3,
@@ -347,6 +457,7 @@ describe('tenderApi', () => {
 
         expect(response.requirements[0].mapped_section_id).toBe(44);
         expect(response.requirements[0].mapped_section_title).toBe('Compliance matrix');
+        expect(response.lifecycle_metadata?.decision?.decision).toBe('go');
         expect(fetchMock).toHaveBeenCalledWith(
             '/api/tenders/12',
             expect.objectContaining({
@@ -356,6 +467,60 @@ describe('tenderApi', () => {
     });
 });
 
+
+describe('proposalApi', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        resetTenderChatContextCacheForTest();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('records draft readiness through the proposal lifecycle endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ status: 'accepted', event_type: 'draft_integrated_ready', proposal_id: 44, payload: {} }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await proposalApi.markDraftReady(44, {});
+
+        expect(response.event_type).toBe('draft_integrated_ready');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/proposals/44/draft-ready',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        );
+    });
+
+    it('records submission reliability through the proposal lifecycle endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ status: 'accepted', event_type: 'submission_acknowledged', proposal_id: 44, payload: {} }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await proposalApi.updateSubmissionStatus(44, { submission_status: 'acknowledged', channel: 'manual_admin_update', reference_id: 'ACK-1' });
+
+        expect(response.event_type).toBe('submission_acknowledged');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/proposals/44/submission-status',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ submission_status: 'acknowledged', channel: 'manual_admin_update', reference_id: 'ACK-1' }),
+            })
+        );
+    });
+});
 describe('observabilityApi', () => {
     beforeEach(() => {
         storage.clear();
@@ -473,5 +638,6 @@ describe('observabilityApi', () => {
         );
     });
 });
+
 
 

@@ -19,6 +19,7 @@ from app.models import (
     SectionStatus,
 )
 from app.services.kpi_reason_engine import (
+    build_contribution_assignment_confirmed_event_payload,
     build_contribution_due_date_set_event_payload,
     build_contribution_received_event_payload,
     build_contribution_request_created_event_payload,
@@ -226,6 +227,18 @@ async def _ensure_request_for_assignment(
             build_contribution_request_created_event_payload(request=request_row, contribution=contribution),
         )
     ]
+    events.append(
+        (
+            "contribution_assignment_confirmed",
+            build_contribution_assignment_confirmed_event_payload(
+                occurred_at=occurred_at,
+                external_contribution_id=str(contribution.id),
+                owner_user_id=assigned_to,
+                external_request_id=str(request_row.id),
+                notes="Assignment captured from proposal section workflow.",
+            ),
+        )
+    )
     if request_row.due_at is not None:
         events.append(
             (
@@ -315,10 +328,17 @@ async def _complete_review(
     else:
         review.notes = review.notes or "Changes requested from proposal workflow."
     await db.flush()
+    review_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
     events.append(
         (
             "contribution_review_completed",
-            build_contribution_review_completed_event_payload(review=review, contribution=contribution),
+            review_payload,
+        )
+    )
+    events.append(
+        (
+            "review_approved" if outcome == "approved" else "review_changes_requested",
+            review_payload,
         )
     )
     return events
@@ -488,3 +508,6 @@ async def sync_section_operational_workflow(
     )
     await db.flush()
     return events
+
+
+

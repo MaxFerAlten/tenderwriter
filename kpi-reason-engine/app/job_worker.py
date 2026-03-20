@@ -30,6 +30,10 @@ class AnalysisJobWorker:
         self._wake_event = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @property
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive() and not self._stop_event.is_set())
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return

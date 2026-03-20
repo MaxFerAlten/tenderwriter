@@ -9,6 +9,7 @@ All endpoints are protected with JWT auth and granular RBAC.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from minio import Minio
@@ -24,10 +25,16 @@ from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
 from app.services.kpi_reason_engine import (
+    build_bid_plan_event_payload,
+    build_bid_team_assigned_event_payload,
+    build_clarification_event_payload,
+    build_contribution_wave_event_payload,
     build_requirements_extracted_event_payload,
     build_tender_created_event_payload,
+    build_tender_decision_event_payload,
     build_tender_document_ingested_event_payload,
     build_tender_outcome_recorded_event_payload,
+    build_terminal_lifecycle_event_payload,
     publish_domain_event,
     publish_tender_sync,
     sync_tender_and_publish_event,
@@ -89,6 +96,7 @@ class TenderResponse(BaseModel):
     proposal_id: int | None = None
     created_by: int | None = None
     created_by_name: str | None = None
+    lifecycle_metadata: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -178,6 +186,7 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         proposal_id=prop_id,
         created_by=tender.created_by,
         created_by_name=creator_name,
+        lifecycle_metadata=dict((tender.metadata_json or {}).get("lifecycle") or {}),
     )
 
 
@@ -533,4 +542,491 @@ async def import_tender_document(
         "filename": file.filename,
         "stats": stats,
     }
+
+
+
+class TenderDecisionRequest(BaseModel):
+    decision: str
+    decided_at: datetime | None = None
+    reason_code: str | None = None
+    notes: str | None = None
+
+
+class TenderBidPlanRequest(BaseModel):
+    plan_status: str = "created"
+    planned_at: datetime | None = None
+    owner_user_ids: list[int] = []
+    milestone_count: int | None = None
+    notes: str | None = None
+
+
+class ContributionWaveRequest(BaseModel):
+    opened_at: datetime | None = None
+    contribution_count: int | None = None
+    department_count: int | None = None
+    notes: str | None = None
+
+
+class TenderOutcomeRecordRequest(BaseModel):
+    outcome: str
+    recorded_at: datetime | None = None
+    reason_code: str | None = None
+    notes: str | None = None
+
+
+class TenderClarificationCreate(BaseModel):
+    request_id: str | None = None
+    request_summary: str
+    deadline_at: datetime | None = None
+    source_label: str | None = None
+    occurred_at: datetime | None = None
+
+
+class TenderClarificationUpdate(BaseModel):
+    response_summary: str | None = None
+    occurred_at: datetime | None = None
+    source_label: str | None = None
+
+
+class TenderLifecycleActionResponse(BaseModel):
+    status: str
+    event_type: str
+    tender_id: int
+    payload: dict
+
+
+_ALLOWED_DECISIONS = {"go", "no_bid"}
+_ALLOWED_BID_PLAN_STATUSES = {"created", "approved"}
+_ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "no_bid", "stopped", "cancelled"}
+
+
+def _utc_or_now(value: datetime | None) -> datetime:
+    return value or datetime.utcnow()
+
+
+def _clone_tender_metadata(tender: Tender) -> dict:
+    return dict(tender.metadata_json or {})
+
+
+def _clone_lifecycle_metadata(tender: Tender) -> tuple[dict, dict]:
+    metadata = _clone_tender_metadata(tender)
+    lifecycle = dict(metadata.get("lifecycle") or {})
+    return metadata, lifecycle
+
+
+def _store_lifecycle_metadata(tender: Tender, *, metadata: dict, lifecycle: dict) -> None:
+    metadata["lifecycle"] = lifecycle
+    tender.metadata_json = metadata
+
+
+def _upsert_clarification_record(
+    *,
+    lifecycle: dict,
+    request_id: str,
+    payload: dict,
+    allow_create: bool = True,
+) -> dict | None:
+    clarifications = list(lifecycle.get("clarifications") or [])
+    updated: dict | None = None
+    for item in clarifications:
+        if str(item.get("request_id")) == request_id:
+            item.update(payload)
+            updated = item
+            break
+    if updated is None:
+        if not allow_create:
+            return None
+        updated = {"request_id": request_id, **payload}
+        clarifications.append(updated)
+    lifecycle["clarifications"] = clarifications
+    return updated
+
+
+@router.post("/{tender_id}/decision", response_model=TenderLifecycleActionResponse, status_code=202)
+async def record_tender_decision(
+    tender_id: int,
+    data: TenderDecisionRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    decision = data.decision.strip().casefold()
+    if decision not in _ALLOWED_DECISIONS:
+        raise HTTPException(status_code=400, detail="Unsupported tender decision")
+
+    decided_at = _utc_or_now(data.decided_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    lifecycle["decision"] = {
+        "decision": decision,
+        "decided_at": decided_at.isoformat(),
+        "reason_code": data.reason_code,
+        "notes": data.notes,
+        "actor_id": current_user.id,
+    }
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    event_type = "go_decision_recorded" if decision == "go" else "no_bid_decision_recorded"
+    payload = build_tender_decision_event_payload(
+        decision=decision,
+        decided_at=decided_at,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type=event_type,
+        event_payload=payload,
+        occurred_at=decided_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/bid-plan", response_model=TenderLifecycleActionResponse, status_code=202)
+async def record_tender_bid_plan(
+    tender_id: int,
+    data: TenderBidPlanRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    plan_status = data.plan_status.strip().casefold()
+    if plan_status not in _ALLOWED_BID_PLAN_STATUSES:
+        raise HTTPException(status_code=400, detail="Unsupported bid plan status")
+
+    planned_at = _utc_or_now(data.planned_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    lifecycle["bid_plan"] = {
+        "plan_status": plan_status,
+        "planned_at": planned_at.isoformat(),
+        "owner_user_ids": list(data.owner_user_ids or []),
+        "milestone_count": data.milestone_count,
+        "notes": data.notes,
+        "actor_id": current_user.id,
+    }
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    event_type = "bid_plan_approved" if plan_status == "approved" else "bid_plan_created"
+    payload = build_bid_plan_event_payload(
+        plan_status=plan_status,
+        planned_at=planned_at,
+        owner_user_ids=data.owner_user_ids,
+        milestone_count=data.milestone_count,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type=event_type,
+        event_payload=payload,
+        occurred_at=planned_at,
+    )
+    if data.owner_user_ids:
+        await publish_domain_event(
+            db,
+            tender_id=tender.id,
+            actor_id=current_user.id,
+            event_type="bid_team_assigned",
+            payload=build_bid_team_assigned_event_payload(
+                assigned_at=planned_at,
+                owner_user_ids=data.owner_user_ids,
+                notes=data.notes,
+            ),
+            occurred_at=planned_at,
+        )
+    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/contribution-wave", response_model=TenderLifecycleActionResponse, status_code=202)
+async def open_contribution_wave(
+    tender_id: int,
+    data: ContributionWaveRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    opened_at = _utc_or_now(data.opened_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    lifecycle["contribution_wave"] = {
+        "opened_at": opened_at.isoformat(),
+        "contribution_count": data.contribution_count,
+        "department_count": data.department_count,
+        "notes": data.notes,
+        "actor_id": current_user.id,
+    }
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    payload = build_contribution_wave_event_payload(
+        opened_at=opened_at,
+        contribution_count=data.contribution_count,
+        department_count=data.department_count,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="contribution_request_wave_opened",
+        event_payload=payload,
+        occurred_at=opened_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="contribution_request_wave_opened", tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/outcome", response_model=TenderLifecycleActionResponse, status_code=202)
+async def record_structured_outcome(
+    tender_id: int,
+    data: TenderOutcomeRecordRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    outcome = data.outcome.strip().casefold()
+    if outcome not in _ALLOWED_OUTCOMES:
+        raise HTTPException(status_code=400, detail="Unsupported structured outcome")
+
+    recorded_at = _utc_or_now(data.recorded_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    lifecycle["structured_outcome"] = {
+        "outcome": outcome,
+        "recorded_at": recorded_at.isoformat(),
+        "reason_code": data.reason_code,
+        "notes": data.notes,
+        "actor_id": current_user.id,
+    }
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+
+    if outcome == "won":
+        tender.status = TenderStatus.WON
+    elif outcome == "lost":
+        tender.status = TenderStatus.LOST
+    elif outcome in {"excluded", "withdrawn", "no_bid", "stopped", "cancelled"}:
+        tender.status = TenderStatus.CANCELLED
+
+    await db.flush()
+
+    if outcome == "won":
+        event_type = "award_confirmed"
+    elif outcome == "lost":
+        event_type = "loss_reason_recorded"
+    elif outcome == "excluded":
+        event_type = "tender_excluded"
+    elif outcome == "withdrawn":
+        event_type = "tender_withdrawn"
+    elif outcome == "no_bid":
+        event_type = "no_bid_decision_recorded"
+    else:
+        event_type = "tender_stopped"
+
+    payload = build_terminal_lifecycle_event_payload(
+        outcome=outcome,
+        recorded_at=recorded_at,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type=event_type,
+        event_payload=payload,
+        occurred_at=recorded_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/clarifications", response_model=TenderLifecycleActionResponse, status_code=202)
+async def create_tender_clarification(
+    tender_id: int,
+    data: TenderClarificationCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    clarifications = list(lifecycle.get("clarifications") or [])
+    request_id = data.request_id or f"clar-{len(clarifications) + 1}"
+    clarification = _upsert_clarification_record(
+        lifecycle=lifecycle,
+        request_id=request_id,
+        payload={
+            "status": "requested",
+            "request_summary": data.request_summary,
+            "deadline_at": data.deadline_at.isoformat() if data.deadline_at else None,
+            "source_label": data.source_label,
+            "requested_at": occurred_at.isoformat(),
+            "updated_at": occurred_at.isoformat(),
+            "actor_id": current_user.id,
+        },
+    )
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    payload = build_clarification_event_payload(
+        request_id=request_id,
+        status="requested",
+        occurred_at=occurred_at,
+        request_summary=data.request_summary,
+        deadline_at=data.deadline_at,
+        source_label=data.source_label,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="clarification_requested",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_requested", tender_id=tender.id, payload={**payload, "clarification": clarification})
+
+
+@router.post("/{tender_id}/clarifications/{clarification_id}/draft", response_model=TenderLifecycleActionResponse, status_code=202)
+async def draft_tender_clarification_response(
+    tender_id: int,
+    clarification_id: str,
+    data: TenderClarificationUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    clarification = _upsert_clarification_record(
+        lifecycle=lifecycle,
+        request_id=clarification_id,
+        payload={
+            "status": "response_drafted",
+            "response_summary": data.response_summary,
+            "source_label": data.source_label,
+            "updated_at": occurred_at.isoformat(),
+            "actor_id": current_user.id,
+        },
+        allow_create=False,
+    )
+    if clarification is None:
+        raise HTTPException(status_code=404, detail="Clarification not found")
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    payload = build_clarification_event_payload(
+        request_id=clarification_id,
+        status="response_drafted",
+        occurred_at=occurred_at,
+        response_summary=data.response_summary,
+        source_label=data.source_label,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="clarification_response_drafted",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_response_drafted", tender_id=tender.id, payload={**payload, "clarification": clarification})
+
+
+@router.post("/{tender_id}/clarifications/{clarification_id}/submit", response_model=TenderLifecycleActionResponse, status_code=202)
+async def submit_tender_clarification_response(
+    tender_id: int,
+    clarification_id: str,
+    data: TenderClarificationUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    clarification = _upsert_clarification_record(
+        lifecycle=lifecycle,
+        request_id=clarification_id,
+        payload={
+            "status": "submitted",
+            "response_summary": data.response_summary,
+            "source_label": data.source_label,
+            "submitted_at": occurred_at.isoformat(),
+            "updated_at": occurred_at.isoformat(),
+            "actor_id": current_user.id,
+        },
+        allow_create=False,
+    )
+    if clarification is None:
+        raise HTTPException(status_code=404, detail="Clarification not found")
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    payload = build_clarification_event_payload(
+        request_id=clarification_id,
+        status="submitted",
+        occurred_at=occurred_at,
+        response_summary=data.response_summary,
+        source_label=data.source_label,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="clarification_submitted",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_submitted", tender_id=tender.id, payload={**payload, "clarification": clarification})
+
+
+@router.post("/{tender_id}/clarifications/{clarification_id}/close", response_model=TenderLifecycleActionResponse, status_code=202)
+async def close_tender_clarification(
+    tender_id: int,
+    clarification_id: str,
+    data: TenderClarificationUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    clarification = _upsert_clarification_record(
+        lifecycle=lifecycle,
+        request_id=clarification_id,
+        payload={
+            "status": "closed",
+            "response_summary": data.response_summary,
+            "source_label": data.source_label,
+            "closed_at": occurred_at.isoformat(),
+            "updated_at": occurred_at.isoformat(),
+            "actor_id": current_user.id,
+        },
+        allow_create=False,
+    )
+    if clarification is None:
+        raise HTTPException(status_code=404, detail="Clarification not found")
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+    await db.flush()
+
+    payload = build_clarification_event_payload(
+        request_id=clarification_id,
+        status="closed",
+        occurred_at=occurred_at,
+        response_summary=data.response_summary,
+        source_label=data.source_label,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="clarification_closed",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_closed", tender_id=tender.id, payload={**payload, "clarification": clarification})
+
+
+
+
 

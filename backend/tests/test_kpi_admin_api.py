@@ -42,11 +42,23 @@ class _MockKpiClient:
     async def get_latest_analysis_job(self, external_tender_id: str) -> KpiClientResult:
         return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "job_status": "running"})
 
+    async def get_service_health(self) -> KpiClientResult:
+        return KpiClientResult(True, 200, {"status": "healthy", "service": "tw-kpi-reason-engine", "version": "0.1.0", "ready": True})
+
+    async def get_service_readiness(self) -> KpiClientResult:
+        return KpiClientResult(True, 200, {"status": "ready", "service": "tw-kpi-reason-engine", "version": "0.1.0", "ready": True, "warnings": [], "dependencies": []})
+
+    async def get_version_manifest(self) -> KpiClientResult:
+        return KpiClientResult(True, 200, {"status": "available", "service": "tw-kpi-reason-engine", "version": "0.1.0", "entries": []})
+
     async def get_portfolio_overview(self) -> KpiClientResult:
-        return KpiClientResult(True, 200, {"status": "not_ready", "total_tenders": 0, "tenders_by_health": {}, "portfolio_health": "unknown"})
+        return KpiClientResult(True, 200, {"status": "not_ready", "total_tenders": 0, "tenders_by_health": {}, "portfolio_health": "unknown", "analytical_phases": {}, "critical_tenders": []})
 
     async def get_portfolio_bottlenecks(self) -> KpiClientResult:
         return KpiClientResult(True, 200, {"status": "not_ready", "items": []})
+
+    async def get_portfolio_intelligence(self) -> KpiClientResult:
+        return KpiClientResult(True, 200, {"status": "not_ready", "phase_hotspots": [], "risk_hotspots": [], "outcome_trends": {}, "watchlist": [], "notes": []})
 
     async def get_tender_diagnostics(self, external_tender_id: str) -> KpiClientResult:
         return KpiClientResult(True, 200, {"external_tender_id": external_tender_id, "status": "not_ready", "summary": "ok", "findings": []})
@@ -84,6 +96,8 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["external_tender_id"], "12")
         self.assertEqual(payload["health"], "unknown")
         self.assertEqual(payload["notes"], ["KPI service timeout"])
+        self.assertFalse(payload["analysis_metadata"]["shadow_mode_enabled"])
+        self.assertEqual(payload["analysis_metadata"]["forecast_engine_active"], None)
         self.assertTrue(payload["degraded"])
         self.assertEqual(payload["degraded_reason"], "KPI service timeout")
 
@@ -108,6 +122,20 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["items"][1]["error_message"], "Upstream timeout")
         load_ids_mock.assert_awaited_once()
         self.assertEqual(sync_mock.await_count, 2)
+
+    def test_service_status_query_aggregates_runtime_payloads(self) -> None:
+        mock_client = _MockKpiClient()
+
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+            response = self.client.get("/admin/kpi/service/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ready")
+        self.assertFalse(payload["degraded"])
+        self.assertEqual(payload["health"]["status"], "healthy")
+        self.assertEqual(payload["readiness"]["status"], "ready")
+        self.assertEqual(payload["version_manifest"]["status"], "available")
 
     def test_recompute_endpoint_resyncs_tender_before_requesting_analysis_job(self) -> None:
         mock_client = _MockKpiClient(
@@ -190,6 +218,49 @@ class KpiAdminApiTests(unittest.TestCase):
                         "recommended_action": "Protect the submission path.",
                     }
                 ],
+                "next_best_actions": [
+                    {
+                        "code": "protect_submission_corridor",
+                        "title": "Protect the submission corridor",
+                        "priority": "now",
+                        "rationale": "The tender is leaning toward the submission path.",
+                        "expected_impact": "Keep the tender on the shortest path to submission.",
+                        "confidence": 0.81,
+                        "drivers": ["Projected path: S6 -> S8 -> S9"],
+                    }
+                ],
+                "analysis_metadata": {
+                    "rollout_policy": "full",
+                    "markov_rollout_enabled": True,
+                    "calibrated_forecast_enabled": True,
+                    "forecast_engine_active": "markov_full_lifecycle_v1",
+                    "forecast_signal_type": "calibrated",
+                    "forecast_engine_candidates": ["markov_full_lifecycle_v1", "heuristic_rule_v1"],
+                    "markov_model_active": True,
+                    "markov_model_version": "markov-full-lifecycle-v1",
+                    "markov_phase_scope": ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13"],
+                    "markov_reliable_phase_scope": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13"],
+                    "semantic_priority": ["A1", "A4"],
+                    "canonical_source_types": ["observed", "inferred", "reconstructed"],
+                    "shadow_kpis": ["A1", "A4"],
+                    "markov_state_scope": ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13"],
+                    "markov_absorbing_states": ["S11", "S12", "S13"],
+                    "markov_source_mix": {"observed": 4, "reconstructed": 1},
+                    "markov_bundle_kind": "full_journey",
+                    "markov_full_journey_enabled": True,
+                    "markov_coverage_ratio": 0.56,
+                    "markov_projected_path": ["S6", "S8", "S9"],
+                    "markov_backtest_version": "markov-backtest-v1",
+                    "markov_backtest_sample_count": 8,
+                    "markov_backtest_submission_accuracy": 0.75,
+                    "markov_backtest_calibration_gap": 0.19,
+                    "forecast_driver_kpis": ["A1", "A4"],
+                    "forecast_driver_scores": {"A1": 72.5, "A4": 68.0},
+                    "forecast_primary_action_code": "protect_submission_corridor",
+                    "forecast_primary_action_confidence": 0.81,
+                    "forecast_decision_bundle_version": "forecast-decision-support-v1",
+                    "scored_kpis": ["A1", "A4"],
+                },
             })
 
         mock_client.get_tender_forecast = rich_forecast
@@ -202,6 +273,64 @@ class KpiAdminApiTests(unittest.TestCase):
         self.assertEqual(payload["upstream_status_code"], 200)
         self.assertEqual(payload["scenarios"][0]["name"], "submit_on_time")
         self.assertEqual(payload["scenarios"][0]["drivers"], ["Q remains stable"])
+        self.assertEqual(payload["analysis_metadata"]["forecast_signal_type"], "calibrated")
+        self.assertEqual(payload["analysis_metadata"]["forecast_engine_active"], "markov_full_lifecycle_v1")
+        self.assertEqual(payload["analysis_metadata"]["markov_model_version"], "markov-full-lifecycle-v1")
+        self.assertEqual(payload["analysis_metadata"]["markov_bundle_kind"], "full_journey")
+        self.assertTrue(payload["analysis_metadata"]["markov_full_journey_enabled"])
+        self.assertEqual(payload["analysis_metadata"]["markov_projected_path"], ["S6", "S8", "S9"])
+        self.assertEqual(payload["analysis_metadata"]["forecast_driver_scores"], {"A1": 72.5, "A4": 68.0})
+        self.assertEqual(payload["analysis_metadata"]["forecast_primary_action_code"], "protect_submission_corridor")
+        self.assertEqual(payload["analysis_metadata"]["forecast_decision_bundle_version"], "forecast-decision-support-v1")
+        self.assertTrue(payload["analysis_metadata"]["markov_rollout_enabled"])
+        self.assertEqual(payload["analysis_metadata"]["markov_source_mix"], {"observed": 4, "reconstructed": 1})
+        self.assertEqual(payload["next_best_actions"][0]["code"], "protect_submission_corridor")
+
+    def test_portfolio_intelligence_query_preserves_rich_payload(self) -> None:
+        mock_client = _MockKpiClient()
+
+        async def rich_intelligence() -> KpiClientResult:
+            return KpiClientResult(True, 200, {
+                "status": "not_ready",
+                "generated_at": "2026-03-20T09:30:00Z",
+                "phase_hotspots": [
+                    {
+                        "phase": "S6",
+                        "count": 3,
+                        "summary": "3 tenders are concentrated in Rework / Clarifications.",
+                    }
+                ],
+                "risk_hotspots": [
+                    {
+                        "code": "A4",
+                        "count": 2,
+                        "severity": "critical",
+                        "summary": "Compliance risk remains a dominant cross-tender blocker.",
+                    }
+                ],
+                "outcome_trends": {"S11": 1, "S12": 1, "S13": 2},
+                "watchlist": [
+                    {
+                        "external_tender_id": "TEN-RED",
+                        "title": "Critical tender",
+                        "analytical_phase": "S8",
+                        "health": "red",
+                        "summary": "Compliance gate remains blocked.",
+                    }
+                ],
+                "notes": ["Primary hotspot is A4 with 2 mirrored tenders."],
+            })
+
+        mock_client.get_portfolio_intelligence = rich_intelligence
+        with patch("app.api.kpi_admin.KpiReasonEngineClient", return_value=mock_client):
+            response = self.client.get("/admin/kpi/portfolio/intelligence")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["phase_hotspots"][0]["phase"], "S6")
+        self.assertEqual(payload["risk_hotspots"][0]["code"], "A4")
+        self.assertEqual(payload["watchlist"][0]["external_tender_id"], "TEN-RED")
+        self.assertEqual(payload["outcome_trends"], {"S11": 1, "S12": 1, "S13": 2})
 
     def test_latest_analysis_job_falls_back_to_degraded_state(self) -> None:
         mock_client = _MockKpiClient()

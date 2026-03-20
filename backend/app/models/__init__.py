@@ -431,6 +431,26 @@ class KpiDomainEvent(Base):
     actor = relationship("User", foreign_keys=[actor_id])
 
 
+class KpiAdminAuditLog(Base):
+    __tablename__ = "kpi_admin_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
+    admin_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    admin_user_email = Column(String(255), nullable=False)
+    admin_user_role = Column(String(50), nullable=False)
+    delivered = Column(Boolean, nullable=True)
+    degraded = Column(Boolean, default=False, nullable=False)
+    upstream_status_code = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    payload_json = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    tender = relationship("Tender")
+    admin_user = relationship("User", foreign_keys=[admin_user_id])
+
+
 class AIGatewayTarget(Base):
     __tablename__ = "ai_gateway_targets"
 

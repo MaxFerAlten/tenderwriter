@@ -115,6 +115,15 @@ class KpiReasonEngineClient:
     async def sync_tender(self, payload: dict[str, Any]) -> KpiClientResult:
         return await self._post("/v1/tenders", payload)
 
+    async def get_service_health(self) -> KpiClientResult:
+        return await self._get("/health")
+
+    async def get_service_readiness(self) -> KpiClientResult:
+        return await self._get("/ready")
+
+    async def get_version_manifest(self) -> KpiClientResult:
+        return await self._get("/version-manifest")
+
     async def publish_event(
         self,
         external_tender_id: str,
@@ -127,6 +136,9 @@ class KpiReasonEngineClient:
 
     async def get_portfolio_bottlenecks(self) -> KpiClientResult:
         return await self._get("/v1/admin/portfolio/bottlenecks")
+
+    async def get_portfolio_intelligence(self) -> KpiClientResult:
+        return await self._get("/v1/admin/portfolio/intelligence")
 
     async def get_tender_snapshot(self, external_tender_id: str) -> KpiClientResult:
         return await self._get(f"/v1/tenders/{external_tender_id}/snapshot")
@@ -253,6 +265,7 @@ def build_tender_sync_payload(tender: Tender) -> dict[str, Any]:
                 "budget_estimate": tender.budget_estimate,
                 "source_file_url": tender.source_file_url,
                 "proposal_id": proposal.id if proposal else None,
+                "lifecycle": dict((tender.metadata_json or {}).get("lifecycle") or {}),
             }
         ),
     }
@@ -394,6 +407,193 @@ def build_tender_outcome_recorded_event_payload(*, outcome: str, recorded_at: da
     }
 
 
+
+def build_tender_decision_event_payload(
+    *,
+    decision: str,
+    decided_at: datetime,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "decision": decision,
+            "decided_at": _datetime_to_iso(decided_at),
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
+
+
+def build_bid_plan_event_payload(
+    *,
+    plan_status: str,
+    planned_at: datetime,
+    owner_user_ids: Sequence[int] | None = None,
+    milestone_count: int | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "plan_status": plan_status,
+            "planned_at": _datetime_to_iso(planned_at),
+            "owner_user_ids": list(owner_user_ids or []),
+            "milestone_count": milestone_count,
+            "notes": notes,
+        }
+    )
+
+
+def build_bid_team_assigned_event_payload(
+    *,
+    assigned_at: datetime,
+    owner_user_ids: Sequence[int] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    owner_ids = list(owner_user_ids or [])
+    return _compact_dict(
+        {
+            "assigned_at": _datetime_to_iso(assigned_at),
+            "owner_user_ids": owner_ids,
+            "owner_count": len(owner_ids),
+            "notes": notes,
+        }
+    )
+
+
+def build_contribution_wave_event_payload(
+    *,
+    opened_at: datetime,
+    contribution_count: int | None = None,
+    department_count: int | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "opened_at": _datetime_to_iso(opened_at),
+            "contribution_count": contribution_count,
+            "department_count": department_count,
+            "notes": notes,
+        }
+    )
+
+
+def build_contribution_assignment_confirmed_event_payload(
+    *,
+    occurred_at: datetime,
+    external_contribution_id: str,
+    owner_user_id: int | None = None,
+    external_request_id: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_contribution_id": external_contribution_id,
+            "owner_user_id": owner_user_id,
+            "external_request_id": external_request_id,
+            "confirmed_at": _datetime_to_iso(occurred_at),
+            "notes": notes,
+        }
+    )
+
+
+def build_draft_integrated_ready_event_payload(
+    *,
+    ready_at: datetime,
+    proposal_id: int,
+    approved_section_count: int,
+    total_section_count: int,
+    blocking_rework_count: int | None = None,
+) -> dict[str, Any]:
+    readiness_ratio = None
+    if total_section_count > 0:
+        readiness_ratio = round((approved_section_count / total_section_count) * 100, 2)
+    return _compact_dict(
+        {
+            "proposal_id": proposal_id,
+            "ready_at": _datetime_to_iso(ready_at),
+            "approved_section_count": approved_section_count,
+            "total_section_count": total_section_count,
+            "blocking_rework_count": blocking_rework_count,
+            "readiness_ratio": readiness_ratio,
+        }
+    )
+
+
+def build_clarification_event_payload(
+    *,
+    request_id: str,
+    status: str,
+    occurred_at: datetime,
+    request_summary: str | None = None,
+    response_summary: str | None = None,
+    deadline_at: datetime | None = None,
+    source_label: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "request_id": request_id,
+            "status": status,
+            "occurred_at": _datetime_to_iso(occurred_at),
+            "request_summary": request_summary,
+            "response_summary": response_summary,
+            "deadline_at": _datetime_to_iso(deadline_at),
+            "source_label": source_label,
+        }
+    )
+
+
+def build_submission_status_event_payload(
+    *,
+    submission_status: str,
+    occurred_at: datetime,
+    channel: str,
+    reference_id: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "submission_status": submission_status,
+            "occurred_at": _datetime_to_iso(occurred_at),
+            "channel": channel,
+            "reference_id": reference_id,
+            "error_code": error_code,
+            "error_message": error_message,
+        }
+    )
+
+
+def build_award_details_event_payload(
+    *,
+    recorded_at: datetime,
+    award_reference: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "recorded_at": _datetime_to_iso(recorded_at),
+            "award_reference": award_reference,
+            "notes": notes,
+        }
+    )
+
+
+def build_terminal_lifecycle_event_payload(
+    *,
+    outcome: str,
+    recorded_at: datetime,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "outcome": outcome,
+            "recorded_at": _datetime_to_iso(recorded_at),
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
 def _duration_hours(start: datetime | None, end: datetime | None) -> float | None:
     normalized_start = _as_utc(start)
     normalized_end = _as_utc(end)
@@ -728,3 +928,7 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
+
+
+
+

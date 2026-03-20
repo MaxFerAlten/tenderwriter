@@ -6,7 +6,46 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.schemas import HealthClass, KpiScore
+from app.config import settings
+from app.contract import (
+    AMBER_E_THRESHOLD,
+    AMBER_Q_THRESHOLD,
+    FORMULA_BUNDLE_VERSION,
+    GREEN_A4_THRESHOLD,
+    GREEN_E_THRESHOLD,
+    GREEN_Q_THRESHOLD,
+    HEALTH_RULE_VERSION,
+    KPI_CONTRACT_VERSION,
+    MARKOV_PHASE_SCOPE,
+    MARKOV_RELIABLE_PHASE_SCOPE,
+    MODEL_BUNDLE_VERSION,
+    OPERATIONAL_WEIGHTS,
+    PROMPT_BUNDLE_VERSION,
+    QUALITY_WEIGHTS,
+    QUALITATIVE_ENGINE_PROXY,
+    QUALITATIVE_ENGINE_SEMANTIC,
+    QUALITATIVE_ENGINE_SHADOW,
+    SCORE_SCALE_EXTERNAL,
+    SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+    SCORE_SCALE_INTERNAL,
+    SEMANTIC_BUNDLE_VERSION,
+    SEMANTIC_ENGINE_KIND,
+    SEMANTIC_EXECUTION_MODE,
+    SEMANTIC_FALLBACK_POLICY_VERSION,
+    SEMANTIC_FORMULA_VERSIONS,
+    SEMANTIC_MODEL_VERSION,
+    SEMANTIC_PRIORITY,
+    SEMANTIC_PROMPT_VERSION,
+    SEMANTIC_SUPPORTED_KPIS,
+    SHADOW_BUNDLE_VERSION,
+    SHADOW_ENGINE_KIND,
+    SHADOW_EXECUTION_MODE,
+    SHADOW_SUPPORTED_KPIS,
+    normalize_source_type,
+)
+from app.schemas import HealthClass, KpiScore, SemanticEvaluation, SemanticShadowEvaluation
+from app.semantic_engine import build_a1_semantic, build_a2_semantic, build_a3_semantic, build_a4_semantic
+from app.semantic_shadow import build_a1_shadow, build_a4_shadow
 
 _ACTIVE_SECTION_STATUSES = {"in_progress", "in_review", "approved", "submitted"}
 _COMPLETED_SECTION_STATUSES = {"approved", "submitted"}
@@ -23,17 +62,17 @@ _TERMINAL_PHASES = {
     "no-bid": "S13",
     "no_bid": "S13",
 }
-_OPERATIONAL_WEIGHTS = {"B1": 0.30, "B2": 0.30, "B3": 0.15, "B4": 0.25}
-_QUALITY_WEIGHTS = {"A1": 0.30, "A2": 0.20, "A3": 0.25, "A4": 0.25}
-_FORMULA_BUNDLE_VERSION = "quality-formulas-v2"
-_MODEL_BUNDLE_VERSION = "deterministic-proxy-model-v2"
-_PROMPT_BUNDLE_VERSION = "deterministic-no-prompt-v1"
+_FORMULA_BUNDLE_VERSION = FORMULA_BUNDLE_VERSION
+_MODEL_BUNDLE_VERSION = MODEL_BUNDLE_VERSION
+_PROMPT_BUNDLE_VERSION = PROMPT_BUNDLE_VERSION
+_OPERATIONAL_WEIGHTS = OPERATIONAL_WEIGHTS
+_QUALITY_WEIGHTS = QUALITY_WEIGHTS
 _KPI_VERSION_MAP = {
     "A1": {"formula_version": "requirement-coverage-v2", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "A2": {"formula_version": "editorial-quality-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "A3": {"formula_version": "competitiveness-value-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "A4": {"formula_version": "compliance-readiness-v2", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
-    "Q": {"formula_version": "qualitative-index-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
+    "Q": {"formula_version": "qualitative-index-v2", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "B1": {"formula_version": "deadline-adherence-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "B2": {"formula_version": "sla-responsiveness-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
     "B3": {"formula_version": "call-participation-v1", "model_version": _MODEL_BUNDLE_VERSION, "prompt_version": _PROMPT_BUNDLE_VERSION},
@@ -111,15 +150,19 @@ def _severity_from_score(value: float | None, health: HealthClass) -> str:
 
 
 def _combine_provenance(scores: list[KpiScore]) -> str:
-    provenances = {score.provenance for score in scores if score.provenance != "unknown"}
+    provenances = {
+        normalize_source_type(score.source_type or score.provenance)
+        for score in scores
+        if normalize_source_type(score.source_type or score.provenance) != "unknown"
+    }
     if not provenances:
         return "unknown"
     if "reconstructed" in provenances:
         return "reconstructed"
     if "inferred" in provenances:
         return "inferred"
-    if provenances == {"measured"}:
-        return "measured"
+    if provenances == {"observed"}:
+        return "observed"
     return "unknown"
 
 
@@ -145,15 +188,78 @@ def _count_events(events: list[dict[str, Any]], event_type: str) -> int:
 
 
 def _latest_outcome(events: list[dict[str, Any]]) -> str | None:
+    direct_event_map = {
+        "award_confirmed": "won",
+        "loss_reason_recorded": "lost",
+        "tender_excluded": "excluded",
+        "tender_withdrawn": "withdrawn",
+        "tender_stopped": "cancelled",
+        "no_bid_decision_recorded": "no_bid",
+    }
     for event in reversed(events):
-        if _normalized(event.get("event_type")) != "tender_outcome_recorded":
-            continue
-        payload = _event_payload(event)
-        outcome = _normalized(payload.get("outcome"))
-        if outcome:
-            return outcome
+        event_type = _normalized(event.get("event_type"))
+        if event_type == "tender_outcome_recorded":
+            payload = _event_payload(event)
+            outcome = _normalized(payload.get("outcome"))
+            if outcome:
+                return outcome
+        mapped = direct_event_map.get(event_type)
+        if mapped:
+            return mapped
     return None
 
+
+def _latest_decision(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        event_type = _normalized(event.get("event_type"))
+        if event_type == "go_decision_recorded":
+            return "go"
+        if event_type == "no_bid_decision_recorded":
+            return "no_bid"
+    return None
+
+
+def _latest_submission_state(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        event_type = _normalized(event.get("event_type"))
+        if event_type == "submission_failed":
+            return "failed"
+        if event_type == "submission_acknowledged":
+            return "acknowledged"
+        if event_type == "tender_submitted":
+            return "submitted"
+    return None
+
+
+def _clarification_active(events: list[dict[str, Any]]) -> bool:
+    named_clarifications: dict[str, bool] = {}
+    unnamed_open_count = 0
+
+    for event in events:
+        event_type = _normalized(event.get("event_type"))
+        if event_type not in {
+            "clarification_requested",
+            "clarification_response_drafted",
+            "clarification_submitted",
+            "clarification_closed",
+        }:
+            continue
+
+        payload = _event_payload(event)
+        request_id = payload.get("request_id")
+        normalized_request_id = str(request_id).strip() if request_id is not None else ""
+        is_open_event = event_type != "clarification_closed"
+
+        if normalized_request_id:
+            named_clarifications[normalized_request_id] = is_open_event
+            continue
+
+        if is_open_event:
+            unnamed_open_count += 1
+        else:
+            unnamed_open_count = max(0, unnamed_open_count - 1)
+
+    return unnamed_open_count > 0 or any(named_clarifications.values())
 
 def _days_until(due_at: datetime | None, now: datetime) -> float | None:
     if due_at is None:
@@ -187,15 +293,35 @@ def _version_fields(kpi_code: str) -> dict[str, Any]:
     return dict(_KPI_VERSION_MAP.get(kpi_code, {}))
 
 
-def _build_score(*, kpi_code: str, value: float | None = None, label: str | None = None, provenance: str = "unknown", health: HealthClass = "unknown", confidence: float | None = None, evidence: list[str] | None = None, recommendation: str | None = None, severity: str | None = None) -> KpiScore:
+def _build_score(
+    *,
+    kpi_code: str,
+    value: float | None = None,
+    label: str | None = None,
+    provenance: str = "unknown",
+    health: HealthClass = "unknown",
+    confidence: float | None = None,
+    evidence: list[str] | None = None,
+    recommendation: str | None = None,
+    criticalities: list[str] | None = None,
+    severity: str | None = None,
+) -> KpiScore:
+    canonical_source_type = normalize_source_type(provenance)
+    evidence_items = list(evidence or [])
+    recommendation_items = [recommendation] if recommendation else []
     return KpiScore(
         kpi_code=kpi_code,
+        score=value,
         value=value,
         label=label,
-        provenance=provenance,
+        source_type=canonical_source_type,
+        provenance=canonical_source_type,
         health=health,
         confidence=confidence,
-        evidence=list(evidence or []),
+        evidences=evidence_items,
+        evidence=evidence_items,
+        criticalities=list(criticalities or []),
+        recommendations=recommendation_items,
         recommendation=recommendation,
         severity=severity or _severity_from_score(value, health),
         **_version_fields(kpi_code),
@@ -212,6 +338,80 @@ def _unknown_score(*, kpi_code: str, label: str, evidence: list[str], recommenda
         evidence=evidence,
         recommendation=recommendation,
         severity="unknown",
+    )
+
+
+def _with_shadow(score: KpiScore, shadow: SemanticShadowEvaluation | None) -> KpiScore:
+    if shadow is None:
+        return score
+    payload = score.model_dump(mode="python")
+    payload["shadow"] = shadow.model_dump(mode="python")
+    return KpiScore(**payload)
+
+
+
+def _override_score_contract(
+    score: KpiScore,
+    *,
+    formula_version: str | None = None,
+    model_version: str | None = None,
+    prompt_version: str | None = None,
+    label: str | None = None,
+) -> KpiScore:
+    payload = score.model_dump(mode="python")
+    if formula_version is not None:
+        payload["formula_version"] = formula_version
+    if model_version is not None:
+        payload["model_version"] = model_version
+    if prompt_version is not None:
+        payload["prompt_version"] = prompt_version
+    if label is not None:
+        payload["label"] = label
+    return KpiScore(**payload)
+
+
+
+def _with_semantic(score: KpiScore, semantic: SemanticEvaluation | None) -> KpiScore:
+    if semantic is None:
+        return score
+
+    payload = score.model_dump(mode="python")
+    semantic_payload = semantic.model_dump(mode="python")
+
+    if semantic.semantic_score is None:
+        if score.value is not None:
+            semantic_payload["status"] = "fallback"
+            semantic_payload["fallback_reason"] = semantic_payload.get("fallback_reason") or "semantic_score_not_available"
+        payload["semantic"] = semantic_payload
+        return KpiScore(**payload)
+
+    recommendations = list(semantic.recommendations or [])
+    payload["semantic"] = semantic_payload
+    payload["score"] = semantic.semantic_score
+    payload["value"] = semantic.semantic_score
+    payload["health"] = semantic.health
+    payload["source_type"] = semantic.source_type
+    payload["provenance"] = semantic.source_type
+    payload["confidence"] = semantic.confidence
+    payload["evidences"] = list(semantic.evidences or [])
+    payload["evidence"] = list(semantic.evidences or [])
+    payload["criticalities"] = list(semantic.criticalities or [])
+    payload["recommendations"] = recommendations
+    payload["recommendation"] = recommendations[0] if recommendations else None
+    payload["formula_version"] = semantic.formula_version
+    payload["model_version"] = semantic.model_version
+    payload["prompt_version"] = semantic.prompt_version
+    return KpiScore(**payload)
+
+
+
+def _with_qualitative_summary_contract(score: KpiScore) -> KpiScore:
+    return _override_score_contract(
+        score,
+        formula_version=SEMANTIC_FORMULA_VERSIONS["Q"],
+        model_version=SEMANTIC_MODEL_VERSION,
+        prompt_version=SEMANTIC_PROMPT_VERSION,
+        label="Qualitative quality index derived from official semantic A1..A4.",
     )
 
 def _score_a1(
@@ -265,7 +465,7 @@ def _score_a1(
 
     provenance = "measured" if addressed_requirements > 0 else "inferred"
     confidence = 0.82 if addressed_requirements > 0 else round(min(0.78, 0.58 + (section_count * 0.04)), 2)
-    health = _health_from_score(value, green=75.0, amber=45.0)
+    health = _health_from_score(value, green=GREEN_A4_THRESHOLD, amber=AMBER_Q_THRESHOLD)
     if health == "green":
         recommendation = "Keep the requirement-to-section mapping current and preserve traceability for final compliance review."
     elif health == "amber":
@@ -343,7 +543,7 @@ def _score_a2(
 
     provenance = "measured" if operational_state.reviews_started or operational_state.reworks else "inferred"
     confidence = 0.86 if provenance == "measured" else round(min(0.79, 0.58 + (section_count * 0.05)), 2)
-    health = _health_from_score(value, green=78.0, amber=55.0)
+    health = _health_from_score(value, green=GREEN_Q_THRESHOLD, amber=AMBER_Q_THRESHOLD)
 
     if open_reworks > 0:
         recommendation = "Resolve open rework loops and stabilize the latest section revisions before claiming editorial readiness."
@@ -436,7 +636,7 @@ def _score_a3(
 
     provenance = "measured" if (operational_state.gates or operational_state.reviews_started or operational_state.reworks) else "inferred"
     confidence = 0.84 if provenance == "measured" else 0.72
-    health = _health_from_score(value, green=78.0, amber=55.0)
+    health = _health_from_score(value, green=GREEN_Q_THRESHOLD, amber=AMBER_Q_THRESHOLD)
 
     if open_blocking_reworks > 0 or failed_gates > 0:
         recommendation = "Close blocking rework and failed gates on high-priority requirements before presenting the offer as competitive."
@@ -542,7 +742,7 @@ def _score_a4(
     ]
 
     confidence = 0.78 if due_at and requirement_count > 0 else 0.64
-    health = _health_from_score(value, green=75.0, amber=45.0)
+    health = _health_from_score(value, green=GREEN_A4_THRESHOLD, amber=AMBER_Q_THRESHOLD)
     if health == "green":
         recommendation = "Keep the compliance map synchronized and preserve enough time buffer before submission."
     elif health == "amber":
@@ -993,7 +1193,7 @@ def _score_q(scores: list[KpiScore]) -> KpiScore:
         evidence.append(f"{score.kpi_code}: {score.value} ({score.health}).")
 
     value = round(weighted_total / total_weight, 1)
-    health = _health_from_score(value, green=78.0, amber=55.0)
+    health = _health_from_score(value, green=GREEN_Q_THRESHOLD, amber=AMBER_Q_THRESHOLD)
     weakest = min(measured_scores, key=lambda score: score.value if score.value is not None else 0.0)
     recommendation = weakest.recommendation or "Improve the weakest qualitative KPI before progressing the tender."
     return _build_score(
@@ -1034,7 +1234,7 @@ def _score_e(scores: list[KpiScore]) -> KpiScore:
         value=value,
         label="Operational efficiency index derived from B1..B4.",
         provenance=_combine_provenance(measured_scores),
-        health=_health_from_score(value, green=80.0, amber=55.0),
+        health=_health_from_score(value, green=GREEN_E_THRESHOLD, amber=AMBER_E_THRESHOLD),
         confidence=_weighted_confidence(measured_scores, _OPERATIONAL_WEIGHTS),
         evidence=evidence,
         recommendation=f"Priority focus: {weakest.kpi_code}. {weakest.recommendation or 'Reduce the weakest operational bottleneck.'}",
@@ -1060,23 +1260,55 @@ def _compute_operational_snapshot(events: list[dict[str, Any]], now: datetime, *
     return OperationalSnapshot(b1=b1, b2=b2, b3=b3, b4=b4, e=e, notes=notes, summary=summary)
 
 
-def _derive_health(scores: list[KpiScore]) -> HealthClass:
+def _derive_health(*, scores: list[KpiScore], q_score: KpiScore, e_score: KpiScore, a4_score: KpiScore, failed_gates: int) -> HealthClass:
     concrete = [score.health for score in scores if score.health != "unknown"]
+    q_value = q_score.value
+    e_value = e_score.value
+    a4_value = a4_score.value
     if not concrete:
         return "unknown"
-    if "red" in concrete:
+    if failed_gates > 0:
         return "red"
+    if any(score.health == "red" for score in scores if score.kpi_code not in {"Q", "E"}):
+        return "red"
+    if q_value is not None and e_value is not None and a4_value is not None and q_value >= GREEN_Q_THRESHOLD and e_value >= GREEN_E_THRESHOLD and a4_value >= GREEN_A4_THRESHOLD:
+        return "green"
     if "amber" in concrete:
         return "amber"
     return "green"
 
 
-def _derive_phase(*, current_status: str, document_ingested: bool, requirements_extracted: bool, requirement_count: int, active_sections: int, proposal_updates: int, a1_score: KpiScore, outcome: str | None, submitted: bool, operational_state: OperationalState) -> str:
+def _derive_phase(
+    *,
+    current_status: str,
+    document_ingested: bool,
+    requirements_extracted: bool,
+    requirement_count: int,
+    active_sections: int,
+    proposal_updates: int,
+    a1_score: KpiScore,
+    outcome: str | None,
+    submitted: bool,
+    submission_failed: bool,
+    clarification_requested: bool,
+    decision: str | None,
+    bid_plan_started: bool,
+    request_wave_opened: bool,
+    draft_ready: bool,
+    operational_state: OperationalState,
+) -> str:
+    normalized_status = _normalized(current_status)
     if outcome in _TERMINAL_PHASES:
         return _TERMINAL_PHASES[outcome]
-    if _normalized(current_status) in _TERMINAL_PHASES:
-        return _TERMINAL_PHASES[_normalized(current_status)]
-    if submitted or _normalized(current_status) == "submitted":
+    if normalized_status in _TERMINAL_PHASES:
+        return _TERMINAL_PHASES[normalized_status]
+    if decision == "no_bid":
+        return "S13"
+    if clarification_requested:
+        return "S10"
+    if submission_failed:
+        return "S8"
+    if submitted or normalized_status == "submitted":
         return "S9"
 
     open_blocking_reworks = sum(1 for rework in operational_state.reworks if rework.get("is_blocking") and rework.get("resolved_at") is None)
@@ -1090,10 +1322,18 @@ def _derive_phase(*, current_status: str, document_ingested: bool, requirements_
         return "S8"
     if open_reviews > 0:
         return "S5"
+    if draft_ready:
+        return "S7"
+    if request_wave_opened:
+        return "S3"
+    if bid_plan_started or decision == "go":
+        return "S2"
+    if document_ingested and not decision and not bid_plan_started and not request_wave_opened and proposal_updates == 0 and active_sections == 0:
+        return "S1"
     if not document_ingested:
         return "S0"
     if not requirements_extracted and requirement_count == 0:
-        return "S2"
+        return "S1" if document_ingested else "S0"
     if requirements_extracted and proposal_updates == 0 and active_sections == 0:
         return "S3"
     if active_sections > 0 and (a1_score.value or 0.0) < 70.0:
@@ -1102,13 +1342,56 @@ def _derive_phase(*, current_status: str, document_ingested: bool, requirements_
         return "S7"
     return "S2"
 
-
 def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, section_count: int, scored_kpis: list[KpiScore]) -> dict[str, Any]:
+    semantic_official_enabled = settings.semantic_official_rollout_enabled
+    shadow_rollout_enabled = settings.semantic_shadow_rollout_enabled
+    semantic_kpis = [score.kpi_code for score in scored_kpis if score.semantic is not None]
+    semantic_fallback_kpis = [
+        score.kpi_code
+        for score in scored_kpis
+        if score.semantic is not None and score.semantic.status == "fallback"
+    ]
+    shadow_kpis = [score.kpi_code for score in scored_kpis if score.shadow is not None]
+
+    if semantic_official_enabled:
+        qualitative_engine_kind = QUALITATIVE_ENGINE_SEMANTIC
+    elif shadow_rollout_enabled:
+        qualitative_engine_kind = QUALITATIVE_ENGINE_SHADOW
+    else:
+        qualitative_engine_kind = QUALITATIVE_ENGINE_PROXY
+
     return {
+        "contract_version": KPI_CONTRACT_VERSION,
+        "health_rule_version": HEALTH_RULE_VERSION,
+        "score_scale_internal": SCORE_SCALE_INTERNAL,
+        "score_scale_external": SCORE_SCALE_EXTERNAL,
         "formula_bundle_version": _FORMULA_BUNDLE_VERSION,
         "model_bundle_version": _MODEL_BUNDLE_VERSION,
         "prompt_bundle_version": _PROMPT_BUNDLE_VERSION,
-        "engine_kind": "deterministic_proxy",
+        "snapshot_output_schema_version": SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+        "markov_phase_scope": list(MARKOV_PHASE_SCOPE),
+        "markov_reliable_phase_scope": list(MARKOV_RELIABLE_PHASE_SCOPE),
+        "semantic_priority": list(SEMANTIC_PRIORITY),
+        "canonical_source_types": ["observed", "inferred", "reconstructed", "unknown"],
+        "rollout_policy": settings.normalized_rollout_policy,
+        "qualitative_engine_kind": qualitative_engine_kind,
+        "qualitative_engine_mode": settings.qualitative_engine_mode,
+        "semantic_official_enabled": semantic_official_enabled,
+        "semantic_engine_kind": SEMANTIC_ENGINE_KIND if semantic_official_enabled else None,
+        "semantic_execution_mode": SEMANTIC_EXECUTION_MODE if semantic_official_enabled else None,
+        "semantic_bundle_version": SEMANTIC_BUNDLE_VERSION if semantic_official_enabled else None,
+        "semantic_kpis": semantic_kpis or (list(SEMANTIC_SUPPORTED_KPIS) if semantic_official_enabled else []),
+        "semantic_fallback_kpis": semantic_fallback_kpis,
+        "semantic_fallback_policy_version": SEMANTIC_FALLBACK_POLICY_VERSION if semantic_official_enabled else None,
+        "shadow_rollout_enabled": shadow_rollout_enabled,
+        "markov_rollout_enabled": settings.markov_rollout_enabled,
+        "calibrated_forecast_enabled": settings.markov_rollout_enabled,
+        "shadow_mode_enabled": shadow_rollout_enabled,
+        "shadow_engine_kind": SHADOW_ENGINE_KIND if shadow_rollout_enabled else None,
+        "shadow_execution_mode": SHADOW_EXECUTION_MODE if shadow_rollout_enabled else None,
+        "shadow_bundle_version": SHADOW_BUNDLE_VERSION if shadow_rollout_enabled else None,
+        "shadow_kpis": shadow_kpis or (list(SHADOW_SUPPORTED_KPIS) if shadow_rollout_enabled else []),
+        "engine_kind": qualitative_engine_kind,
         "scored_kpis": [score.kpi_code for score in scored_kpis if score.value is not None],
         "event_count": len(events),
         "requirements_tracked": requirement_count,
@@ -1131,12 +1414,41 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
     requirements = list(tender.get("requirement_contexts") or [])
     sections = list(tender.get("section_contexts") or [])
     current_status = _normalized(tender.get("current_status"))
+    metadata = tender.get("metadata") or {}
+    lifecycle = dict(metadata.get("lifecycle") or {})
+
+    lifecycle_decision = _normalized((lifecycle.get("decision") or {}).get("decision")) or None
+    lifecycle_outcome = _normalized((lifecycle.get("structured_outcome") or {}).get("outcome")) or None
+    lifecycle_submission_status = _normalized((lifecycle.get("submission_status") or {}).get("submission_status")) or None
+    lifecycle_clarification_active = any(
+        _normalized(item.get("status")) not in {"closed", "resolved"}
+        for item in list(lifecycle.get("clarifications") or [])
+    )
 
     document_ingested = _count_events(events, "tender_document_ingested") > 0
     requirements_extracted = _count_events(events, "requirements_extracted") > 0
     proposal_updates = _count_events(events, "proposal_section_updated")
-    submitted = _count_events(events, "tender_submitted") > 0 or current_status == "submitted"
-    outcome = _latest_outcome(events)
+    submission_state = (
+        lifecycle_submission_status
+        or _latest_submission_state(events)
+        or ("submitted" if current_status == "submitted" else None)
+    )
+    submitted = submission_state in {"submitted", "acknowledged"}
+    submission_failed = submission_state == "failed"
+    clarification_requested = _clarification_active(events) or lifecycle_clarification_active
+    decision = _latest_decision(events) or lifecycle_decision
+    bid_plan_started = (
+        _count_events(events, "bid_plan_created") > 0
+        or _count_events(events, "bid_plan_approved") > 0
+        or bool(lifecycle.get("bid_plan"))
+    )
+    request_wave_opened = (
+        _count_events(events, "contribution_request_wave_opened") > 0
+        or _count_events(events, "contribution_assignment_confirmed") > 0
+        or bool(lifecycle.get("contribution_wave"))
+    )
+    draft_ready = _count_events(events, "draft_integrated_ready") > 0 or bool(lifecycle.get("draft_ready"))
+    outcome = _latest_outcome(events) or lifecycle_outcome
 
     requirement_count = len(requirements)
     addressed_requirements = sum(
@@ -1156,30 +1468,205 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
 
     due_at = _parse_datetime(tender.get("due_at"))
     operational_state = _collect_operational_state(events)
+    failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
+
     if document_ingested:
-        a1 = _score_a1(requirement_count=requirement_count, addressed_requirements=addressed_requirements, section_count=len(sections), active_sections=active_sections, proposal_updates=proposal_updates, requirements_extracted=requirements_extracted)
-        a2 = _score_a2(document_ingested=document_ingested, sections=sections, requirement_count=requirement_count, addressed_requirements=addressed_requirements, completed_sections=completed_sections, proposal_updates=proposal_updates, operational_state=operational_state)
-        a3 = _score_a3(document_ingested=document_ingested, requirement_count=requirement_count, addressed_requirements=addressed_requirements, high_priority_requirements=high_priority_requirements, addressed_high_priority_requirements=addressed_high_priority_requirements, section_count=len(sections), completed_sections=completed_sections, proposal_updates=proposal_updates, operational_state=operational_state)
-        a4 = _score_a4(document_ingested=document_ingested, requirement_count=requirement_count, addressed_requirements=addressed_requirements, high_priority_requirements=high_priority_requirements, section_count=len(sections), active_sections=active_sections, due_at=due_at, submitted=submitted, now=now)
+        proxy_a1 = _score_a1(
+            requirement_count=requirement_count,
+            addressed_requirements=addressed_requirements,
+            section_count=len(sections),
+            active_sections=active_sections,
+            proposal_updates=proposal_updates,
+            requirements_extracted=requirements_extracted,
+        )
+        proxy_a2 = _score_a2(
+            document_ingested=document_ingested,
+            sections=sections,
+            requirement_count=requirement_count,
+            addressed_requirements=addressed_requirements,
+            completed_sections=completed_sections,
+            proposal_updates=proposal_updates,
+            operational_state=operational_state,
+        )
+        proxy_a3 = _score_a3(
+            document_ingested=document_ingested,
+            requirement_count=requirement_count,
+            addressed_requirements=addressed_requirements,
+            high_priority_requirements=high_priority_requirements,
+            addressed_high_priority_requirements=addressed_high_priority_requirements,
+            section_count=len(sections),
+            completed_sections=completed_sections,
+            proposal_updates=proposal_updates,
+            operational_state=operational_state,
+        )
+        proxy_a4 = _score_a4(
+            document_ingested=document_ingested,
+            requirement_count=requirement_count,
+            addressed_requirements=addressed_requirements,
+            high_priority_requirements=high_priority_requirements,
+            section_count=len(sections),
+            active_sections=active_sections,
+            due_at=due_at,
+            submitted=submitted,
+            now=now,
+        )
     else:
-        a1 = _unknown_score(kpi_code="A1", label="Requirement coverage becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before computing requirement coverage.")
-        a2 = _unknown_score(kpi_code="A2", label="Editorial quality becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating editorial quality.")
-        a3 = _unknown_score(kpi_code="A3", label="Competitive and technical value becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating competitive and technical value.")
-        a4 = _unknown_score(kpi_code="A4", label="Compliance readiness becomes available after tender document ingestion.", evidence=["No `tender_document_ingested` event was observed yet."], recommendation="Ingest the tender document before evaluating compliance readiness.")
+        proxy_a1 = _unknown_score(
+            kpi_code="A1",
+            label="Requirement coverage becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document before computing requirement coverage.",
+        )
+        proxy_a2 = _unknown_score(
+            kpi_code="A2",
+            label="Editorial quality becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document before evaluating editorial quality.",
+        )
+        proxy_a3 = _unknown_score(
+            kpi_code="A3",
+            label="Competitive and technical value becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document before evaluating competitive and technical value.",
+        )
+        proxy_a4 = _unknown_score(
+            kpi_code="A4",
+            label="Compliance readiness becomes available after tender document ingestion.",
+            evidence=["No `tender_document_ingested` event was observed yet."],
+            recommendation="Ingest the tender document before evaluating compliance readiness.",
+        )
+
+    a1 = proxy_a1
+    a2 = proxy_a2
+    a3 = proxy_a3
+    a4 = proxy_a4
+
+    if settings.semantic_official_rollout_enabled:
+        a1 = _with_semantic(
+            proxy_a1,
+            build_a1_semantic(
+                requirements=requirements,
+                document_ingested=document_ingested,
+                requirements_extracted=requirements_extracted,
+                proxy_score=proxy_a1.value,
+            ),
+        )
+        a2 = _with_semantic(
+            proxy_a2,
+            build_a2_semantic(
+                document_ingested=document_ingested,
+                sections=sections,
+                requirement_count=requirement_count,
+                addressed_requirements=addressed_requirements,
+                completed_sections=completed_sections,
+                proposal_updates=proposal_updates,
+                reviews_started=operational_state.reviews_started,
+                reviews_completed=operational_state.reviews_completed,
+                reworks=operational_state.reworks,
+                proxy_score=proxy_a2.value,
+            ),
+        )
+        a3 = _with_semantic(
+            proxy_a3,
+            build_a3_semantic(
+                document_ingested=document_ingested,
+                requirement_count=requirement_count,
+                addressed_requirements=addressed_requirements,
+                high_priority_requirements=high_priority_requirements,
+                addressed_high_priority_requirements=addressed_high_priority_requirements,
+                section_count=len(sections),
+                completed_sections=completed_sections,
+                proposal_updates=proposal_updates,
+                requests=operational_state.requests,
+                reviews_completed=operational_state.reviews_completed,
+                reworks=operational_state.reworks,
+                gates=operational_state.gates,
+                proxy_score=proxy_a3.value,
+            ),
+        )
+        a4 = _with_semantic(
+            proxy_a4,
+            build_a4_semantic(
+                requirements=requirements,
+                document_ingested=document_ingested,
+                requirements_extracted=requirements_extracted,
+                section_count=len(sections),
+                active_sections=active_sections,
+                due_at=due_at,
+                now=now,
+                submitted=submitted,
+                failed_gates=failed_gates,
+                proxy_score=proxy_a4.value,
+            ),
+        )
+    elif settings.semantic_shadow_rollout_enabled:
+        a1 = _with_shadow(
+            proxy_a1,
+            build_a1_shadow(
+                requirements=requirements,
+                document_ingested=document_ingested,
+                requirements_extracted=requirements_extracted,
+                proxy_score=proxy_a1.value,
+            ),
+        )
+        a4 = _with_shadow(
+            proxy_a4,
+            build_a4_shadow(
+                requirements=requirements,
+                document_ingested=document_ingested,
+                requirements_extracted=requirements_extracted,
+                section_count=len(sections),
+                active_sections=active_sections,
+                due_at=due_at,
+                now=now,
+                submitted=submitted,
+                failed_gates=failed_gates,
+                proxy_score=proxy_a4.value,
+            ),
+        )
 
     q = _score_q([a1, a2, a3, a4])
-    operational = _compute_operational_snapshot(events, now, state=operational_state)
-    all_scores = [a1, a2, a3, a4, q, operational.b1, operational.b2, operational.b3, operational.b4, operational.e]
-    health = _derive_health(all_scores)
-    analytical_phase = _derive_phase(current_status=current_status, document_ingested=document_ingested, requirements_extracted=requirements_extracted, requirement_count=requirement_count, active_sections=active_sections, proposal_updates=proposal_updates, a1_score=a1, outcome=outcome, submitted=submitted, operational_state=operational_state)
-    failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
-    if failed_gates > 0 and health != "red":
-        health = "red"
+    if settings.semantic_official_rollout_enabled:
+        q = _with_qualitative_summary_contract(q)
 
+    operational = _compute_operational_snapshot(events, now, state=operational_state)
+    failed_gates = sum(1 for gate in operational_state.gates if _normalized(gate.get("status")) == "failed")
+    all_scores = [a1, a2, a3, a4, q, operational.b1, operational.b2, operational.b3, operational.b4, operational.e]
+    health = _derive_health(scores=all_scores, q_score=q, e_score=operational.e, a4_score=a4, failed_gates=failed_gates)
+    analytical_phase = _derive_phase(
+        current_status=current_status,
+        document_ingested=document_ingested,
+        requirements_extracted=requirements_extracted,
+        requirement_count=requirement_count,
+        active_sections=active_sections,
+        proposal_updates=proposal_updates,
+        a1_score=a1,
+        outcome=outcome,
+        submitted=submitted,
+        submission_failed=submission_failed,
+        clarification_requested=clarification_requested,
+        decision=decision,
+        bid_plan_started=bid_plan_started,
+        request_wave_opened=request_wave_opened,
+        draft_ready=draft_ready,
+        operational_state=operational_state,
+    )
+
+    semantic_note = (
+        "Official semantic scoring is active for A1..A4; Q and tender health now use the semantic layer with proxy scores retained for comparison."
+        if settings.semantic_official_rollout_enabled
+        else (
+            "Semantic shadow mode is active for A1 and A4; official Q and tender health still use proxy scores."
+            if settings.semantic_shadow_rollout_enabled
+            else f"Semantic official scoring is disabled by rollout policy {settings.normalized_rollout_policy}; official Q and tender health use proxy scores only."
+        )
+    )
     notes = [
         f"Requirements tracked in mirror: {requirement_count}.",
         f"Proposal sections tracked in mirror: {len(sections)} ({completed_sections} completed).",
         f"Observed `proposal_section_updated` events: {proposal_updates}.",
+        semantic_note,
+        *(["Post-submission clarifications are active in telemetry."] if clarification_requested else []),
         *([f"Failed compliance gates observed: {failed_gates}."] if failed_gates else []),
         *operational.notes,
     ]
@@ -1188,6 +1675,10 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         summary = "Tender mirror is available, but the tender document has not been ingested yet."
     elif requirement_count == 0:
         summary = "Tender document ingestion exists, but extracted requirements are still missing or empty."
+    elif settings.semantic_official_rollout_enabled and any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
+        summary = "Analytical snapshot is available with official semantic A1..A4/Q plus B1..B4/E from observed workflow telemetry."
+    elif settings.semantic_official_rollout_enabled:
+        summary = "Analytical snapshot is available with official semantic A1..A4/Q and base tender telemetry."
     elif any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
         summary = "Analytical snapshot is available for A1..A4, Q and B1..B4/E using persisted requirements, proposal progress and observed workflow telemetry."
     else:
@@ -1201,4 +1692,3 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         summary=summary,
         analysis_metadata=_analysis_metadata(events=events, requirement_count=requirement_count, section_count=len(sections), scored_kpis=all_scores),
     )
-
