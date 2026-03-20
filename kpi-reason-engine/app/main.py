@@ -9,10 +9,28 @@ from typing import Any
 
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.analytics import AnalysisSnapshot, compute_analysis_snapshot
 from app.auth import require_internal_service
 from app.config import settings
+from app.contract import (
+    FORECAST_DECISION_BUNDLE_VERSION,
+    FORECAST_OUTPUT_SCHEMA_VERSION,
+    FORMULA_BUNDLE_VERSION,
+    HEALTH_RULE_VERSION,
+    HEURISTIC_FORECAST_VERSION,
+    KPI_CONTRACT_VERSION,
+    MARKOV_BACKTEST_VERSION,
+    MARKOV_MODEL_VERSION,
+    MODEL_BUNDLE_VERSION,
+    PROMPT_BUNDLE_VERSION,
+    READINESS_RULE_VERSION,
+    SEMANTIC_BUNDLE_VERSION,
+    SHADOW_BUNDLE_VERSION,
+    SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+    VERSION_MANIFEST_SCHEMA_VERSION,
+)
 from app.forecasting import build_forecast_snapshot
 from app.job_worker import AnalysisJobWorker
 from app.metrics import RuntimeMetrics
@@ -27,13 +45,21 @@ from app.schemas import (
     DocumentContextRequest,
     DomainEventRequest,
     EventAcceptedResponse,
+    ForecastDecisionAction,
     ForecastResponse,
     ForecastScenario,
     KpiScore,
     PortfolioBottlenecksResponse,
+    PortfolioIntelligenceResponse,
     PortfolioOverviewResponse,
+    PortfolioPhaseHotspot,
+    PortfolioRiskHotspot,
+    PortfolioWatchlistItem,
     RequirementTransitionItem,
+    ServiceDependencyStatus,
     ServiceHealthResponse,
+    ServiceReadinessResponse,
+    ServiceVersionManifestResponse,
     SnapshotHistoryItem,
     TenderSnapshotResponse,
     TenderSyncRequest,
@@ -67,7 +93,11 @@ async def lifespan(app: FastAPI):
     )
     worker.start()
     app.state.store = store
-    app.state.metrics = RuntimeMetrics(service_name=settings.app_name, service_version=settings.app_version)
+    app.state.metrics = RuntimeMetrics(
+        service_name=settings.app_name,
+        service_version=settings.app_version,
+        release_channel=settings.release_channel,
+    )
     app.state.analysis_job_worker = worker
     logger.info(
         "service.starting",
@@ -315,28 +345,243 @@ def _build_job_status_response(external_tender_id: str, job_record: dict[str, An
     )
 
 
+def _parse_runtime_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _service_runtime_context(request: Request) -> tuple[SqliteStore, dict[str, Any], RuntimeMetrics, AnalysisJobWorker | None]:
+    store = get_store(request)
+    runtime = store.get_runtime_metrics()
+    metrics = _get_metrics(request) or RuntimeMetrics(
+        service_name=settings.app_name,
+        service_version=settings.app_version,
+        release_channel=settings.release_channel,
+    )
+    worker = getattr(request.app.state, "analysis_job_worker", None)
+    return store, runtime, metrics, worker
+
+
+def _build_service_readiness_response(request: Request) -> ServiceReadinessResponse:
+    store, runtime, _, worker = _service_runtime_context(request)
+    queue_depth = int((runtime.get("analysis_jobs") or {}).get("by_status", {}).get("queued", 0) or 0)
+    failed_jobs = int((runtime.get("analysis_jobs") or {}).get("by_status", {}).get("failed", 0) or 0)
+    mirrored_tenders = int((runtime.get("persistence") or {}).get("mirrored_tenders", 0) or 0)
+    latest_snapshot_generated_at = (runtime.get("snapshots") or {}).get("latest_generated_at")
+    latest_snapshot_dt = _parse_runtime_datetime(latest_snapshot_generated_at)
+    worker_running = bool(getattr(worker, "is_running", False))
+    schema_version = store.get_schema_version()
+
+    dependencies: list[ServiceDependencyStatus] = []
+    warnings: list[str] = []
+    ready = True
+
+    store_status = "ready" if schema_version else "degraded"
+    dependencies.append(
+        ServiceDependencyStatus(
+            name="sqlite_store",
+            status=store_status,
+            detail=(f"Schema {schema_version} loaded." if schema_version else "Schema version unavailable."),
+        )
+    )
+    if store_status != "ready":
+        ready = False
+        warnings.append("Database schema version could not be resolved.")
+
+    worker_status = "ready" if worker_running else "degraded"
+    dependencies.append(
+        ServiceDependencyStatus(
+            name="analysis_job_worker",
+            status=worker_status,
+            detail=("Background worker is running." if worker_running else "Background worker is not running."),
+        )
+    )
+    if worker_status != "ready":
+        ready = False
+        warnings.append("Analysis job worker is not running.")
+
+    if queue_depth > settings.readiness_queue_warning_threshold:
+        ready = False
+        warnings.append(
+            f"Queued analysis jobs ({queue_depth}) exceed threshold {settings.readiness_queue_warning_threshold}."
+        )
+
+    if failed_jobs > settings.readiness_failed_jobs_threshold:
+        ready = False
+        warnings.append(
+            f"Failed analysis jobs ({failed_jobs}) exceed threshold {settings.readiness_failed_jobs_threshold}."
+        )
+
+    if mirrored_tenders > 0 and latest_snapshot_dt is None:
+        ready = False
+        warnings.append("Mirrored tenders exist but no analytical snapshot has been generated yet.")
+    elif mirrored_tenders > 0 and latest_snapshot_dt is not None:
+        age_seconds = (datetime.now(timezone.utc) - latest_snapshot_dt.astimezone(timezone.utc)).total_seconds()
+        if age_seconds > settings.readiness_snapshot_staleness_seconds:
+            ready = False
+            warnings.append(
+                f"Latest snapshot is stale ({int(age_seconds)}s > {settings.readiness_snapshot_staleness_seconds}s)."
+            )
+
+    dependencies.append(
+        ServiceDependencyStatus(
+            name="snapshot_pipeline",
+            status=("ready" if latest_snapshot_dt is not None or mirrored_tenders == 0 else "degraded"),
+            detail=(
+                "No mirrored tenders require snapshot generation yet."
+                if mirrored_tenders == 0 and latest_snapshot_dt is None
+                else (f"Latest snapshot at {latest_snapshot_generated_at}." if latest_snapshot_generated_at else "Snapshot pipeline waiting for first generation.")
+            ),
+        )
+    )
+
+    return ServiceReadinessResponse(
+        status=("ready" if ready else "degraded"),
+        service=settings.app_name,
+        version=settings.app_version,
+        release_channel=settings.release_channel,
+        ready=ready,
+        checked_at=datetime.now(timezone.utc),
+        rollout_policy=settings.normalized_rollout_policy,
+        worker_running=worker_running,
+        queue_depth=queue_depth,
+        failed_jobs=failed_jobs,
+        latest_snapshot_generated_at=latest_snapshot_dt,
+        readiness_rule_version=READINESS_RULE_VERSION,
+        warnings=warnings,
+        dependencies=dependencies,
+    )
+
+
+def _build_service_health_response(request: Request) -> ServiceHealthResponse:
+    store, _, metrics, _ = _service_runtime_context(request)
+    readiness = _build_service_readiness_response(request)
+    service_metadata = metrics.service_metadata()
+    return ServiceHealthResponse(
+        service=settings.app_name,
+        version=settings.app_version,
+        ready=readiness.ready,
+        release_channel=settings.release_channel,
+        rollout_policy=settings.normalized_rollout_policy,
+        schema_version=store.get_schema_version(),
+        started_at=_parse_runtime_datetime(service_metadata.get("started_at")),
+        uptime_seconds=service_metadata.get("uptime_seconds"),
+        snapshot_output_schema_version=SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+        forecast_output_schema_version=FORECAST_OUTPUT_SCHEMA_VERSION,
+        version_manifest_schema_version=VERSION_MANIFEST_SCHEMA_VERSION,
+        network_boundary=settings.service_network_boundary,
+    )
+
+
+def _build_service_version_manifest(request: Request) -> ServiceVersionManifestResponse:
+    store, runtime, _, _ = _service_runtime_context(request)
+    entries = [
+        {
+            "component": "contract",
+            "version": KPI_CONTRACT_VERSION,
+            "kind": "contract",
+            "source": "code",
+            "details": {
+                "formula_bundle_version": FORMULA_BUNDLE_VERSION,
+                "model_bundle_version": MODEL_BUNDLE_VERSION,
+                "prompt_bundle_version": PROMPT_BUNDLE_VERSION,
+                "health_rule_version": HEALTH_RULE_VERSION,
+            },
+        },
+        {
+            "component": "snapshot_output",
+            "version": SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+            "kind": "output_schema",
+            "source": "code",
+            "details": {
+                "observed_in_store": (runtime.get("version_governance") or {}).get("snapshot_output_schema_versions", {}),
+            },
+        },
+        {
+            "component": "forecast_output",
+            "version": FORECAST_OUTPUT_SCHEMA_VERSION,
+            "kind": "output_schema",
+            "source": "code",
+            "details": {
+                "heuristic_bundle_version": HEURISTIC_FORECAST_VERSION,
+                "markov_model_version": MARKOV_MODEL_VERSION,
+                "markov_backtest_version": MARKOV_BACKTEST_VERSION,
+                "forecast_decision_bundle_version": FORECAST_DECISION_BUNDLE_VERSION,
+            },
+        },
+        {
+            "component": "semantic_bundle",
+            "version": SEMANTIC_BUNDLE_VERSION,
+            "kind": "semantic_engine",
+            "source": "code",
+            "details": {
+                "shadow_bundle_version": SHADOW_BUNDLE_VERSION,
+            },
+        },
+    ]
+    for item in store.list_model_versions():
+        entries.append(
+            {
+                "component": item["version_type"],
+                "version": item["version_code"],
+                "kind": "persisted_model_version",
+                "source": "sqlite_store",
+                "details": {
+                    "created_at": item.get("created_at"),
+                    **dict(item.get("descriptor") or {}),
+                },
+            }
+        )
+    return ServiceVersionManifestResponse(
+        service=settings.app_name,
+        version=settings.app_version,
+        generated_at=datetime.now(timezone.utc),
+        release_channel=settings.release_channel,
+        rollout_policy=settings.normalized_rollout_policy,
+        schema_version=store.get_schema_version(),
+        snapshot_output_schema_version=SNAPSHOT_OUTPUT_SCHEMA_VERSION,
+        forecast_output_schema_version=FORECAST_OUTPUT_SCHEMA_VERSION,
+        version_manifest_schema_version=VERSION_MANIFEST_SCHEMA_VERSION,
+        network_boundary=settings.service_network_boundary,
+        entries=entries,
+    )
+
+
 @app.get("/health", response_model=ServiceHealthResponse)
-async def health() -> ServiceHealthResponse:
-    return ServiceHealthResponse(service=settings.app_name, version=settings.app_version)
+async def health(request: Request) -> ServiceHealthResponse:
+    return _build_service_health_response(request)
+
+
+@app.get("/ready", response_model=ServiceReadinessResponse)
+async def ready(request: Request) -> JSONResponse:
+    payload = _build_service_readiness_response(request)
+    return JSONResponse(
+        status_code=(status.HTTP_200_OK if payload.ready else status.HTTP_503_SERVICE_UNAVAILABLE),
+        content=payload.model_dump(mode="json"),
+    )
+
+
+@app.get("/version-manifest", response_model=ServiceVersionManifestResponse)
+async def version_manifest(request: Request) -> ServiceVersionManifestResponse:
+    return _build_service_version_manifest(request)
 
 
 @app.get("/metrics", response_model=dict[str, Any])
 async def get_metrics(request: Request) -> dict[str, Any]:
-    store = get_store(request)
-    metrics = _get_metrics(request)
-    if metrics is None:
-        return {
-            "service": {
-                "name": settings.app_name,
-                "version": settings.app_version,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            "http": {"total_requests": 0, "breakdown": [], "latency_ms": []},
-            "domain_events": {"ingested_total": {}},
-            "analysis_jobs": {"requested_total": {}, "runtime": {}},
-            "persistence": store.get_runtime_metrics().get("persistence", {}),
-        }
-    return metrics.snapshot(store_runtime=store.get_runtime_metrics())
+    _, runtime, metrics, _ = _service_runtime_context(request)
+    return metrics.snapshot(store_runtime=runtime)
+
+
+@app.get("/metrics/prometheus", response_class=PlainTextResponse)
+async def get_metrics_prometheus(request: Request) -> PlainTextResponse:
+    _, runtime, metrics, _ = _service_runtime_context(request)
+    if not settings.metrics_text_enabled:
+        return PlainTextResponse("metrics_text_export_disabled 1\n")
+    return PlainTextResponse(metrics.render_prometheus(store_runtime=runtime), media_type="text/plain; version=0.0.4")
 
 
 @app.post(
@@ -552,13 +797,19 @@ async def get_forecast(
     tender, snapshot_record, transition_snapshot = _load_snapshot_state(store, external_tender_id)
     history_items = store.list_snapshot_history(external_tender_id) if tender is not None else []
     events = store.list_domain_events(external_tender_id) if tender is not None else []
+    markov_history_points = store.list_markov_history_points() if tender is not None else []
     forecast = build_forecast_snapshot(
         tender=tender,
         snapshot_record=snapshot_record,
         transition_snapshot=transition_snapshot,
         history_items=history_items,
         events=events,
+        markov_history_points=markov_history_points,
     )
+    merged_analysis_metadata = {
+        **dict((snapshot_record or {}).get("analysis_metadata") or {}),
+        **dict(forecast.analysis_metadata or {}),
+    }
     return ForecastResponse(
         external_tender_id=external_tender_id,
         generated_at=_snapshot_generated_at(snapshot_record),
@@ -575,6 +826,19 @@ async def get_forecast(
             )
             for item in forecast.scenarios
         ],
+        next_best_actions=[
+            ForecastDecisionAction(
+                code=item.code,
+                title=item.title,
+                priority=item.priority,
+                rationale=item.rationale,
+                expected_impact=item.expected_impact,
+                confidence=item.confidence,
+                drivers=item.drivers,
+            )
+            for item in forecast.next_best_actions
+        ],
+        analysis_metadata=merged_analysis_metadata,
     )
 
 
@@ -592,6 +856,8 @@ async def get_portfolio_overview(
         portfolio_health=overview["portfolio_health"],
         total_tenders=overview["total_tenders"],
         tenders_by_health=overview["tenders_by_health"],
+        analytical_phases=overview.get("analytical_phases") or {},
+        critical_tenders=overview.get("critical_tenders") or [],
     )
 
 
@@ -606,4 +872,23 @@ async def get_portfolio_bottlenecks(
     return PortfolioBottlenecksResponse(
         generated_at=datetime.now(timezone.utc),
         items=[BottleneckItem(**item) for item in store.list_bottlenecks()],
+    )
+
+
+@app.get(
+    "/v1/admin/portfolio/intelligence",
+    response_model=PortfolioIntelligenceResponse,
+    dependencies=[Depends(require_internal_service)],
+)
+async def get_portfolio_intelligence(
+    store: SqliteStore = Depends(get_store),
+) -> PortfolioIntelligenceResponse:
+    intelligence = store.get_portfolio_intelligence()
+    return PortfolioIntelligenceResponse(
+        generated_at=datetime.now(timezone.utc),
+        phase_hotspots=[PortfolioPhaseHotspot(**item) for item in intelligence.get("phase_hotspots") or []],
+        risk_hotspots=[PortfolioRiskHotspot(**item) for item in intelligence.get("risk_hotspots") or []],
+        outcome_trends=intelligence.get("outcome_trends") or {},
+        watchlist=[PortfolioWatchlistItem(**item) for item in intelligence.get("watchlist") or []],
+        notes=list(intelligence.get("notes") or []),
     )

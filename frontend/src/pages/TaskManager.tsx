@@ -66,7 +66,7 @@ export default function TaskManager() {
         setShowFormModal(false);
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8000${endpoint}`, {
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -90,7 +90,7 @@ export default function TaskManager() {
     const checkTaskStatus = useCallback(async (taskId: string) => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:8000/api/tasks/status/${taskId}`, {
+            const res = await fetch(`/api/tasks/status/${taskId}`, {
                 headers: { 'Authorization': `Bearer ${token}` },
             });
             const data = await res.json();
@@ -128,7 +128,7 @@ export default function TaskManager() {
     const handleCancelTask = async (taskId: string) => {
         try {
             const token = localStorage.getItem('token');
-            await fetch(`http://localhost:8000/api/tasks/cancel/${taskId}`, {
+            await fetch(`/api/tasks/cancel/${taskId}`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
             });
@@ -148,8 +148,8 @@ export default function TaskManager() {
         try {
             const token = localStorage.getItem('token');
             const [proposalsRes, docsRes] = await Promise.all([
-                fetch('http://localhost:8000/api/proposals', { headers: { 'Authorization': `Bearer ${token}` } }),
-                fetch('http://localhost:8000/api/content-blocks', { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch('/api/proposals', { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch('/api/content-blocks', { headers: { 'Authorization': `Bearer ${token}` } }),
             ]);
             const proposals = await proposalsRes.json();
             const docs = await docsRes.json();
@@ -161,7 +161,7 @@ export default function TaskManager() {
             const allSections: any[] = [];
             for (const p of proposalsData) {
                 try {
-                    const sectionsRes = await fetch(`http://localhost:8000/api/proposals/${p.id}/sections`, {
+                    const sectionsRes = await fetch(`/api/proposals/${p.id}/sections`, {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     const sections = await sectionsRes.json();
@@ -169,7 +169,9 @@ export default function TaskManager() {
                     for (const s of sectionsList) {
                         allSections.push({ ...s, proposalTitle: p.title });
                     }
-                } catch (e) {}
+                } catch (sectionError) {
+                    console.warn(`Failed to load sections for proposal ${p.id}`, sectionError);
+                }
             }
             setAvailableSections(allSections);
             setShowIdsModal(true);

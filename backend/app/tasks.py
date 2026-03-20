@@ -7,23 +7,52 @@ Background tasks for long-running operations.
 import asyncio
 import io
 import logging
-from datetime import datetime, timedelta
+from html import escape
+from datetime import datetime, timedelta, timezone
 
-from celery import Celery
-from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
 from app.celery import celery_app
+from app.db.database import async_session_factory
 
 logger = logging.getLogger(__name__)
 
 
+def _extract_text_from_structured_content(content: object) -> str:
+    """Flatten TipTap-like content into plain text for safe PDF rendering."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, dict):
+        return ""
+    if isinstance(content.get("text"), str):
+        return content["text"]
+    paragraphs: list[str] = []
+    for node in content.get("content") or []:
+        if not isinstance(node, dict):
+            continue
+        text_parts: list[str] = []
+        for child in node.get("content") or []:
+            if isinstance(child, dict) and isinstance(child.get("text"), str):
+                text_parts.append(child["text"])
+        joined = "".join(text_parts).strip()
+        if joined:
+            paragraphs.append(joined)
+    return "\n\n".join(paragraphs)
+
+
+def _content_to_safe_pdf_html(content: object) -> str:
+    text = _extract_text_from_structured_content(content)
+    if not text.strip():
+        return "<p></p>"
+    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+    return "".join(f"<p>{escape(paragraph).replace(chr(10), '<br>')}</p>" for paragraph in paragraphs)
+
+
 def get_async_session():
-    """Create async database session for tasks."""
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    return async_session
+    """Reuse the shared async session factory for Celery tasks."""
+    return async_session_factory
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -63,23 +92,28 @@ def generate_proposal_section_task(self, proposal_id: int, section_id: int, prom
         prompt: Optional custom prompt
     """
     try:
-        from app.rag.engine import HybridRAGEngine, QueryMode
+        from app.rag.engine import HybridRAGEngine, QueryMode, RAGQuery
         
         async def run():
             engine = HybridRAGEngine()
             await engine.initialize()
-            
-            query_text = prompt or f"Generate content for proposal section {section_id}"
-            
-            result = await engine.generate(
-                query=query_text,
-                mode=QueryMode.WRITE_SECTION,
-                proposal_id=proposal_id,
-                section_id=section_id,
-            )
-            
-            await engine.shutdown()
-            return result
+
+            try:
+                query_text = prompt or f"Generate content for proposal section {section_id}"
+                rag_query = RAGQuery(
+                    text=query_text,
+                    mode=QueryMode.WRITE_SECTION,
+                    section_title=f"Proposal Section {section_id}",
+                    instructions=query_text,
+                    filters={
+                        "proposal_id": proposal_id,
+                        "section_id": section_id,
+                    },
+                )
+
+                return await engine.query(rag_query)
+            finally:
+                await engine.shutdown()
         
         result = asyncio.run(run())
         
@@ -148,7 +182,7 @@ def export_proposal_pdf_task(self, proposal_id: int):
                     {% for section in sections %}
                     <div class="section">
                         <h2>{{ section.title }}</h2>
-                        <p>{{ section.content|safe }}</p>
+                        {{ section.safe_html|safe }}
                     </div>
                     {% endfor %}
                 </body>
@@ -156,7 +190,14 @@ def export_proposal_pdf_task(self, proposal_id: int):
                 """
                 
                 template = Template(template_str)
-                html_content = template.render(proposal=proposal, sections=sections)
+                rendered_sections = [
+                    {
+                        "title": section.title,
+                        "safe_html": _content_to_safe_pdf_html(section.content),
+                    }
+                    for section in sections
+                ]
+                html_content = template.render(proposal=proposal, sections=rendered_sections)
                 
                 pdf_bytes = HTML(string=html_content).write_pdf()
                 return pdf_bytes
@@ -204,7 +245,7 @@ def cleanup_expired_otp():
             from app.models import OTPToken
             
             result = await session.execute(
-                delete(OTPToken).where(OTPToken.expires_at < datetime.utcnow())
+                delete(OTPToken).where(OTPToken.expires_at < datetime.now(timezone.utc))
             )
             await session.commit()
             
@@ -221,5 +262,5 @@ def health_check():
     """Simple health check task."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }

@@ -66,7 +66,7 @@ async def test_fallback_to_dmz_without_anonymizer(monkeypatch):
     )
 
     assert resp.status_code == 200, repr(resp.body)
-    assert resp.body == b'{"ok": true}'
+    assert json.loads(resp.body) == {"ok": True}
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_fallback_uses_anonymizer(monkeypatch):
     )
 
     assert resp.status_code == 200, repr(resp.body)
-    assert resp.body == b'{"via": "anonymizer"}'
+    assert json.loads(resp.body) == {"via": "anonymizer"}
     assert seen.get("target") == "http://dmz/v1/models"
 
 

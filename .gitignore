@@ -8,7 +8,8 @@ repomix-output.xml.pdf
 tenderwriter_app_summary.pdf
 tenderwriter_architettura_completa.drawio
 tenderwriter_presentazione_manageriale_tecnica.pptx
-
+my-output.md
+my-output-fix.md
 # --- Virtual environments ---
 .codex/
 venv/

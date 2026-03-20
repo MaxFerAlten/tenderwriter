@@ -62,12 +62,11 @@ async def lifespan(app: FastAPI):
                 await session.commit()
                 logger.info(f"Admin user '{settings.admin_username}' created successfully")
 
-        import asyncio
         from app.rag.engine import HybridRAGEngine
 
         app.state.rag_engine = HybridRAGEngine()
-        asyncio.create_task(app.state.rag_engine.initialize())
-        logger.info("HybridRAG engine initialization started in background")
+        await app.state.rag_engine.initialize()
+        logger.info("HybridRAG engine initialized")
 
     except Exception as e:
         import traceback
@@ -81,7 +80,9 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down TenderWriter")
         if hasattr(app.state, "rag_engine"):
             await app.state.rag_engine.shutdown()
+        from app.db.redis import close_redis
         from app.db.database import close_db
+        await close_redis()
         await close_db()
     except Exception as e:
         logger.error(f"Shutdown error: {e}")

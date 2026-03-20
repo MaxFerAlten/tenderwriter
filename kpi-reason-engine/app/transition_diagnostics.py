@@ -13,6 +13,7 @@ class PhaseTransitionDriver:
     cause: str
     confidence: float
     source_event_type: str | None = None
+    source_type: str = 'unknown'
     related_entity_id: str | None = None
 
 
@@ -38,16 +39,35 @@ class TransitionSnapshot:
 
 
 _PHASE_EVENT_RULES = {
+    'go_decision_recorded': ('S1', 'S2'),
+    'no_bid_decision_recorded': ('S1', 'S13'),
+    'bid_plan_created': ('S2', 'S2'),
+    'bid_plan_approved': ('S2', 'S2'),
+    'contribution_request_wave_opened': ('S2', 'S3'),
+    'contribution_assignment_confirmed': ('S3', 'S3'),
     'contribution_review_started': ('S4', 'S5'),
     'review_cycle_started': ('S4', 'S5'),
+    'review_approved': ('S5', 'S7'),
+    'review_changes_requested': ('S5', 'S6'),
     'rework_requested': ('S5', 'S6'),
     'rework_resolved': ('S6', 'S5'),
+    'draft_integrated_ready': ('S5', 'S7'),
     'compliance_gate_opened': ('S7', 'S8'),
     'compliance_gate_failed': ('S8', 'S8'),
     'compliance_gate_passed': ('S8', 'S7'),
     'tender_submitted': ('S8', 'S9'),
+    'submission_acknowledged': ('S9', 'S9'),
+    'submission_failed': ('S9', 'S8'),
+    'clarification_requested': ('S9', 'S10'),
+    'clarification_response_drafted': ('S10', 'S10'),
+    'clarification_submitted': ('S10', 'S10'),
+    'clarification_closed': ('S10', 'S9'),
+    'award_confirmed': ('S9', 'S11'),
+    'loss_reason_recorded': ('S9', 'S12'),
+    'tender_excluded': ('S9', 'S13'),
+    'tender_withdrawn': ('S9', 'S13'),
+    'tender_stopped': ('S9', 'S13'),
 }
-
 
 def _normalized(value: Any) -> str:
     return str(value or '').strip().casefold()
@@ -136,9 +156,83 @@ def _build_phase_cause(event_type: str, payload: dict[str, Any]) -> tuple[str, s
             str(gate_id) if gate_id else None,
         )
 
+    if event_type == 'go_decision_recorded':
+        decision = payload.get('decision') or 'go'
+        return (f"Tender decision '{decision}' was recorded, moving the workflow into formal bid planning.", str(payload.get('decision') or decision))
+
+    if event_type == 'no_bid_decision_recorded':
+        reason_code = payload.get('reason_code') or 'no-bid'
+        return (f"Tender was explicitly marked as no-bid with reason {reason_code}.", str(reason_code))
+
+    if event_type == 'bid_plan_created':
+        plan_status = payload.get('plan_status') or 'created'
+        return (f"Bid plan entered status '{plan_status}', so the tender moved into planning.", str(plan_status))
+
+    if event_type == 'bid_plan_approved':
+        return ('Bid plan was approved and remains inside the planning corridor.', str(payload.get('plan_status') or 'approved'))
+
+    if event_type == 'contribution_request_wave_opened':
+        count = payload.get('contribution_count') or 'n/a'
+        return (f"A contribution request wave covering {count} contributions was opened.", str(count))
+
+    if event_type == 'contribution_assignment_confirmed':
+        return ('Contribution assignment was confirmed for the current request wave.', str(payload.get('external_contribution_id') or 'assignment'))
+
+    if event_type == 'review_approved':
+        contribution_id = payload.get('external_contribution_id')
+        return (f"Contribution {contribution_id or 'n/a'} completed review with outcome approved.", str(contribution_id) if contribution_id else None)
+
+    if event_type == 'review_changes_requested':
+        contribution_id = payload.get('external_contribution_id')
+        return (f"Contribution {contribution_id or 'n/a'} completed review with changes requested.", str(contribution_id) if contribution_id else None)
+
+    if event_type == 'draft_integrated_ready':
+        proposal_id = payload.get('proposal_id')
+        return (f"Proposal {proposal_id or 'n/a'} was marked as draft integrated ready for the final gate.", str(proposal_id) if proposal_id else None)
     if event_type == 'tender_submitted':
         return ('Tender submission was recorded in the workflow telemetry.', None)
 
+    if event_type == 'clarification_requested':
+        request_id = payload.get('request_id')
+        summary = payload.get('request_summary') or 'a post-submission clarification was requested'
+        return (
+            f"Post-submission clarification {request_id or 'n/a'} was requested because {summary}.",
+            str(request_id) if request_id else None,
+        )
+
+    if event_type == 'submission_acknowledged':
+        reference_id = payload.get('reference_id')
+        return (f"Submission was acknowledged by the target channel with reference {reference_id or 'n/a'}.", str(reference_id) if reference_id else None)
+
+    if event_type == 'submission_failed':
+        error_code = payload.get('error_code') or 'submission_failed'
+        return (f"Submission failed on channel {payload.get('channel') or 'n/a'} with error {error_code}.", str(error_code))
+
+    if event_type == 'clarification_response_drafted':
+        request_id = payload.get('request_id')
+        return (f"Draft response for clarification {request_id or 'n/a'} was prepared.", str(request_id) if request_id else None)
+    if event_type == 'clarification_submitted':
+        request_id = payload.get('request_id')
+        return (f"Clarification {request_id or 'n/a'} was submitted back to the buyer workflow.", str(request_id) if request_id else None)
+
+    if event_type == 'clarification_closed':
+        request_id = payload.get('request_id')
+        return (f"Clarification {request_id or 'n/a'} was closed in the post-submission workflow.", str(request_id) if request_id else None)
+
+    if event_type == 'award_confirmed':
+        return ('Award confirmation moved the tender into the win terminal state.', str(payload.get('outcome') or 'won'))
+
+    if event_type == 'loss_reason_recorded':
+        return ('Loss reason was recorded, closing the tender in the loss terminal state.', str(payload.get('reason_code') or payload.get('outcome') or 'lost'))
+
+    if event_type == 'tender_excluded':
+        return ('Tender was excluded from the competition and entered the stop terminal state.', str(payload.get('reason_code') or 'excluded'))
+
+    if event_type == 'tender_withdrawn':
+        return ('Tender was withdrawn strategically and entered the stop terminal state.', str(payload.get('reason_code') or 'withdrawn'))
+
+    if event_type == 'tender_stopped':
+        return ('Tender was stopped and entered the terminal stop state.', str(payload.get('reason_code') or 'stopped'))
     return ('Operational transition recorded.', None)
 
 
@@ -159,6 +253,7 @@ def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | Non
                 cause=cause,
                 confidence=0.9,
                 source_event_type=event_type,
+                source_type='observed',
                 related_entity_id=related_entity_id,
             )
         )
@@ -168,6 +263,42 @@ def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | Non
     if items:
         return items
 
+    if analytical_phase == 'S1':
+        return [
+            PhaseTransitionDriver(
+                from_state='S0',
+                to_state='S1',
+                occurred_at=None,
+                cause='The tender dossier is mirrored and awaiting an explicit go/no-go decision.',
+                confidence=0.62,
+                source_event_type='inferred_from_lifecycle_state',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S2':
+        return [
+            PhaseTransitionDriver(
+                from_state='S1',
+                to_state='S2',
+                occurred_at=None,
+                cause='Bid-planning metadata indicates the tender has moved into formal planning.',
+                confidence=0.62,
+                source_event_type='inferred_from_bid_plan',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S3':
+        return [
+            PhaseTransitionDriver(
+                from_state='S2',
+                to_state='S3',
+                occurred_at=None,
+                cause='Contribution-wave metadata indicates requests are being orchestrated for departments.',
+                confidence=0.62,
+                source_event_type='inferred_from_request_wave',
+                source_type='inferred',
+            )
+        ]
     if analytical_phase == 'S5':
         return [
             PhaseTransitionDriver(
@@ -177,6 +308,7 @@ def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | Non
                 cause='The mirrored section state indicates active review, even though no explicit review-start event is available.',
                 confidence=0.62,
                 source_event_type='inferred_from_section_status',
+                source_type='inferred',
             )
         ]
     if analytical_phase == 'S6':
@@ -188,6 +320,19 @@ def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | Non
                 cause='Blocking rework is still reflected in the mirrored workflow state.',
                 confidence=0.62,
                 source_event_type='inferred_from_rework_state',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S7':
+        return [
+            PhaseTransitionDriver(
+                from_state='S5',
+                to_state='S7',
+                occurred_at=None,
+                cause='Integrated-draft readiness is reflected in the mirrored workflow state.',
+                confidence=0.62,
+                source_event_type='inferred_from_draft_ready',
+                source_type='inferred',
             )
         ]
     if analytical_phase == 'S8':
@@ -199,10 +344,46 @@ def _build_phase_items(events: list[dict[str, Any]], analytical_phase: str | Non
                 cause='Compliance gate pressure is reflected in the mirrored operational state.',
                 confidence=0.62,
                 source_event_type='inferred_from_gate_state',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S9':
+        return [
+            PhaseTransitionDriver(
+                from_state='S8',
+                to_state='S9',
+                occurred_at=None,
+                cause='Submission state is reflected in the mirrored lifecycle metadata.',
+                confidence=0.62,
+                source_event_type='inferred_from_submission_state',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S10':
+        return [
+            PhaseTransitionDriver(
+                from_state='S9',
+                to_state='S10',
+                occurred_at=None,
+                cause='Post-submission clarification pressure is being inferred from the mirrored workflow state.',
+                confidence=0.62,
+                source_event_type='inferred_from_clarification_state',
+                source_type='inferred',
+            )
+        ]
+    if analytical_phase == 'S13':
+        return [
+            PhaseTransitionDriver(
+                from_state='S9',
+                to_state='S13',
+                occurred_at=None,
+                cause='Terminal stop or exclusion state is reflected in the mirrored lifecycle metadata.',
+                confidence=0.62,
+                source_event_type='inferred_from_terminal_state',
+                source_type='inferred',
             )
         ]
     return []
-
 
 def _requirement_driver(
     requirement: dict[str, Any],
@@ -305,11 +486,14 @@ def build_transition_snapshot(
 
     if not phase_items and not requirement_items:
         summary = 'No transition evidence is available yet for this tender.'
-    elif leading_phase in {'S5', 'S6', 'S8'} and analytical_phase and analytical_phase != leading_phase:
+    elif leading_phase in {'S1', 'S2', 'S3', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13'} and analytical_phase and analytical_phase != leading_phase:
         summary = f'Latest mirrored driver points to {leading_phase} while the current analytical phase remains {analytical_phase}.'
-    elif leading_phase in {'S5', 'S6', 'S8'}:
+    elif leading_phase in {'S1', 'S2', 'S3', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13'}:
         summary = f'Current transition pressure is centered on {leading_phase}, backed by mirrored workflow events and requirement-level drivers.'
     else:
         summary = 'Recent workflow events and requirement mappings are available for transition analysis.'
 
     return TransitionSnapshot(summary=summary, items=phase_items, requirement_items=requirement_items)
+
+
+

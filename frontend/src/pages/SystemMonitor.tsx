@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
     Activity,
@@ -10,89 +10,161 @@ import {
     Database as MemoryIcon,
     Box
 } from 'lucide-react';
-import { systemApi } from '../api/client';
-
-interface Container {
-    id: string;
-    name: string;
-    status: string;
-    health: string;
-}
-
-interface Stats {
-    cpu_percent: number;
-    memory_usage_mb: number;
-    memory_limit_mb: number;
-    memory_percent: number;
-}
+import { systemApi, type SystemCapabilitiesData, type SystemContainer, type SystemContainerStats } from '../api/client';
+import { buildUnavailableCapabilities, isOpsMonitoringUnavailableError } from './systemMonitorUtils';
 
 export default function SystemMonitor() {
-    const [containers, setContainers] = useState<Container[]>([]);
+    const [containers, setContainers] = useState<SystemContainer[]>([]);
     const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
     const [logs, setLogs] = useState<string>('');
-    const [stats, setStats] = useState<Record<string, Stats>>({});
+    const [stats, setStats] = useState<Record<string, SystemContainerStats>>({});
+    const [capabilities, setCapabilities] = useState<SystemCapabilitiesData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [monitorError, setMonitorError] = useState<string | null>(null);
+    const refreshInFlightRef = useRef(false);
+
+    const degradeMonitor = (reason: string) => {
+        setCapabilities((current) => buildUnavailableCapabilities(current, reason));
+        setContainers([]);
+        setSelectedContainer(null);
+        setLogs('');
+        setStats({});
+        setMonitorError(reason);
+    };
+
+    const handleMonitoringFailure = (error: unknown, fallbackMessage: string): boolean => {
+        const message = error instanceof Error ? error.message : fallbackMessage;
+        if (isOpsMonitoringUnavailableError(error)) {
+            degradeMonitor(message);
+            return true;
+        }
+
+        setMonitorError(message);
+        return false;
+    };
 
     useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchStats, 5000);
-        return () => clearInterval(interval);
+        let cancelled = false;
+
+        const initialize = async () => {
+            setIsLoading(true);
+            try {
+                const caps = await systemApi.getCapabilities();
+                if (cancelled) return;
+                setCapabilities(caps);
+                if (!caps.ops_monitoring.available) {
+                    setMonitorError(caps.ops_monitoring.reason || 'Docker monitoring is disabled in this environment.');
+                    return;
+                }
+                await fetchData();
+            } catch (e) {
+                if (!cancelled) {
+                    setMonitorError(e instanceof Error ? e.message : 'Unable to load system capabilities.');
+                }
+            } finally {
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        void initialize();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
+    useEffect(() => {
+        if (!capabilities?.ops_monitoring.available) {
+            return;
+        }
+
+        const interval = window.setInterval(() => {
+            void fetchStats();
+        }, 5000);
+
+        return () => window.clearInterval(interval);
+    }, [capabilities?.ops_monitoring.available]);
+
+    const fetchStatsForContainers = async (items: SystemContainer[]) => {
+        const nextStats: Record<string, SystemContainerStats> = {};
+        for (const container of items) {
+            if (container.status !== 'running') {
+                continue;
+            }
+            try {
+                nextStats[container.name] = await systemApi.getStats(container.name);
+            } catch (error) {
+                if (handleMonitoringFailure(error, 'Unable to refresh container stats.')) {
+                    return false;
+                }
+            }
+        }
+        setStats(nextStats);
+        return true;
+    };
+
     const fetchData = async () => {
-        setIsLoading(true);
+        if (refreshInFlightRef.current) {
+            return;
+        }
+
+        refreshInFlightRef.current = true;
         try {
             const data = await systemApi.getContainers();
             setContainers(data);
+            setMonitorError(null);
             if (data.length > 0 && !selectedContainer) {
                 setSelectedContainer(data[0].name);
             }
+            await fetchStatsForContainers(data);
         } catch (e) {
-            console.error('Failed to fetch containers', e);
+            handleMonitoringFailure(e, 'Failed to fetch containers.');
         } finally {
-            setIsLoading(false);
+            refreshInFlightRef.current = false;
         }
     };
 
     const fetchStats = async () => {
+        if (!capabilities?.ops_monitoring.available) {
+            return;
+        }
+
+        if (refreshInFlightRef.current) {
+            return;
+        }
+
+        refreshInFlightRef.current = true;
         setIsRefreshing(true);
         try {
             const data = await systemApi.getContainers();
             setContainers(data);
-
-            // Fetch stats for all active containers
-            const newStats: Record<string, Stats> = {};
-            for (const c of data) {
-                if (c.status === 'running') {
-                    try {
-                        const s = await systemApi.getStats(c.name);
-                        newStats[c.name] = s;
-                    } catch (e) {
-                        // ignore error for single stat
-                    }
-                }
-            }
-            setStats(newStats);
+            setMonitorError(null);
+            await fetchStatsForContainers(data);
         } catch (e) {
-            console.error('Failed to refresh stats', e);
+            handleMonitoringFailure(e, 'Failed to refresh stats.');
         } finally {
+            refreshInFlightRef.current = false;
             setIsRefreshing(false);
         }
     };
 
     useEffect(() => {
-        if (selectedContainer) {
-            fetchLogs(selectedContainer);
+        if (selectedContainer && capabilities?.ops_monitoring.available) {
+            void fetchLogs(selectedContainer);
         }
-    }, [selectedContainer]);
+    }, [selectedContainer, capabilities?.ops_monitoring.available]);
 
     const fetchLogs = async (name: string) => {
         try {
             const { logs } = await systemApi.getLogs(name, 100);
             setLogs(logs);
         } catch (e) {
-            setLogs('Error loading logs.');
+            if (handleMonitoringFailure(e, 'Logs non disponibili in questo ambiente.')) {
+                return;
+            }
+            setLogs('Logs non disponibili in questo ambiente.');
         }
     };
 
@@ -113,12 +185,40 @@ export default function SystemMonitor() {
                 <button
                     className={`btn btn-secondary btn-sm ${isRefreshing ? 'animate-pulse' : ''}`}
                     onClick={fetchStats}
+                    disabled={!capabilities?.ops_monitoring.available}
                 >
                     <RefreshCcw size={14} /> Refresh
                 </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+            {monitorError && (
+                <div
+                    className="card"
+                    style={{
+                        marginBottom: '1.5rem',
+                        background: 'rgba(245, 158, 11, 0.08)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                        color: '#d97706',
+                    }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <AlertCircle size={16} />
+                        <span style={{ fontSize: '0.9rem' }}>{monitorError}</span>
+                    </div>
+                </div>
+            )}
+
+            {!capabilities?.ops_monitoring.available && (
+                <div className="card" style={{ padding: '1.25rem' }}>
+                    <p style={{ margin: 0, color: 'var(--text-muted)' }}>
+                        Il monitoraggio container è disabilitato o non disponibile in questo ambiente. Il backend resta operativo,
+                        ma le metriche live Docker passano solo tramite l&apos;ops-agent privilegiato.
+                    </p>
+                </div>
+            )}
+
+            {capabilities?.ops_monitoring.available && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
                 {containers.map(container => (
                     <motion.div
                         key={container.id}
@@ -172,9 +272,16 @@ export default function SystemMonitor() {
                         )}
                     </motion.div>
                 ))}
-            </div>
+                {containers.length === 0 && (
+                    <div className="card">
+                        <p style={{ margin: 0, color: 'var(--text-muted)' }}>Nessun container allowlistato disponibile.</p>
+                    </div>
+                )}
+                </div>
+            )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '1.5rem' }}>
+            {capabilities?.ops_monitoring.available && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '1.5rem' }}>
                 <div className="card" style={{ padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid #1e293b' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', background: '#1e293b', borderBottom: '1px solid #334155' }}>
                         <Terminal size={14} color="#60a5fa" />
@@ -194,7 +301,8 @@ export default function SystemMonitor() {
                         {logs || 'No logs available.'}
                     </pre>
                 </div>
-            </div>
+                </div>
+            )}
         </div>
     );
 }

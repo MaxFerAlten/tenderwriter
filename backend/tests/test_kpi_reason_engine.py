@@ -46,6 +46,14 @@ from app.models import (
     TenderStatus,
 )
 from app.services.kpi_reason_engine import (
+    build_bid_plan_event_payload,
+    build_bid_team_assigned_event_payload,
+    build_clarification_event_payload,
+    build_contribution_assignment_confirmed_event_payload,
+    build_draft_integrated_ready_event_payload,
+    build_submission_status_event_payload,
+    build_tender_decision_event_payload,
+    build_terminal_lifecycle_event_payload,
     KpiClientResult,
     KpiReasonEngineClient,
     apply_delivery_result,
@@ -266,6 +274,27 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["method"], "POST")
         self.assertEqual(observed["path"], "/v1/tenders/7/events")
         self.assertEqual(observed["payload"], {"event_type": "proposal_created"})
+
+    async def test_service_runtime_endpoints_query_expected_paths(self) -> None:
+        observed_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            observed_paths.append(request.url.path)
+            return httpx.Response(200, json={"status": "ok"})
+
+        client = KpiReasonEngineClient(
+            base_url="http://kpi-service.test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        health_result = await client.get_service_health()
+        readiness_result = await client.get_service_readiness()
+        manifest_result = await client.get_version_manifest()
+
+        self.assertTrue(health_result.delivered)
+        self.assertTrue(readiness_result.delivered)
+        self.assertTrue(manifest_result.delivered)
+        self.assertEqual(observed_paths, ["/health", "/ready", "/version-manifest"])
 
     async def test_get_tender_snapshot_queries_expected_endpoint(self) -> None:
         observed: dict[str, object] = {}
@@ -538,3 +567,93 @@ class OperationalPayloadBuilderTests(unittest.TestCase):
         self.assertEqual(gate_decision_payload["status"], "passed")
         self.assertEqual(call_payload["external_call_session_id"], "701")
         self.assertEqual(attendance_payload["attendance_status"], "attended")
+
+
+class LifecyclePayloadBuilderTests(unittest.TestCase):
+    def test_tender_sync_payload_preserves_lifecycle_metadata(self) -> None:
+        tender = Tender(
+            id=17,
+            title="Lifecycle Tender",
+            client="ACME",
+            status=TenderStatus.ACTIVE,
+            metadata_json={
+                "lifecycle": {
+                    "decision": {"decision": "go", "decided_at": "2026-03-19T09:00:00Z"},
+                    "submission_status": {"submission_status": "acknowledged"},
+                }
+            },
+        )
+        tender.requirements = []
+        tender.proposals = []
+
+        payload = build_tender_sync_payload(tender)
+
+        self.assertEqual(payload["metadata"]["lifecycle"]["decision"]["decision"], "go")
+        self.assertEqual(payload["metadata"]["lifecycle"]["submission_status"]["submission_status"], "acknowledged")
+
+    def test_lifecycle_event_payload_builders_keep_expected_shape(self) -> None:
+        decided_at = datetime(2026, 3, 19, 9, 0, tzinfo=timezone.utc)
+        clarified_at = datetime(2026, 3, 20, 11, 30, tzinfo=timezone.utc)
+
+        decision_payload = build_tender_decision_event_payload(
+            decision="go",
+            decided_at=decided_at,
+            reason_code="strategic_fit",
+            notes="Proceed with bid",
+        )
+        plan_payload = build_bid_plan_event_payload(
+            plan_status="approved",
+            planned_at=decided_at,
+            owner_user_ids=[7, 9],
+            milestone_count=4,
+            notes="Core team assigned",
+        )
+        team_payload = build_bid_team_assigned_event_payload(
+            assigned_at=decided_at,
+            owner_user_ids=[7, 9],
+            notes="Core team assigned",
+        )
+        assignment_payload = build_contribution_assignment_confirmed_event_payload(
+            occurred_at=decided_at,
+            external_contribution_id="201",
+            owner_user_id=7,
+            external_request_id="301",
+            notes="Assignment confirmed",
+        )
+        draft_payload = build_draft_integrated_ready_event_payload(
+            ready_at=clarified_at,
+            proposal_id=41,
+            approved_section_count=8,
+            total_section_count=10,
+            blocking_rework_count=0,
+        )
+        clarification_payload = build_clarification_event_payload(
+            request_id="clar-1",
+            status="requested",
+            occurred_at=clarified_at,
+            request_summary="Explain staffing model",
+            deadline_at=clarified_at,
+            source_label="buyer_portal",
+        )
+        submission_payload = build_submission_status_event_payload(
+            submission_status="failed",
+            occurred_at=clarified_at,
+            channel="buyer_portal",
+            error_code="timeout",
+            error_message="Gateway timeout",
+        )
+        terminal_payload = build_terminal_lifecycle_event_payload(
+            outcome="withdrawn",
+            recorded_at=clarified_at,
+            reason_code="budget_change",
+            notes="Tender withdrawn",
+        )
+
+        self.assertEqual(decision_payload["decision"], "go")
+        self.assertEqual(plan_payload["owner_user_ids"], [7, 9])
+        self.assertEqual(team_payload["owner_count"], 2)
+        self.assertEqual(assignment_payload["external_request_id"], "301")
+        self.assertEqual(draft_payload["readiness_ratio"], 80.0)
+        self.assertEqual(clarification_payload["request_id"], "clar-1")
+        self.assertEqual(submission_payload["error_code"], "timeout")
+        self.assertEqual(terminal_payload["outcome"], "withdrawn")

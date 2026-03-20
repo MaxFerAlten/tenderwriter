@@ -7,7 +7,7 @@ All endpoints are protected with JWT auth. Access is checked via the associated 
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -20,8 +20,10 @@ from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus,
 from app.api.auth import get_current_user, UserResponse
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
 from app.services.kpi_reason_engine import (
+    build_draft_integrated_ready_event_payload,
     build_proposal_created_event_payload,
     build_proposal_section_updated_event_payload,
+    build_submission_status_event_payload,
     build_tender_submitted_event_payload,
     publish_domain_event,
     publish_tender_sync,
@@ -372,7 +374,7 @@ async def update_proposal(
             actor_id=current_user.id,
             event_type="tender_submitted",
             event_payload=build_tender_submitted_event_payload(
-                submitted_at=datetime.utcnow(),
+                submitted_at=datetime.now(timezone.utc),
                 channel="proposal_status_update",
             ),
         )
@@ -510,10 +512,7 @@ async def update_section(
     previous_assigned_to = section.assigned_to
     changed_fields = list(data.model_dump(exclude_unset=True).keys())
     for key, value in data.model_dump(exclude_unset=True).items():
-        if key == 'content' and isinstance(value, str):
-            setattr(section, key, value)
-        else:
-            setattr(section, key, value)
+        setattr(section, key, value)
 
     await db.flush()
     await db.refresh(section)
@@ -632,4 +631,153 @@ async def add_section(
         created_at=section.created_at,
         updated_at=section.updated_at,
     )
+
+
+
+class ProposalDraftReadyRequest(BaseModel):
+    ready_at: datetime | None = None
+
+
+class ProposalSubmissionStatusRequest(BaseModel):
+    submission_status: str
+    occurred_at: datetime | None = None
+    channel: str = "manual_admin_update"
+    reference_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class ProposalLifecycleActionResponse(BaseModel):
+    status: str
+    event_type: str
+    proposal_id: int
+    tender_id: int
+    payload: dict
+
+
+_ALLOWED_SUBMISSION_STATUSES = {"acknowledged", "failed"}
+
+
+def _utc_or_now(value: datetime | None) -> datetime:
+    return value or datetime.now(timezone.utc)
+
+
+def _clone_tender_metadata(tender: Tender) -> dict:
+    return dict(tender.metadata_json or {})
+
+
+@router.post("/{proposal_id}/draft-ready", response_model=ProposalLifecycleActionResponse, status_code=202)
+async def mark_proposal_draft_ready(
+    proposal_id: int,
+    data: ProposalDraftReadyRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Proposal)
+        .where(Proposal.id == proposal_id)
+        .options(selectinload(Proposal.sections), selectinload(Proposal.tender))
+    )
+    proposal = result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.ready_at)
+    tender = proposal.tender
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    approved_section_count = sum(1 for section in proposal.sections if section.status == SectionStatus.APPROVED)
+    total_section_count = len(proposal.sections)
+    metadata = _clone_tender_metadata(tender)
+    lifecycle = dict(metadata.get("lifecycle") or {})
+    lifecycle["draft_ready"] = {
+        "proposal_id": proposal.id,
+        "ready_at": occurred_at.isoformat(),
+        "approved_section_count": approved_section_count,
+        "total_section_count": total_section_count,
+        "actor_id": current_user.id,
+    }
+    metadata["lifecycle"] = lifecycle
+    tender.metadata_json = metadata
+    await db.flush()
+
+    payload = build_draft_integrated_ready_event_payload(
+        ready_at=occurred_at,
+        proposal_id=proposal.id,
+        approved_section_count=approved_section_count,
+        total_section_count=total_section_count,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="draft_integrated_ready",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return ProposalLifecycleActionResponse(status="accepted", event_type="draft_integrated_ready", proposal_id=proposal.id, tender_id=proposal.tender_id, payload=payload)
+
+
+@router.post("/{proposal_id}/submission-status", response_model=ProposalLifecycleActionResponse, status_code=202)
+async def record_proposal_submission_status(
+    proposal_id: int,
+    data: ProposalSubmissionStatusRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Proposal)
+        .where(Proposal.id == proposal_id)
+        .options(selectinload(Proposal.tender))
+    )
+    proposal = result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+    submission_status = data.submission_status.strip().casefold()
+    if submission_status not in _ALLOWED_SUBMISSION_STATUSES:
+        raise HTTPException(status_code=400, detail="Unsupported submission status")
+
+    occurred_at = _utc_or_now(data.occurred_at)
+    tender = proposal.tender
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    metadata = _clone_tender_metadata(tender)
+    lifecycle = dict(metadata.get("lifecycle") or {})
+    lifecycle["submission_status"] = {
+        "proposal_id": proposal.id,
+        "submission_status": submission_status,
+        "occurred_at": occurred_at.isoformat(),
+        "channel": data.channel,
+        "reference_id": data.reference_id,
+        "error_code": data.error_code,
+        "error_message": data.error_message,
+        "actor_id": current_user.id,
+    }
+    metadata["lifecycle"] = lifecycle
+    tender.metadata_json = metadata
+    await db.flush()
+
+    event_type = "submission_acknowledged" if submission_status == "acknowledged" else "submission_failed"
+    payload = build_submission_status_event_payload(
+        submission_status=submission_status,
+        occurred_at=occurred_at,
+        channel=data.channel,
+        reference_id=data.reference_id,
+        error_code=data.error_code,
+        error_message=data.error_message,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type=event_type,
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return ProposalLifecycleActionResponse(status="accepted", event_type=event_type, proposal_id=proposal.id, tender_id=proposal.tender_id, payload=payload)
 

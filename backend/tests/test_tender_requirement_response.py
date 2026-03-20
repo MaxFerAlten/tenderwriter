@@ -2,6 +2,9 @@
 
 import os
 import unittest
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -14,8 +17,15 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.api.tenders import _requirement_to_response
-from app.models import ComplianceStatus, ProposalSection, SectionStatus, TenderRequirement
+from app.api.tenders import (
+    TenderClarificationUpdate,
+    _requirement_to_response,
+    _tender_to_response,
+    close_tender_clarification,
+    draft_tender_clarification_response,
+    submit_tender_clarification_response,
+)
+from app.models import ComplianceStatus, ProposalSection, SectionStatus, Tender, TenderRequirement, TenderStatus
 
 
 class TenderRequirementResponseTests(unittest.TestCase):
@@ -58,7 +68,69 @@ class TenderRequirementResponseTests(unittest.TestCase):
         self.assertIsNone(response.mapped_section_title)
         self.assertEqual(response.compliance_status, "not_addressed")
 
+    def test_tender_response_exposes_lifecycle_metadata(self) -> None:
+        tender = Tender(
+            id=13,
+            title="Lifecycle tender",
+            client="ACME",
+            status=TenderStatus.ACTIVE,
+        )
+        tender.metadata_json = {
+            "lifecycle": {
+                "decision": {"decision": "go", "decided_at": "2026-03-20T08:00:00+00:00"},
+                "submission_status": {"submission_status": "acknowledged"},
+            }
+        }
+
+        response = _tender_to_response(tender)
+
+        assert response.lifecycle_metadata is not None
+        self.assertEqual(response.lifecycle_metadata["decision"]["decision"], "go")
+        self.assertEqual(response.lifecycle_metadata["submission_status"]["submission_status"], "acknowledged")
+
+
+class _FakeAsyncSession:
+    def __init__(self) -> None:
+        self.flush_called = False
+
+    async def flush(self) -> None:
+        self.flush_called = True
+
+
+class TenderClarificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_clarification_update_routes_require_existing_record(self) -> None:
+        current_user = type("User", (), {"id": 7, "role": "admin"})()
+        data = TenderClarificationUpdate(response_summary="Response prepared")
+
+        for route in (
+            draft_tender_clarification_response,
+            submit_tender_clarification_response,
+            close_tender_clarification,
+        ):
+            tender = Tender(id=13, title="Lifecycle tender", client="ACME", status=TenderStatus.ACTIVE)
+            tender.metadata_json = {"lifecycle": {}}
+            db = _FakeAsyncSession()
+
+            with self.subTest(route=route.__name__):
+                with (
+                    patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
+                    patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+                ):
+                    with self.assertRaises(HTTPException) as exc:
+                        await route(
+                            tender_id=13,
+                            clarification_id="clar-missing",
+                            data=data,
+                            current_user=current_user,
+                            db=db,
+                        )
+
+                    self.assertEqual(exc.exception.status_code, 404)
+                    self.assertEqual(exc.exception.detail, "Clarification not found")
+                    self.assertEqual(tender.metadata_json, {"lifecycle": {}})
+                    self.assertFalse(db.flush_called)
+                    sync_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -27,6 +27,7 @@ from app.models import (
     ReviewCycleStatus,
 )
 from app.services.kpi_reason_engine import (
+    build_contribution_assignment_confirmed_event_payload,
     build_call_attendance_recorded_event_payload,
     build_call_scheduled_event_payload,
     build_compliance_gate_decision_event_payload,
@@ -508,6 +509,18 @@ async def create_contribution_request(
             build_contribution_request_created_event_payload(request=request_row, contribution=contribution),
         )
     ]
+    events.append(
+        (
+            "contribution_assignment_confirmed",
+            build_contribution_assignment_confirmed_event_payload(
+                occurred_at=request_row.requested_at or _now_utc(),
+                external_contribution_id=str(contribution.id),
+                owner_user_id=request_row.requested_to_user_id,
+                external_request_id=str(request_row.id),
+                notes="Manual contribution assignment confirmed from observability workspace.",
+            ),
+        )
+    )
     if request_row.due_at is not None:
         events.append(
             (
@@ -648,14 +661,15 @@ async def complete_review_cycle(
     if str(review.outcome).strip().casefold() == "approved":
         contribution.status = ContributionUnitStatus.COMPLETED
     await db.flush()
+    review_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
     await _publish_operational_events(
         db,
         tender_id=tender_id,
         actor_id=current_user.id,
         events=[
             (
-                "contribution_review_completed",
-                build_contribution_review_completed_event_payload(review=review, contribution=contribution),
+                "review_approved" if str(review.outcome).strip().casefold() == "approved" else "review_changes_requested",
+                review_payload,
             )
         ],
     )
@@ -1183,3 +1197,6 @@ async def get_operational_workspace(
             for item in calls
         ],
     )
+
+
+

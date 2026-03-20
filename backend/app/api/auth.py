@@ -13,7 +13,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import hmac
 import secrets
@@ -46,17 +46,17 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
 class UserRegister(BaseModel):
-    email: str
+    email: EmailStr
     name: str
     password: str
 
 
 class UserLogin(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 class OTPVerify(BaseModel):
-    email: str
+    email: EmailStr
     otp: str
 
 
@@ -136,11 +136,12 @@ async def send_otp_email(email: str, otp: str):
 
     try:
         # We run the synchronous smtp calls in a separate thread to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _send_sync_email, email, subject, body)
         logger.info("OTP email sent successfully", email=mask_email(email))
     except Exception as e:
         logger.error("Failed to send OTP email", error=str(e), email=mask_email(email))
+        raise
 
 def _send_sync_email(to_email: str, subject: str, html_content: str):
     """Synchronous function to send email via smtplib."""
@@ -187,12 +188,17 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
     
     otp_token = OTPToken(user_id=user.id, token=otp, expires_at=expires)
     db.add(otp_token)
-    await db.commit()
-    await db.refresh(user)
-    await db.refresh(user)
 
-    # Send OTP
-    await send_otp_email(user.email, otp_token.token)
+    try:
+        await send_otp_email(user.email, otp_token.token)
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to send verification code. Please try again.",
+        ) from exc
+
+    await db.commit()
 
     return {"message": "Registration successful. Please check your email for the OTP to verify your account."}
 
@@ -200,29 +206,34 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 @limiter.limit("5/minute")
 async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depends(get_db)):
     """Verify the 2FA OTP and return JWT token."""
-    import hmac
-    
+    invalid_otp_error = HTTPException(status_code=400, detail="Invalid OTP")
+
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
     
     if not user:
-        raise HTTPException(status_code=400, detail="User not found")
+        raise invalid_otp_error
         
-    result = await db.execute(select(OTPToken).where(OTPToken.user_id == user.id))
+    result = await db.execute(
+        select(OTPToken)
+        .where(OTPToken.user_id == user.id)
+        .order_by(OTPToken.created_at.desc(), OTPToken.id.desc())
+        .limit(1)
+    )
     otp_record = result.scalar_one_or_none()
     
     if not otp_record:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+        raise invalid_otp_error
     
     # Check max attempts
     if otp_record.attempts >= otp_record.max_attempts:
-        await db.delete(otp_record)
+        await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
         await db.commit()
         raise HTTPException(status_code=400, detail="Too many failed attempts. Please request a new OTP.")
     
     # Check expiration
     if otp_record.expires_at < datetime.now(timezone.utc):
-        await db.delete(otp_record)
+        await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
         await db.commit()
         raise HTTPException(status_code=400, detail="Expired OTP")
     
@@ -230,12 +241,16 @@ async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depen
     if not hmac.compare_digest(otp_record.token.encode(), data.otp.encode()):
         # Increment failed attempts
         otp_record.attempts += 1
+        if otp_record.attempts >= otp_record.max_attempts:
+            await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
+            await db.commit()
+            raise HTTPException(status_code=400, detail="Too many failed attempts. Please request a new OTP.")
         await db.commit()
         remaining = otp_record.max_attempts - otp_record.attempts
         raise HTTPException(status_code=400, detail=f"Invalid OTP. {remaining} attempts remaining.")
 
     user.is_verified = True
-    await db.delete(otp_record)
+    await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
     await db.commit()
     
     logger.info("User verified via OTP", user_id=user.id, email=mask_email(user.email))

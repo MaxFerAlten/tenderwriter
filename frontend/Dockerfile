@@ -32,7 +32,13 @@ server {
         proxy_send_timeout 300;
     }
 
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files \$uri =404;
+    }
+
     location / {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
         try_files \$uri \$uri/ /index.html;
     }
 }

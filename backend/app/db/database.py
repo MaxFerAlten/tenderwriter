@@ -2,10 +2,14 @@
 TenderWriter — Database Connection & Session Management
 """
 
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(
     settings.database_url,
@@ -35,22 +39,21 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """Create all tables on startup (dev only — use Alembic in production)."""
-    print("DEBUG: Initializing database...", flush=True)
+    logger.info("Initializing database metadata")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         
         # Simple migrations for newly added columns if table already existed
         try:
             from sqlalchemy import text
-            print("DEBUG: Checking for missing columns in 'users' table...", flush=True)
+            logger.info("Checking for missing compatibility columns")
             # Add is_active if missing
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             # Add is_verified if missing
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE"))
-            print("DEBUG: Database schema check completed.", flush=True)
+            logger.info("Database schema compatibility check completed")
         except Exception as e:
-            print(f"DEBUG: Migration error (ignoring): {e}", flush=True)
-            pass
+            logger.warning("Database compatibility migration skipped", error=str(e))
 
 
 async def close_db():

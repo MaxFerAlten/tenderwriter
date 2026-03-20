@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { buildLocalServiceUrl } from '../config/runtime';
 import { 
     Server, 
     Database, 
@@ -14,86 +15,6 @@ import {
     ExternalLink,
     Key
 } from 'lucide-react';
-
-const services = [
-    {
-        name: 'Frontend',
-        description: 'React web application',
-        url: 'http://localhost:3000',
-        icon: Globe,
-        color: '#3b82f6',
-    },
-    {
-        name: 'Backend API',
-        description: 'FastAPI REST endpoints',
-        url: 'http://localhost:8000/docs',
-        icon: Server,
-        color: '#10b981',
-    },
-    {
-        name: 'PostgreSQL',
-        description: 'Relational database',
-        url: 'localhost:5432',
-        icon: Database,
-        color: '#6366f1',
-    },
-    {
-        name: 'Qdrant',
-        description: 'Vector database',
-        url: 'http://localhost:6333',
-        icon: Database,
-        color: '#8b5cf6',
-    },
-    {
-        name: 'Neo4j',
-        description: 'Graph database browser',
-        url: 'http://localhost:7474',
-        icon: Layers,
-        color: '#ec4899',
-    },
-    {
-        name: 'Redis',
-        description: 'In-memory data store',
-        url: 'localhost:6379',
-        icon: HardDrive,
-        color: '#ef4444',
-    },
-    {
-        name: 'Redis Commander',
-        description: 'Redis GUI interface',
-        url: 'http://localhost:8001',
-        icon: Box,
-        color: '#f97316',
-    },
-    {
-        name: 'Ollama',
-        description: 'Local LLM inference',
-        url: 'http://localhost:11434',
-        icon: Cpu,
-        color: '#84cc16',
-    },
-    {
-        name: 'MinIO',
-        description: 'S3-compatible object storage',
-        url: 'http://localhost:9000',
-        icon: HardDrive,
-        color: '#14b8a6',
-    },
-    {
-        name: 'OnlyOffice',
-        description: 'Document editor',
-        url: 'http://localhost:8443',
-        icon: FileText,
-        color: '#f43f5e',
-    },
-    {
-        name: 'Mailpit',
-        description: 'SMTP testing UI',
-        url: 'http://localhost:8025',
-        icon: Mail,
-        color: '#a855f7',
-    },
-];
 
 function FileText(props: any) {
     return (
@@ -110,6 +31,85 @@ function FileText(props: any) {
 export default function Components() {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const services = [
+        {
+            name: 'Frontend',
+            description: 'React web application',
+            url: buildLocalServiceUrl(3000),
+            icon: Globe,
+            color: '#3b82f6',
+        },
+        {
+            name: 'Backend API',
+            description: 'FastAPI REST endpoints',
+            url: buildLocalServiceUrl(8000, '/docs'),
+            icon: Server,
+            color: '#10b981',
+        },
+        {
+            name: 'PostgreSQL',
+            description: 'Relational database',
+            url: `${window.location.hostname}:5432`,
+            icon: Database,
+            color: '#6366f1',
+        },
+        {
+            name: 'Qdrant',
+            description: 'Vector database',
+            url: buildLocalServiceUrl(6333),
+            icon: Database,
+            color: '#8b5cf6',
+        },
+        {
+            name: 'Neo4j',
+            description: 'Graph database browser',
+            url: buildLocalServiceUrl(7474),
+            icon: Layers,
+            color: '#ec4899',
+        },
+        {
+            name: 'Redis',
+            description: 'In-memory data store',
+            url: `${window.location.hostname}:6379`,
+            icon: HardDrive,
+            color: '#ef4444',
+        },
+        {
+            name: 'Redis Commander',
+            description: 'Redis GUI interface',
+            url: buildLocalServiceUrl(8001),
+            icon: Box,
+            color: '#f97316',
+        },
+        {
+            name: 'Ollama',
+            description: 'Local LLM inference',
+            url: buildLocalServiceUrl(11434),
+            icon: Cpu,
+            color: '#84cc16',
+        },
+        {
+            name: 'MinIO',
+            description: 'S3-compatible object storage',
+            url: buildLocalServiceUrl(9000),
+            icon: HardDrive,
+            color: '#14b8a6',
+        },
+        {
+            name: 'OnlyOffice',
+            description: 'Document editor',
+            url: buildLocalServiceUrl(8443),
+            icon: FileText,
+            color: '#f43f5e',
+        },
+        {
+            name: 'Mailpit',
+            description: 'SMTP testing UI',
+            url: buildLocalServiceUrl(8025),
+            icon: Mail,
+            color: '#a855f7',
+        },
+    ];
     
     useEffect(() => {
         if (user?.role !== 'admin') {

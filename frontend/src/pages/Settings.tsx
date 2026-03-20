@@ -15,7 +15,7 @@ import {
     ToggleRight,
     ToggleLeft,
 } from 'lucide-react';
-import { ragApi, systemApi, gatewayApi, llmSettingsApi, authApi, GatewayTarget } from '../api/client';
+import { ragApi, systemApi, gatewayApi, llmSettingsApi, authApi, GatewayTarget, type SystemCapabilitiesData } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
@@ -44,10 +44,13 @@ const Settings: FC = () => {
     const [llmMaxTokens, setLlmMaxTokens] = useState<number | ''>(256);
     const [llmTemperature, setLlmTemperature] = useState<number | ''>(0.3);
     const [llmStopTokens, setLlmStopTokens] = useState<string>('');
+    const [systemCapabilities, setSystemCapabilities] = useState<SystemCapabilitiesData | null>(null);
+    const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+    const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
 
     // ── Global save state ──
     const [isSaving, setIsSaving] = useState(false);
-    const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [saveResult, setSaveResult] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
 
     // ── Gateway targets (local state, saved globally) ──
     const [gatewayTargets, setGatewayTargets] = useState<GatewayTarget[]>([]);
@@ -131,11 +134,28 @@ const Settings: FC = () => {
         }
     };
 
+    const loadSystemCapabilities = async () => {
+        if (user?.role !== 'admin') {
+            return;
+        }
+        try {
+            setCapabilitiesLoading(true);
+            setCapabilitiesError(null);
+            const capabilities = await systemApi.getCapabilities();
+            setSystemCapabilities(capabilities);
+        } catch (err) {
+            setCapabilitiesError(err instanceof Error ? err.message : 'Impossibile rilevare le capability infrastrutturali.');
+        } finally {
+            setCapabilitiesLoading(false);
+        }
+    };
+
     useEffect(() => {
         checkHealth();
         loadAllSettings();
         if (user?.role === 'admin') {
             loadGatewayTargets();
+            loadSystemCapabilities();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.role]);
@@ -181,6 +201,7 @@ const Settings: FC = () => {
         setIsSaving(true);
         setSaveResult(null);
         const errors: string[] = [];
+        const warnings: string[] = [];
 
         // 1) Save profile
         try {
@@ -217,14 +238,18 @@ const Settings: FC = () => {
 
         // 4) Apply nginx hot-reload (best-effort)
         if (user?.role === 'admin') {
-            try {
-                await systemApi.updateNginx({
-                    read_timeout: readTimeout,
-                    connect_timeout: connectTimeout,
-                    send_timeout: sendTimeout,
-                });
-            } catch {
-                // nginx hot-reload may fail, values are already persisted in step 2
+            if (systemCapabilities?.nginx_hot_reload.available) {
+                try {
+                    await systemApi.updateNginx({
+                        read_timeout: readTimeout,
+                        connect_timeout: connectTimeout,
+                        send_timeout: sendTimeout,
+                    });
+                } catch (err) {
+                    warnings.push(err instanceof Error ? `Timeout salvati, ma non applicati live: ${err.message}` : 'Timeout salvati, ma hot-reload Nginx non disponibile.');
+                }
+            } else {
+                warnings.push(systemCapabilities?.nginx_hot_reload.reason || 'Timeout salvati, ma hot-reload Nginx non disponibile in questo ambiente.');
             }
         }
 
@@ -294,9 +319,12 @@ const Settings: FC = () => {
         }
 
         if (errors.length > 0) {
-            setSaveResult({ success: false, message: errors.join(' · ') });
+            const message = warnings.length > 0 ? `${errors.join(' · ')} · ${warnings.join(' · ')}` : errors.join(' · ');
+            setSaveResult({ tone: 'error', message });
+        } else if (warnings.length > 0) {
+            setSaveResult({ tone: 'warning', message: `Impostazioni salvate. ${warnings.join(' · ')}` });
         } else {
-            setSaveResult({ success: true, message: 'Tutte le impostazioni sono state salvate con successo!' });
+            setSaveResult({ tone: 'success', message: 'Tutte le impostazioni sono state salvate con successo!' });
         }
         setIsSaving(false);
     };
@@ -334,16 +362,28 @@ const Settings: FC = () => {
                 <div style={{
                     padding: '0.75rem 1rem',
                     borderRadius: 'var(--radius-sm)',
-                    background: saveResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    color: saveResult.success ? '#10b981' : '#ef4444',
+                    background: saveResult.tone === 'success'
+                        ? 'rgba(16, 185, 129, 0.1)'
+                        : saveResult.tone === 'warning'
+                            ? 'rgba(245, 158, 11, 0.1)'
+                            : 'rgba(239, 68, 68, 0.1)',
+                    color: saveResult.tone === 'success'
+                        ? '#10b981'
+                        : saveResult.tone === 'warning'
+                            ? '#d97706'
+                            : '#ef4444',
                     fontSize: '0.85rem',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '0.5rem',
                     marginBottom: '1.5rem',
-                    border: `1px solid ${saveResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    border: saveResult.tone === 'success'
+                        ? '1px solid rgba(16, 185, 129, 0.3)'
+                        : saveResult.tone === 'warning'
+                            ? '1px solid rgba(245, 158, 11, 0.3)'
+                            : '1px solid rgba(239, 68, 68, 0.3)',
                 }}>
-                    {saveResult.success ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+                    {saveResult.tone === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
                     {saveResult.message}
                 </div>
             )}
@@ -464,13 +504,52 @@ const Settings: FC = () => {
                 {/* Admin Only: Infrastructure Settings */}
                 {user?.role === 'admin' && (
                     <div className="card" style={{ borderColor: 'var(--accent-blue)' }}>
-                        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem', color: 'var(--accent-blue)' }}>
-                            <Shield size={20} />
-                            Infrastruttura (Admin)
-                        </h2>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem', color: 'var(--accent-blue)', margin: 0 }}>
+                                <Shield size={20} />
+                                Infrastruttura (Admin)
+                            </h2>
+                            <button className="btn btn-ghost btn-sm" onClick={loadSystemCapabilities} disabled={capabilitiesLoading}>
+                                {capabilitiesLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                                Ops Status
+                            </button>
+                        </div>
                         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
                             Configurazione avanzata dei componenti di sistema.
                         </p>
+
+                        {capabilitiesError && (
+                            <div style={{ marginBottom: '1rem', padding: '0.75rem', borderRadius: 'var(--radius-sm)', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '0.85rem' }}>
+                                {capabilitiesError}
+                            </div>
+                        )}
+
+                        {systemCapabilities && (
+                            <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.85rem 1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Ops Agent</div>
+                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                            {systemCapabilities.ops_agent.reason || 'Servizio privilegiato interno disponibile.'}
+                                        </div>
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', color: systemCapabilities.ops_agent.available ? '#10b981' : '#d97706' }}>
+                                        {systemCapabilities.ops_agent.available ? 'Connected' : 'Unavailable'}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.75rem', alignItems: 'center', padding: '0.85rem 1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Live Nginx Apply</div>
+                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                            {systemCapabilities.nginx_hot_reload.reason || 'I timeout possono essere applicati live sul container frontend.'}
+                                        </div>
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', color: systemCapabilities.nginx_hot_reload.available ? '#10b981' : '#d97706' }}>
+                                        {systemCapabilities.nginx_hot_reload.available ? 'Enabled' : 'Disabled'}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
 
                         <div style={{ display: 'grid', gap: '1.25rem' }}>
                             {/* Nginx Timeouts */}

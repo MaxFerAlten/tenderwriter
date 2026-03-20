@@ -53,6 +53,15 @@
   --transition-fast: 150ms ease;
   --transition-default: 250ms ease;
   --transition-slow: 400ms ease;
+  --sidebar-width: 260px;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -62,13 +71,7 @@ body {
   line-height: 1.6;
   min-height: 100vh;
   width: 100%;
-}
-
-html {
-  font-size: 16px;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  width: 100%;
+  overflow-x: hidden;
 }
 
 /* Animated gradient background */
@@ -129,13 +132,14 @@ a:hover {
 
 /* ── Layout ── */
 .app-layout {
-  display: flex;
   min-height: 100vh;
   width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 .sidebar {
-  width: 260px;
+  width: var(--sidebar-width);
   background: var(--bg-card);
   border-right: 1px solid var(--border-default);
   backdrop-filter: blur(20px);
@@ -147,6 +151,7 @@ a:hover {
   left: 0;
   bottom: 0;
   z-index: 10;
+  overflow: hidden;
 }
 
 .sidebar-logo {
@@ -173,6 +178,15 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-item {
@@ -208,16 +222,17 @@ a:hover {
 }
 
 .main-content {
-  flex: 1 1 auto;
   min-width: 0;
-  margin-left: 260px;
+  width: calc(100vw - var(--sidebar-width));
+  max-width: calc(100vw - var(--sidebar-width));
+  margin-left: var(--sidebar-width);
   padding: 2rem 2.5rem;
-  width: 100% !important;
+  overflow-x: hidden;
 }
 
 .animate-in {
-  width: 100% !important;
-  height: 100% !important;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -414,8 +429,9 @@ a:hover {
 /* ── Dashboard Pipeline (Kanban) ── */
 .pipeline {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 1.25rem;
+  align-items: start;
 }
 
 .pipeline-column {
@@ -423,6 +439,7 @@ a:hover {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   padding: 1rem;
+  min-width: 0;
 }
 
 .pipeline-header {
@@ -658,6 +675,39 @@ a:hover {
   width: 100%;
 }
 
+.observability-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.observability-sidebar,
+.observability-main {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  align-content: start;
+}
+
+.observability-focus-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.observability-focus-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.observability-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
 
 .content-card {
   background: var(--bg-card);
@@ -886,8 +936,11 @@ a:hover {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --sidebar-width: 60px;
+  }
+
   .sidebar {
-    width: 60px;
     padding: 1rem 0;
   }
 

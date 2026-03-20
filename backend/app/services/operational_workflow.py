@@ -19,6 +19,7 @@ from app.models import (
     SectionStatus,
 )
 from app.services.kpi_reason_engine import (
+    build_contribution_assignment_confirmed_event_payload,
     build_contribution_due_date_set_event_payload,
     build_contribution_received_event_payload,
     build_contribution_request_created_event_payload,
@@ -57,8 +58,8 @@ def derive_contribution_status(
         return ContributionUnitStatus.COMPLETED
     if section_status == SectionStatus.IN_REVIEW:
         return ContributionUnitStatus.IN_REVIEW
-    if assigned_to is not None and section_status == SectionStatus.IN_PROGRESS:
-        return ContributionUnitStatus.RECEIVED
+    if section_status == SectionStatus.IN_PROGRESS:
+        return ContributionUnitStatus.RECEIVED if assigned_to is not None else ContributionUnitStatus.REQUESTED
     if assigned_to is not None:
         return ContributionUnitStatus.REQUESTED
     return ContributionUnitStatus.OPEN
@@ -74,7 +75,7 @@ def build_section_transition_plan(
     plan = SectionTransitionPlan()
     assignment_changed = previous_assigned_to != new_assigned_to
 
-    if assignment_changed and previous_assigned_to is not None:
+    if assignment_changed:
         plan.cancel_open_requests = True
     if assignment_changed and new_assigned_to is not None and new_status in {SectionStatus.TODO, SectionStatus.IN_PROGRESS}:
         plan.ensure_request = True
@@ -87,11 +88,10 @@ def build_section_transition_plan(
     if new_status == SectionStatus.APPROVED and previous_status != SectionStatus.APPROVED:
         plan.mark_request_received = True
         plan.resolve_rework = True
-        plan.complete_review = True
-        plan.review_outcome = "approved"
-        if previous_status != SectionStatus.IN_REVIEW:
-            plan.start_review = True
-    elif previous_status == SectionStatus.IN_REVIEW and new_status in {SectionStatus.TODO, SectionStatus.IN_PROGRESS}:
+        if previous_status == SectionStatus.IN_REVIEW:
+            plan.complete_review = True
+            plan.review_outcome = "approved"
+    elif previous_status == SectionStatus.IN_REVIEW and new_status == SectionStatus.IN_PROGRESS:
         plan.complete_review = True
         plan.review_outcome = "changes_requested"
         plan.open_rework = True
@@ -226,6 +226,18 @@ async def _ensure_request_for_assignment(
             build_contribution_request_created_event_payload(request=request_row, contribution=contribution),
         )
     ]
+    events.append(
+        (
+            "contribution_assignment_confirmed",
+            build_contribution_assignment_confirmed_event_payload(
+                occurred_at=occurred_at,
+                external_contribution_id=str(contribution.id),
+                owner_user_id=assigned_to,
+                external_request_id=str(request_row.id),
+                notes="Assignment captured from proposal section workflow.",
+            ),
+        )
+    )
     if request_row.due_at is not None:
         events.append(
             (
@@ -315,10 +327,11 @@ async def _complete_review(
     else:
         review.notes = review.notes or "Changes requested from proposal workflow."
     await db.flush()
+    review_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
     events.append(
         (
-            "contribution_review_completed",
-            build_contribution_review_completed_event_payload(review=review, contribution=contribution),
+            "review_approved" if outcome == "approved" else "review_changes_requested",
+            review_payload,
         )
     )
     return events
@@ -488,3 +501,6 @@ async def sync_section_operational_workflow(
     )
     await db.flush()
     return events
+
+
+

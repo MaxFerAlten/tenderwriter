@@ -66,6 +66,22 @@ export const tenderApi = {
     update: (id: number, data: TenderUpdate) =>
         request<Tender>(`/tenders/${id}`, { method: 'PUT', body: data }),
     delete: (id: number) => request(`/tenders/${id}`, { method: 'DELETE' }),
+    recordDecision: (id: number, data: TenderDecisionRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/decision`, { method: 'POST', body: data }),
+    recordBidPlan: (id: number, data: TenderBidPlanRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/bid-plan`, { method: 'POST', body: data }),
+    openContributionWave: (id: number, data: ContributionWaveRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/contribution-wave`, { method: 'POST', body: data }),
+    recordOutcome: (id: number, data: TenderOutcomeRecordRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/outcome`, { method: 'POST', body: data }),
+    createClarification: (id: number, data: TenderClarificationCreateRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications`, { method: 'POST', body: data }),
+    draftClarification: (id: number, clarificationId: string, data: TenderClarificationUpdateRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/draft`, { method: 'POST', body: data }),
+    submitClarification: (id: number, clarificationId: string, data: TenderClarificationUpdateRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/submit`, { method: 'POST', body: data }),
+    closeClarification: (id: number, clarificationId: string, data: TenderClarificationUpdateRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/close`, { method: 'POST', body: data }),
     uploadDocument: async (id: number, file: File) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -222,6 +238,7 @@ export const chatApi = {
 
 
 const CHAT_PREFETCH_TTL_MS = 45_000;
+const CHAT_PREFETCH_MAX_ENTRIES = 24;
 
 type TenderChatContextCacheEntry = {
     value: TenderChatContextSnapshot | null;
@@ -237,6 +254,38 @@ type TenderChatRetrospectiveCacheEntry = {
 
 const tenderChatContextCache = new Map<number, TenderChatContextCacheEntry>();
 const tenderChatRetrospectiveCache = new Map<number, TenderChatRetrospectiveCacheEntry>();
+
+function pruneTenderChatContextCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of tenderChatContextCache.entries()) {
+        if (!entry.promise && now - entry.cached_at > CHAT_PREFETCH_TTL_MS) {
+            tenderChatContextCache.delete(key);
+        }
+    }
+    while (tenderChatContextCache.size > CHAT_PREFETCH_MAX_ENTRIES) {
+        const oldestKey = tenderChatContextCache.keys().next().value;
+        if (oldestKey === undefined) {
+            break;
+        }
+        tenderChatContextCache.delete(oldestKey);
+    }
+}
+
+function pruneTenderChatRetrospectiveCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of tenderChatRetrospectiveCache.entries()) {
+        if (!entry.promise && now - entry.cached_at > CHAT_PREFETCH_TTL_MS) {
+            tenderChatRetrospectiveCache.delete(key);
+        }
+    }
+    while (tenderChatRetrospectiveCache.size > CHAT_PREFETCH_MAX_ENTRIES) {
+        const oldestKey = tenderChatRetrospectiveCache.keys().next().value;
+        if (oldestKey === undefined) {
+            break;
+        }
+        tenderChatRetrospectiveCache.delete(oldestKey);
+    }
+}
 
 function isTenderChatContextFresh(entry: TenderChatContextCacheEntry | undefined): boolean {
     return Boolean(entry && Date.now() - entry.cached_at <= CHAT_PREFETCH_TTL_MS);
@@ -272,12 +321,12 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
 
     const preferCached = options.preferCached ?? true;
     const existing = tenderChatContextCache.get(tenderId);
+    if (existing?.promise) {
+        return existing.promise;
+    }
     if (preferCached && isTenderChatContextFresh(existing)) {
         if (existing?.value) {
             return existing.value;
-        }
-        if (existing?.promise) {
-            return existing.promise;
         }
     }
 
@@ -288,6 +337,7 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
                 promise: null,
                 cached_at: Date.now(),
             });
+            pruneTenderChatContextCache();
             return value;
         })
         .catch((error) => {
@@ -303,6 +353,7 @@ export async function resolveTenderChatContext(tenderId: number, options: { pref
         promise,
         cached_at: Date.now(),
     });
+    pruneTenderChatContextCache();
 
     return promise;
 }
@@ -314,12 +365,12 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
 
     const preferCached = options.preferCached ?? true;
     const existing = tenderChatRetrospectiveCache.get(tenderId);
+    if (existing?.promise) {
+        return existing.promise;
+    }
     if (preferCached && isTenderChatRetrospectiveFresh(existing)) {
         if (existing?.value) {
             return existing.value;
-        }
-        if (existing?.promise) {
-            return existing.promise;
         }
     }
 
@@ -330,6 +381,7 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
                 promise: null,
                 cached_at: Date.now(),
             });
+            pruneTenderChatRetrospectiveCache();
             return value;
         })
         .catch((error) => {
@@ -345,6 +397,7 @@ export async function resolveTenderChatRetrospective(tenderId: number, options: 
         promise,
         cached_at: Date.now(),
     });
+    pruneTenderChatRetrospectiveCache();
 
     return promise;
 }
@@ -399,6 +452,10 @@ export const proposalApi = {
             method: 'PUT',
             body: data,
         }),
+    markDraftReady: (proposalId: number, data: ProposalDraftReadyRequest = {}) =>
+        request<ProposalLifecycleActionResponse>(`/proposals/${proposalId}/draft-ready`, { method: 'POST', body: data }),
+    updateSubmissionStatus: (proposalId: number, data: ProposalSubmissionStatusRequest) =>
+        request<ProposalLifecycleActionResponse>(`/proposals/${proposalId}/submission-status`, { method: 'POST', body: data }),
 };
 
 // ── Content Library ──
@@ -437,13 +494,39 @@ export const ragApi = {
 // ── System ──
 
 export const systemApi = {
-    getContainers: () => request<any[]>('/system/containers'),
+    getCapabilities: () => request<SystemCapabilitiesData>('/system/capabilities'),
+    getContainers: () => request<SystemContainer[]>('/system/containers'),
     getLogs: (containerName: string, tail?: number) => request<{ logs: string }>(`/system/logs/${containerName}${tail ? `?tail=${tail}` : ''}`),
-    getStats: (containerName: string) => request<any>(`/system/stats/${containerName}`),
+    getStats: (containerName: string) => request<SystemContainerStats>(`/system/stats/${containerName}`),
     updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
     getAppSettings: () => request<AppSettingsData>('/system/app-settings'),
     updateAppSettings: (data: Partial<AppSettingsData>) => request<AppSettingsData>('/system/app-settings', { method: 'PUT', body: data }),
 };
+
+export interface SystemCapabilityStatus {
+    available: boolean;
+    reason: string | null;
+}
+
+export interface SystemCapabilitiesData {
+    ops_agent: SystemCapabilityStatus;
+    ops_monitoring: SystemCapabilityStatus;
+    nginx_hot_reload: SystemCapabilityStatus;
+}
+
+export interface SystemContainer {
+    id: string;
+    name: string;
+    status: string;
+    health: string;
+}
+
+export interface SystemContainerStats {
+    cpu_percent: number;
+    memory_usage_mb: number;
+    memory_limit_mb: number;
+    memory_percent: number;
+}
 
 export interface AppSettingsData {
     rag_model?: string;
@@ -469,6 +552,7 @@ export const adminApi = {
 export const kpiAdminApi = {
     getPortfolioOverview: () => request<KpiPortfolioOverview>('/admin/kpi/portfolio/overview'),
     getPortfolioBottlenecks: () => request<KpiPortfolioBottlenecks>('/admin/kpi/portfolio/bottlenecks'),
+    getPortfolioIntelligence: () => request<KpiPortfolioIntelligence>('/admin/kpi/portfolio/intelligence'),
     resyncPortfolio: () => request<KpiPortfolioResyncResult>('/admin/kpi/portfolio/resync', { method: 'POST' }),
     getTenderSnapshot: (tenderId: number) => request<KpiTenderSnapshot>(`/admin/kpi/tenders/${tenderId}/snapshot`),
     getTenderDiagnostics: (tenderId: number) => request<KpiDiagnostics>(`/admin/kpi/tenders/${tenderId}/diagnostics`),
@@ -545,6 +629,82 @@ export interface AuthResponse {
     user: User;
 }
 
+export interface TenderLifecycleDecisionRecord {
+    decision: string;
+    decided_at: string | null;
+    reason_code: string | null;
+    notes: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleBidPlanRecord {
+    plan_status: string;
+    planned_at: string | null;
+    owner_user_ids: number[];
+    milestone_count: number | null;
+    notes: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleContributionWaveRecord {
+    opened_at: string | null;
+    contribution_count: number | null;
+    department_count: number | null;
+    notes: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleDraftReadyRecord {
+    proposal_id: number | null;
+    ready_at: string | null;
+    approved_section_count: number | null;
+    total_section_count: number | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleSubmissionStatusRecord {
+    proposal_id: number | null;
+    submission_status: string;
+    occurred_at: string | null;
+    channel: string | null;
+    reference_id: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleOutcomeRecord {
+    outcome: string;
+    recorded_at: string | null;
+    reason_code: string | null;
+    notes: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleClarificationRecord {
+    request_id: string;
+    status: string;
+    request_summary: string | null;
+    deadline_at: string | null;
+    source_label: string | null;
+    response_summary: string | null;
+    requested_at: string | null;
+    submitted_at: string | null;
+    closed_at: string | null;
+    updated_at: string | null;
+    actor_id: number | null;
+}
+
+export interface TenderLifecycleMetadata {
+    decision?: TenderLifecycleDecisionRecord | null;
+    bid_plan?: TenderLifecycleBidPlanRecord | null;
+    contribution_wave?: TenderLifecycleContributionWaveRecord | null;
+    draft_ready?: TenderLifecycleDraftReadyRecord | null;
+    submission_status?: TenderLifecycleSubmissionStatusRecord | null;
+    structured_outcome?: TenderLifecycleOutcomeRecord | null;
+    clarifications?: TenderLifecycleClarificationRecord[];
+}
+
 export interface Tender {
     id: number;
     title: string;
@@ -560,6 +720,7 @@ export interface Tender {
     created_by: number | null;
     created_by_name: string | null;
     requirement_count?: number;
+    lifecycle_metadata?: TenderLifecycleMetadata | null;
 }
 
 export interface TenderDetail extends Tender {
@@ -595,6 +756,76 @@ export interface TenderUpdate {
     category?: string;
     tags?: string[];
     budget_estimate?: number;
+}
+
+export interface TenderDecisionRequest {
+    decision: string;
+    decided_at?: string;
+    reason_code?: string;
+    notes?: string;
+}
+
+export interface TenderBidPlanRequest {
+    plan_status?: string;
+    planned_at?: string;
+    owner_user_ids?: number[];
+    milestone_count?: number;
+    notes?: string;
+}
+
+export interface ContributionWaveRequest {
+    opened_at?: string;
+    contribution_count?: number;
+    department_count?: number;
+    notes?: string;
+}
+
+export interface TenderOutcomeRecordRequest {
+    outcome: string;
+    recorded_at?: string;
+    reason_code?: string;
+    notes?: string;
+}
+
+export interface TenderClarificationCreateRequest {
+    request_id?: string;
+    request_summary: string;
+    deadline_at?: string;
+    source_label?: string;
+    occurred_at?: string;
+}
+
+export interface TenderClarificationUpdateRequest {
+    response_summary?: string;
+    occurred_at?: string;
+    source_label?: string;
+}
+
+export interface TenderLifecycleActionResponse {
+    status: string;
+    event_type: string;
+    tender_id: number;
+    payload: Record<string, unknown>;
+}
+
+export interface ProposalDraftReadyRequest {
+    ready_at?: string;
+}
+
+export interface ProposalSubmissionStatusRequest {
+    submission_status: string;
+    occurred_at?: string;
+    channel?: string;
+    reference_id?: string;
+    error_code?: string;
+    error_message?: string;
+}
+
+export interface ProposalLifecycleActionResponse {
+    status: string;
+    event_type: string;
+    proposal_id: number;
+    payload: Record<string, unknown>;
 }
 
 export interface Proposal {
@@ -719,6 +950,58 @@ export interface KpiAnalysisMetadata {
     formula_bundle_version: string | null;
     model_bundle_version: string | null;
     prompt_bundle_version: string | null;
+    contract_version: string | null;
+    health_rule_version: string | null;
+    score_scale_internal: string | null;
+    score_scale_external: string | null;
+    markov_phase_scope: string[];
+    markov_reliable_phase_scope: string[];
+    semantic_priority: string[];
+    canonical_source_types: string[];
+    rollout_policy: string | null;
+    qualitative_engine_kind: string | null;
+    qualitative_engine_mode: string | null;
+    semantic_official_enabled: boolean;
+    semantic_engine_kind: string | null;
+    semantic_execution_mode: string | null;
+    semantic_bundle_version: string | null;
+    semantic_kpis: string[];
+    semantic_fallback_kpis: string[];
+    semantic_fallback_policy_version: string | null;
+    shadow_rollout_enabled: boolean;
+    markov_rollout_enabled: boolean;
+    calibrated_forecast_enabled: boolean;
+    shadow_mode_enabled: boolean;
+    shadow_engine_kind: string | null;
+    shadow_execution_mode: string | null;
+    shadow_bundle_version: string | null;
+    shadow_kpis: string[];
+    forecast_engine_active: string | null;
+    forecast_engine_candidates: string[];
+    forecast_signal_type: string | null;
+    forecast_fallback_reason: string | null;
+    heuristic_bundle_version: string | null;
+    markov_model_active: boolean;
+    markov_model_version: string | null;
+    markov_state_scope: string[];
+    markov_absorbing_states: string[];
+    markov_transition_samples: number | null;
+    markov_dataset_tenders: number | null;
+    markov_current_state_support: number | null;
+    markov_source_mix: Record<string, number>;
+    markov_bundle_kind: string | null;
+    markov_full_journey_enabled: boolean;
+    markov_coverage_ratio: number | null;
+    markov_projected_path: string[];
+    markov_backtest_version: string | null;
+    markov_backtest_sample_count: number | null;
+    markov_backtest_submission_accuracy: number | null;
+    markov_backtest_calibration_gap: number | null;
+    forecast_driver_kpis: string[];
+    forecast_driver_scores: Record<string, number>;
+    forecast_primary_action_code: string | null;
+    forecast_primary_action_confidence: number | null;
+    forecast_decision_bundle_version: string | null;
     engine_kind: string | null;
     scored_kpis: string[];
     event_count: number | null;
@@ -731,19 +1014,94 @@ export interface KpiAnalysisMetadata {
     history_points: number | null;
 }
 
+export interface KpiSemanticCoverageGap {
+    external_requirement_id: string;
+    reference: string | null;
+    summary: string | null;
+    priority: string | null;
+    status: string;
+    mapped_section_id: string | null;
+}
+
+export interface KpiSemanticRiskItem {
+    code: string;
+    severity: string;
+    summary: string;
+    related_requirement_id: string | null;
+    evidence: string | null;
+}
+
+export interface KpiSemanticDimensionItem {
+    code: string;
+    severity: string;
+    summary: string;
+    evidence: string | null;
+}
+
+export interface KpiSemanticEvaluation {
+    enabled: boolean;
+    status: string;
+    engine_kind: string | null;
+    execution_mode: string | null;
+    semantic_score: number | null;
+    proxy_score: number | null;
+    delta_vs_proxy: number | null;
+    health: string;
+    confidence: number | null;
+    source_type: string;
+    evidences: string[];
+    criticalities: string[];
+    recommendations: string[];
+    formula_version: string | null;
+    model_version: string | null;
+    prompt_version: string | null;
+    fallback_reason: string | null;
+    coverage_gaps: KpiSemanticCoverageGap[];
+    risk_items: KpiSemanticRiskItem[];
+    dimension_items: KpiSemanticDimensionItem[];
+}
+
+export interface KpiSemanticShadowEvaluation {
+    enabled: boolean;
+    status: string;
+    engine_kind: string | null;
+    execution_mode: string | null;
+    shadow_score: number | null;
+    proxy_score: number | null;
+    delta_vs_proxy: number | null;
+    health: string;
+    confidence: number | null;
+    source_type: string;
+    evidences: string[];
+    criticalities: string[];
+    recommendations: string[];
+    formula_version: string | null;
+    model_version: string | null;
+    prompt_version: string | null;
+    coverage_gaps: KpiSemanticCoverageGap[];
+    risk_items: KpiSemanticRiskItem[];
+}
+
 export interface KpiScore {
     kpi_code: string;
+    score: number | null;
     value: number | null;
     label: string | null;
     health: string;
     severity: string;
+    source_type: string;
     provenance: string;
     confidence: number | null;
+    evidences: string[];
     evidence: string[];
+    criticalities: string[];
+    recommendations: string[];
     recommendation: string | null;
     formula_version: string | null;
     model_version: string | null;
     prompt_version: string | null;
+    semantic: KpiSemanticEvaluation | null;
+    shadow: KpiSemanticShadowEvaluation | null;
 }
 
 export interface KpiTenderSnapshot {
@@ -773,6 +1131,7 @@ export interface KpiTransitionItem {
     cause: string | null;
     confidence: number | null;
     source_event_type?: string | null;
+    source_type: string;
     related_entity_id?: string | null;
 }
 
@@ -797,6 +1156,7 @@ export interface KpiSnapshotHistoryItem {
     summary: string | null;
     reconstructed: boolean;
     replay_until: string | null;
+    source_type: string;
     source_job_type: string | null;
     replay_source_event_type: string | null;
 }
@@ -820,6 +1180,16 @@ export interface KpiForecastScenario {
     recommended_action: string | null;
 }
 
+export interface KpiForecastDecisionAction {
+    code: string;
+    title: string;
+    priority: 'now' | 'next' | 'watch';
+    rationale: string;
+    expected_impact: string | null;
+    confidence: number | null;
+    drivers: string[];
+}
+
 export interface KpiForecast {
     status: string;
     external_tender_id: string;
@@ -827,6 +1197,8 @@ export interface KpiForecast {
     summary: string | null;
     overall_confidence: number | null;
     scenarios: KpiForecastScenario[];
+    next_best_actions: KpiForecastDecisionAction[];
+    analysis_metadata: KpiAnalysisMetadata;
 }
 
 export interface KpiAnalysisJob {
@@ -851,19 +1223,54 @@ export interface KpiPortfolioOverview {
     portfolio_health: string;
     total_tenders: number;
     tenders_by_health: Record<string, number>;
+    analytical_phases: Record<string, number>;
+    critical_tenders: string[];
 }
 
 export interface KpiBottleneckItem {
     external_tender_id: string;
     bottleneck_type: string;
     summary: string;
+    description?: string | null;
     health: string;
+    severity?: string;
 }
 
 export interface KpiPortfolioBottlenecks {
     status: string;
     generated_at: string | null;
     items: KpiBottleneckItem[];
+}
+
+export interface KpiPortfolioPhaseHotspot {
+    phase: string;
+    count: number;
+    summary: string;
+}
+
+export interface KpiPortfolioRiskHotspot {
+    code: string;
+    count: number;
+    severity: string;
+    summary: string;
+}
+
+export interface KpiPortfolioWatchlistItem {
+    external_tender_id: string;
+    title: string;
+    analytical_phase: string | null;
+    health: string;
+    summary: string;
+}
+
+export interface KpiPortfolioIntelligence {
+    status: string;
+    generated_at: string | null;
+    phase_hotspots: KpiPortfolioPhaseHotspot[];
+    risk_hotspots: KpiPortfolioRiskHotspot[];
+    outcome_trends: Record<string, number>;
+    watchlist: KpiPortfolioWatchlistItem[];
+    notes: string[];
 }
 
 export interface KpiPortfolioResyncItem {
@@ -1155,3 +1562,5 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
+
+
