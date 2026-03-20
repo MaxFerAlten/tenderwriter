@@ -240,7 +240,8 @@ async def list_tenders(
     if category:
         query = query.where(Tender.category == category)
     if search:
-        query = query.where(Tender.title.ilike(f"%{search}%"))
+        escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Tender.title.ilike(f"%{escaped_search}%", escape="\\"))
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
@@ -391,6 +392,8 @@ async def delete_tender(
     """Delete a tender and all associated data. RBAC-checked."""
     tender = await check_tender_access(tender_id, current_user, db)
     await db.delete(tender)
+    await db.commit()
+    # Note: orphaned MinIO files might still need cleanup explicitly later
 
 
 @router.post("/{tender_id}/import", status_code=202)

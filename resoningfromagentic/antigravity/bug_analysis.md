@@ -333,3 +333,5 @@ MD5 è crittograficamente debole e l'input è facilmente prevedibile (IDs sequen
 3. **BUG-17** (Docker socket) — escalation di privilegi
 4. **BUG-09/10** (datetime) + **BUG-08** (mutable defaults) — bug latenti che emergono in produzione
 5. **BUG-13/14** (logic errors) + **BUG-11/12** (validation/duplication) — code quality
+
+

@@ -1,0 +1,28 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3.11
+cachedir: .pytest_cache
+rootdir: /app
+plugins: anyio-4.12.1
+collecting ... collected 0 items / 1 error
+
+==================================== ERRORS ====================================
+______________________ ERROR collecting test_ssrf_fix.py _______________________
+ImportError while importing test module '/app/test_ssrf_fix.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_ssrf_fix.py:3: in <module>
+    from app import _is_allowed_target_url
+E   ImportError: cannot import name '_is_allowed_target_url' from 'app' (/app/app.py)
+=============================== warnings summary ===============================
+../usr/local/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /usr/local/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR test_ssrf_fix.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+========================= 1 warning, 1 error in 0.23s ==========================

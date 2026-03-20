@@ -25,9 +25,11 @@ def _is_allowed_target_url(target_url: str) -> bool:
         return False
 
     try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return True
+        import socket
+        ip_str = socket.gethostbyname(hostname)
+        address = ipaddress.ip_address(ip_str)
+    except (ValueError, socket.gaierror):
+        return False
 
     return not any(
         [

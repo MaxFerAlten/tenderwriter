@@ -295,29 +295,14 @@ async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(ge
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)
-):
-    """
-    Validate access token and return the current user.
-    """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, settings.app_secret_key, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+) -> UserResponse:
+    """Validate access token via the configured auth provider.
 
-    result = await db.execute(select(User).where(User.id == int(user_id)))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise credentials_exception
+    Delegates to ``app.auth.provider`` — see ``AUTH_PROVIDER`` in .env.
+    """
+    from app.auth.provider import get_current_user as _provider_get_current_user
 
-    return UserResponse.model_validate(user)
+    return await _provider_get_current_user(token=token, db=db)
 
 
 class ProfileUpdate(BaseModel):

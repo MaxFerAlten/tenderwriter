@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     
     # --- Auth ---
+    auth_provider: str = "legacy"  # "legacy" | "keycloak" (future)
     admin_username: str = "admin@admin.com"
     admin_password: str = ""
     admin_enabled: bool = True
