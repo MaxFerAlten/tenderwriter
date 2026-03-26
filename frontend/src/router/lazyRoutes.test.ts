@@ -12,6 +12,12 @@ describe('normalizeRoutePath', () => {
         expect(normalizeRoutePath('/tenders/18/chat')).toBe('/tenders/:id/chat');
     });
 
+    it('normalizes observability nested routes to the page module key', () => {
+        expect(normalizeRoutePath('/observability-kpi/42')).toBe('/observability-kpi');
+        expect(normalizeRoutePath('/observability-kpi/42/compliance')).toBe('/observability-kpi');
+        expect(normalizeRoutePath('/observability-kpi/42/operational-workspace')).toBe('/observability-kpi/:tenderId/operational-workspace');
+    });
+
     it('returns null for unsupported paths', () => {
         expect(normalizeRoutePath('/unknown')).toBeNull();
         expect(normalizeRoutePath('')).toBeNull();

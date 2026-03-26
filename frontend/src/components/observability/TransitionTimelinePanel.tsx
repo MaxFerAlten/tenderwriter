@@ -1,33 +1,10 @@
 import { Activity, FileSearch, History } from 'lucide-react';
 
 import type { KpiRequirementTransitionItem, KpiSnapshotHistoryItem, KpiTransitions } from '../../api/client';
+import { chipStyle, formatDateTime, phaseLabel, signalTone } from '../../features/observability/shared';
 
 interface TransitionTimelinePanelProps {
     transitions: KpiTransitions | null;
-}
-
-function phaseLabel(phase: string | null): string {
-    const labels: Record<string, string> = {
-        S0: 'Intake Opportunity',
-        S4: 'Coordination & Collection',
-        S5: 'Quality / Technical Review',
-        S6: 'Rework / Clarifications',
-        S7: 'Integrated Draft',
-        S8: 'Compliance Gate',
-        S9: 'Submission',
-        S11: 'Win',
-        S12: 'Loss',
-        S13: 'Excluded / No-Bid',
-    };
-    if (!phase) return 'Unknown phase';
-    return labels[phase] || phase;
-}
-
-function formatDateTime(value: string | null): string {
-    if (!value) return 'n/a';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleString('it-IT');
 }
 
 function phaseTone(phase: string | null): { accent: string; soft: string } {
@@ -50,28 +27,7 @@ function phaseTone(phase: string | null): { accent: string; soft: string } {
 }
 
 function sourceTone(sourceType: string | null | undefined): { accent: string; soft: string } {
-    switch (sourceType) {
-        case 'observed':
-            return { accent: '#10b981', soft: 'rgba(16, 185, 129, 0.12)' };
-        case 'inferred':
-            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)' };
-        case 'reconstructed':
-            return { accent: '#38bdf8', soft: 'rgba(56, 189, 248, 0.14)' };
-        default:
-            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)' };
-    }
-}
-
-function badgeStyle(accent: string, soft: string) {
-    return {
-        padding: '0.22rem 0.6rem',
-        borderRadius: '999px',
-        fontSize: '0.72rem',
-        border: `1px solid ${accent}33`,
-        background: soft,
-        color: accent,
-        textTransform: 'capitalize' as const,
-    };
+    return signalTone(sourceType);
 }
 
 function historyLabel(item: KpiSnapshotHistoryItem): string {
@@ -111,8 +67,8 @@ export default function TransitionTimelinePanel({ transitions }: TransitionTimel
                                             <div style={{ marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{formatDateTime(item.occurred_at)}</div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                            <span style={badgeStyle(provenanceTone.accent, provenanceTone.soft)}>{item.source_type || 'unknown'}</span>
-                                            <span style={badgeStyle(toTone.accent, toTone.soft)}>{item.to_state}</span>
+                                            <span style={chipStyle(provenanceTone.accent, provenanceTone.soft)}>{item.source_type || 'unknown'}</span>
+                                            <span style={chipStyle(toTone.accent, toTone.soft)}>{item.to_state}</span>
                                         </div>
                                     </div>
                                     <div style={{ marginTop: '0.65rem', fontSize: '0.83rem', color: 'var(--text-secondary)' }}>{item.cause || 'No cause recorded.'}</div>
@@ -145,9 +101,9 @@ export default function TransitionTimelinePanel({ transitions }: TransitionTimel
                                             <div style={{ marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{formatDateTime(item.generated_at)}</div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                            <span style={badgeStyle(tone.accent, tone.soft)}>{item.health}</span>
-                                            <span style={badgeStyle(provenanceTone.accent, provenanceTone.soft)}>{item.source_type || 'unknown'}</span>
-                                            <span style={badgeStyle(item.reconstructed ? '#f59e0b' : '#64748b', item.reconstructed ? 'rgba(245, 158, 11, 0.14)' : 'rgba(100, 116, 139, 0.14)')}>
+                                            <span style={chipStyle(tone.accent, tone.soft)}>{item.health}</span>
+                                            <span style={chipStyle(provenanceTone.accent, provenanceTone.soft)}>{item.source_type || 'unknown'}</span>
+                                            <span style={chipStyle(item.reconstructed ? '#f59e0b' : '#64748b', item.reconstructed ? 'rgba(245, 158, 11, 0.14)' : 'rgba(100, 116, 139, 0.14)')}>
                                                 {historyLabel(item)}
                                             </span>
                                         </div>
@@ -182,12 +138,12 @@ export default function TransitionTimelinePanel({ transitions }: TransitionTimel
                                                 {item.mapped_section_title ? `Section: ${item.mapped_section_title}` : 'Section not mapped yet'}
                                             </div>
                                         </div>
-                                        <span style={badgeStyle(tone.accent, tone.soft)}>{item.driver_phase || 'n/a'}</span>
+                                        <span style={chipStyle(tone.accent, tone.soft)}>{item.driver_phase || 'n/a'}</span>
                                     </div>
                                     <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.55rem' }}>
-                                        {item.priority && <span style={badgeStyle('#c084fc', 'rgba(192, 132, 252, 0.12)')}>{item.priority}</span>}
-                                        {item.compliance_status && <span style={badgeStyle('#64748b', 'rgba(100, 116, 139, 0.14)')}>{item.compliance_status.replace(/_/g, ' ')}</span>}
-                                        {item.section_status && <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.14)')}>{item.section_status.replace(/_/g, ' ')}</span>}
+                                        {item.priority && <span style={chipStyle('#c084fc', 'rgba(192, 132, 252, 0.12)')}>{item.priority}</span>}
+                                        {item.compliance_status && <span style={chipStyle('#64748b', 'rgba(100, 116, 139, 0.14)')}>{item.compliance_status.replace(/_/g, ' ')}</span>}
+                                        {item.section_status && <span style={chipStyle('#38bdf8', 'rgba(56, 189, 248, 0.14)')}>{item.section_status.replace(/_/g, ' ')}</span>}
                                     </div>
                                     <div style={{ marginTop: '0.65rem', fontSize: '0.83rem', color: 'var(--text-secondary)' }}>{item.driver}</div>
                                     <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Last driver event: {item.last_event_type || 'n/a'}</div>

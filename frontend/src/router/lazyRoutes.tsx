@@ -22,6 +22,7 @@ const routeLoaders = {
     '/permissions': loadPage(() => import('../pages/TenderPermissions')),
     '/login': loadPage(() => import('../pages/Login')),
     '/register': loadPage(() => import('../pages/Register')),
+    '/observability-kpi/:tenderId/operational-workspace': loadPage(() => import('../pages/OperationalWorkspacePage')),
     '/tenders/:id/chat': loadPage(() => import('../pages/TenderChat')),
 } satisfies Record<string, RouteLoader>;
 
@@ -42,6 +43,14 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
 
     if (path.startsWith('/proposals/')) {
         return '/proposals';
+    }
+
+    if (/^\/observability-kpi\/[^/]+\/operational-workspace$/i.test(path)) {
+        return '/observability-kpi/:tenderId/operational-workspace';
+    }
+
+    if (/^\/observability-kpi\/[^/]+(?:\/[^/]+)?$/i.test(path)) {
+        return '/observability-kpi';
     }
 
     if (/^\/tenders\/[^/]+\/chat$/i.test(path)) {
@@ -95,4 +104,5 @@ export const DevelopmentsPage = lazyPage('/developments');
 export const TenderPermissionsPage = lazyPage('/permissions');
 export const LoginPage = lazyPage('/login');
 export const RegisterPage = lazyPage('/register');
+export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/operational-workspace');
 export const TenderChatPage = lazyPage('/tenders/:id/chat');

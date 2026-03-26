@@ -34,6 +34,7 @@ import {
     TaskManagerPage,
     TenderChatPage,
     TenderPermissionsPage,
+    OperationalWorkspacePage,
 } from './router/lazyRoutes';
 
 const navItems = [
@@ -172,6 +173,9 @@ function App() {
                                 <Route path="/search" element={<SearchPage />} />
                                 <Route path="/tasks" element={<TaskManagerPage />} />
                                 <Route path="/observability-kpi" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId/:section" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId/operational-workspace" element={user.role === 'admin' ? <OperationalWorkspacePage /> : <Navigate to="/" />} />
                                 <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
                                 <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                                 <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />
