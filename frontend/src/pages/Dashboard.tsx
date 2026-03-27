@@ -248,7 +248,6 @@ export default function Dashboard() {
             warmChatExperience(id);
             // Refresh to see status change from DRAFT -> ACTIVE
             await loadTenders();
-            navigate(`/tenders/${id}/chat`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to upload document');
             throw err;
