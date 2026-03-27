@@ -177,7 +177,7 @@ export default function MarkovStateProcess() {
     const isBusy = portfolio.isRefreshing || portfolio.isPortfolioResyncing || detail.isLoading;
     const graphDescription = graphVisualMode === 'presentation'
         ? 'Presentation view focuses on the observed tender journey, fading canonical alternatives so the storyline reads more clearly.'
-        : 'The highlighted node is the current analytical phase. Only observed events for the selected tender are labelled; inactive canonical arcs stay intentionally muted.';
+        : 'Analytical view shows the full canonical state machine, with the current analytical phase and the tender-specific journey overlaid on top.';
 
     if (portfolio.isLoading) {
         return <div className="loading-spinner"><div className="spinner" /></div>;
@@ -284,7 +284,7 @@ export default function MarkovStateProcess() {
                         </div>
                     </aside>
 
-                    <div style={{ display: 'grid', gap: '1rem' }}>
+                    <div className="markov-state-main">
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
                             <div className="card" style={{ padding: '1.1rem' }}>
                                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Current state</div>
@@ -318,35 +318,15 @@ export default function MarkovStateProcess() {
                             </div>
                         </div>
 
-                        <div className="card" style={{ padding: '1rem 1rem 1.25rem 1rem' }}>
-                            <div
-                                style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: 'minmax(0, 1fr) auto',
-                                    alignItems: 'start',
-                                    gap: '1rem',
-                                    marginBottom: '0.75rem',
-                                }}
-                            >
-                                <div>
+                        <div className="card markov-graph-card" style={{ padding: '1rem 1rem 1.25rem 1rem' }}>
+                            <div className="markov-graph-header">
+                                <div className="markov-graph-heading-copy">
                                     <h3 style={{ margin: 0 }}>Markov graph</h3>
                                     <p style={{ marginTop: '0.35rem', fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
                                         {graphDescription}
                                     </p>
                                 </div>
-                                <div
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '0.2rem',
-                                        padding: '0.25rem',
-                                        borderRadius: '999px',
-                                        background: 'rgba(15, 23, 42, 0.55)',
-                                        border: '1px solid var(--border-default)',
-                                        justifySelf: 'end',
-                                        alignSelf: 'start',
-                                    }}
-                                >
+                                <div className="markov-graph-mode-switch">
                                     {[
                                         { value: 'analytical', label: 'Analytical' },
                                         { value: 'presentation', label: 'Presentation' },
@@ -380,7 +360,7 @@ export default function MarkovStateProcess() {
                                 </div>
                             </div>
 
-                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
+                            <div className="markov-graph-legend" style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
                                 {renderStatePill('current state', '#67e8f9', 'rgba(103, 232, 249, 0.14)')}
                                 {renderStatePill('visited states', '#93c5fd', 'rgba(147, 197, 253, 0.12)')}
                                 {renderStatePill('latest transition', '#f59e0b', 'rgba(245, 158, 11, 0.14)')}

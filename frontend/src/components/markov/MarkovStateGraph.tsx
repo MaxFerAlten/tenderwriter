@@ -27,6 +27,8 @@ interface GraphEdge {
     curveY?: number;
     labelDx?: number;
     labelDy?: number;
+    labelX?: number;
+    labelY?: number;
     loopAnchor?: Anchor;
     loopSize?: number;
 }
@@ -58,6 +60,7 @@ interface EdgeRenderData {
     geometry: {
         path: string;
         label: Point;
+        samples: Point[];
     };
     colors: {
         stroke: string;
@@ -91,78 +94,79 @@ interface MarkovStateGraphProps {
     visualMode?: MarkovGraphVisualMode;
 }
 
-const SVG_WIDTH = 1704;
-const SVG_HEIGHT = 1056;
-const GRAPH_TRANSLATE_X = 24;
-const GRAPH_TRANSLATE_Y = 28;
-const NODE_WIDTH = 176;
-const NODE_HEIGHT = 60;
+const SVG_WIDTH = 1460;
+const SVG_HEIGHT = 2140;
+const GRAPH_TRANSLATE_X = 32;
+const GRAPH_TRANSLATE_Y = 32;
+const NODE_WIDTH = 228;
+const NODE_HEIGHT = 80;
 const GRAPH_WIDTH = SVG_WIDTH - (GRAPH_TRANSLATE_X * 2);
 const GRAPH_HEIGHT = SVG_HEIGHT - (GRAPH_TRANSLATE_Y * 2);
-const LABEL_MARGIN = 18;
-const LABEL_NODE_CLEARANCE = 20;
-const LABEL_LABEL_CLEARANCE = 14;
+const LABEL_MARGIN = 24;
+const LABEL_NODE_CLEARANCE = 32;
+const LABEL_LABEL_CLEARANCE = 20;
+const LOCKED_LABEL_RADII = [0, 18, 34, 52, 72] as const;
 
 const GRAPH_BANDS: GraphBand[] = [
-    { label: 'Governance corridor', x: 44, y: 56, width: 1128 },
-    { label: 'Execution loop', x: 740, y: 234, width: 676 },
-    { label: 'Submission corridor', x: 1186, y: 584, width: 286 },
-    { label: 'Terminal outcomes', x: 1462, y: 506, width: 178 },
+    { label: 'Governance corridor', x: 56, y: 70, width: 1108 },
+    { label: 'Execution loop', x: 56, y: 810, width: 1108 },
+    { label: 'Submission corridor', x: 56, y: 1248, width: 1108 },
+    { label: 'Terminal outcomes', x: 812, y: 1594, width: 360 },
 ];
 
 const GRAPH_NODES: GraphNode[] = [
-    { id: 'S0', x: 40, y: 96, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Intake Opportunity', tone: 'normal' },
-    { id: 'S1', x: 272, y: 96, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Go / No-Go', tone: 'normal' },
-    { id: 'S2', x: 504, y: 96, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Bid Planning', tone: 'normal' },
-    { id: 'S3', x: 736, y: 96, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Request Contributions', tone: 'normal' },
-    { id: 'S4', x: 968, y: 96, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Coordination & Collection', tone: 'normal' },
-    { id: 'S5', x: 972, y: 272, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Review / QA', tone: 'normal' },
-    { id: 'S6', x: 728, y: 444, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Rework / Coordination Exception', tone: 'normal' },
-    { id: 'S7', x: 1212, y: 272, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Integrated Draft', tone: 'normal' },
-    { id: 'S8', x: 1212, y: 444, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Compliance Gate', tone: 'normal' },
-    { id: 'S9', x: 1212, y: 618, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Submission', tone: 'normal' },
-    { id: 'S10', x: 1212, y: 784, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Post-Submission Clarifications', tone: 'normal' },
-    { id: 'S11', x: 1460, y: 566, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Win', tone: 'positive' },
-    { id: 'S12', x: 1460, y: 712, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Loss', tone: 'positive' },
-    { id: 'S13', x: 1460, y: 858, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Excluded / Withdrawn / Stopped', tone: 'terminal' },
+    { id: 'S0', x: 454, y: 102, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Intake Opportunity', tone: 'normal' },
+    { id: 'S1', x: 454, y: 252, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Go / No-Go', tone: 'normal' },
+    { id: 'S2', x: 454, y: 402, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Bid Planning', tone: 'normal' },
+    { id: 'S3', x: 454, y: 552, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Request Contributions', tone: 'normal' },
+    { id: 'S4', x: 454, y: 702, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Coordination & Collection', tone: 'normal' },
+    { id: 'S5', x: 454, y: 880, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Review / QA', tone: 'normal' },
+    { id: 'S6', x: 104, y: 1040, width: 250, height: NODE_HEIGHT, label: 'Rework / Coordination Exception', tone: 'normal' },
+    { id: 'S7', x: 454, y: 1062, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Integrated Draft', tone: 'normal' },
+    { id: 'S8', x: 454, y: 1242, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Compliance Gate', tone: 'normal' },
+    { id: 'S9', x: 454, y: 1422, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Submission', tone: 'normal' },
+    { id: 'S10', x: 454, y: 1602, width: NODE_WIDTH, height: NODE_HEIGHT, label: 'Post-Submission Clarifications', tone: 'normal' },
+    { id: 'S11', x: 886, y: 1568, width: 210, height: NODE_HEIGHT, label: 'Win', tone: 'positive' },
+    { id: 'S12', x: 886, y: 1734, width: 210, height: NODE_HEIGHT, label: 'Loss', tone: 'positive' },
+    { id: 'S13', x: 886, y: 1900, width: 280, height: NODE_HEIGHT, label: 'Excluded / Withdrawn / Stopped', tone: 'terminal' },
 ];
 
 const GRAPH_EDGES: GraphEdge[] = [
-    { from: 'S0', to: 'S1', labels: ['tender_document_ingested'], fromAnchor: 'right', toAnchor: 'left', labelDy: -18 },
-    { from: 'S1', to: 'S2', labels: ['go_decision_recorded'], fromAnchor: 'right', toAnchor: 'left', labelDy: -18 },
-    { from: 'S1', to: 'S13', labels: ['no_bid_decision_recorded'], fromAnchor: 'bottom', toAnchor: 'left', tone: 'terminal', dashed: true, curveX: 168, curveY: 204, labelDx: 132, labelDy: 46 },
-    { from: 'S2', to: 'S2', labels: ['bid_plan_created', 'bid_plan_approved'], fromAnchor: 'top', toAnchor: 'top', loopAnchor: 'top', loopSize: 38, labelDy: -30 },
-    { from: 'S2', to: 'S3', labels: ['contribution_request_wave_opened'], fromAnchor: 'right', toAnchor: 'left', labelDy: -18 },
-    { from: 'S3', to: 'S3', labels: ['contribution_assignment_confirmed'], fromAnchor: 'top', toAnchor: 'top', loopAnchor: 'top', loopSize: 38, labelDy: -30 },
-    { from: 'S3', to: 'S4', labels: ['contribution_received'], fromAnchor: 'right', toAnchor: 'left', labelDy: -18 },
-    { from: 'S4', to: 'S5', labels: ['contribution_review_started', 'review_cycle_started'], fromAnchor: 'bottom', toAnchor: 'top', labelDx: 84, labelDy: 12 },
-    { from: 'S4', to: 'S6', labels: ['coordination_risk_raised'], fromAnchor: 'bottom', toAnchor: 'top', tone: 'feedback', curveX: -148, curveY: 28, labelDx: -86, labelDy: 24 },
-    { from: 'S5', to: 'S6', labels: ['review_changes_requested', 'rework_requested'], fromAnchor: 'bottom', toAnchor: 'top', tone: 'feedback', curveX: -40, curveY: 14, labelDx: -18, labelDy: 20 },
-    { from: 'S5', to: 'S7', labels: ['review_approved', 'draft_integrated_ready'], fromAnchor: 'right', toAnchor: 'left', labelDy: -18 },
-    { from: 'S6', to: 'S5', labels: ['rework_resolved'], fromAnchor: 'top', toAnchor: 'left', curveX: 60, curveY: -88, labelDx: 6, labelDy: -18 },
-    { from: 'S6', to: 'S4', labels: ['rework_reescalated_to_coordination'], fromAnchor: 'top', toAnchor: 'bottom', tone: 'feedback', curveX: -144, curveY: -28, labelDx: -96, labelDy: -22 },
-    { from: 'S7', to: 'S8', labels: ['compliance_gate_opened'], fromAnchor: 'bottom', toAnchor: 'top', labelDx: 50, labelDy: -4 },
-    { from: 'S8', to: 'S8', labels: ['compliance_gate_failed'], fromAnchor: 'right', toAnchor: 'right', loopAnchor: 'right', loopSize: 40, tone: 'feedback', labelDx: 56, labelDy: -8 },
-    { from: 'S8', to: 'S7', labels: ['compliance_gate_passed'], fromAnchor: 'top', toAnchor: 'bottom', labelDx: 54, labelDy: 8 },
-    { from: 'S8', to: 'S6', labels: ['compliance_gate_rework_requested'], fromAnchor: 'left', toAnchor: 'right', tone: 'feedback', labelDy: -18 },
-    { from: 'S8', to: 'S9', labels: ['tender_submitted'], fromAnchor: 'bottom', toAnchor: 'top', labelDx: 36, labelDy: -8 },
-    { from: 'S8', to: 'S13', labels: ['tender_stopped_at_gate'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', dashed: true, curveX: 124, curveY: 114, labelDx: 104, labelDy: 64 },
-    { from: 'S9', to: 'S9', labels: ['submission_acknowledged'], fromAnchor: 'left', toAnchor: 'left', loopAnchor: 'left', loopSize: 40, labelDx: -66, labelDy: -8 },
-    { from: 'S9', to: 'S8', labels: ['submission_failed'], fromAnchor: 'top', toAnchor: 'bottom', tone: 'feedback', labelDx: 40, labelDy: 0 },
-    { from: 'S9', to: 'S10', labels: ['clarification_requested'], fromAnchor: 'bottom', toAnchor: 'top', labelDx: 44, labelDy: -8 },
-    { from: 'S9', to: 'S11', labels: ['award_confirmed'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', labelDx: 18, labelDy: -18 },
-    { from: 'S9', to: 'S12', labels: ['loss_reason_recorded'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: 16, labelDx: 18, labelDy: 6 },
-    { from: 'S9', to: 'S13', labels: ['tender_excluded', 'tender_withdrawn', 'tender_stopped'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', dashed: true, curveY: 38, labelDx: 30, labelDy: 32 },
-    { from: 'S10', to: 'S10', labels: ['clarification_response_drafted', 'clarification_submitted'], fromAnchor: 'right', toAnchor: 'right', loopAnchor: 'right', loopSize: 40, labelDx: 64, labelDy: -18 },
-    { from: 'S10', to: 'S9', labels: ['clarification_closed'], fromAnchor: 'top', toAnchor: 'bottom', labelDx: -52, labelDy: -8 },
-    { from: 'S10', to: 'S11', labels: ['award_confirmed'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: -150, labelDx: 18, labelDy: -38 },
-    { from: 'S10', to: 'S12', labels: ['loss_reason_recorded'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: -46, labelDx: 22, labelDy: -12 },
-    { from: 'S10', to: 'S13', labels: ['tender_excluded', 'tender_withdrawn', 'tender_stopped'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', dashed: true, curveY: 28, labelDx: 28, labelDy: 6 },
+    { from: 'S0', to: 'S1', labels: ['tender_document_ingested'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 744, labelY: 212 },
+    { from: 'S1', to: 'S2', labels: ['go_decision_recorded'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 322, labelY: 362 },
+    { from: 'S1', to: 'S13', labels: ['no_bid_decision_recorded'], fromAnchor: 'left', toAnchor: 'left', tone: 'terminal', dashed: true, curveX: -248, curveY: 534, labelX: 192, labelY: 1778 },
+    { from: 'S2', to: 'S2', labels: ['bid_plan_created', 'bid_plan_approved'], fromAnchor: 'top', toAnchor: 'top', loopAnchor: 'top', loopSize: 46, labelX: 454, labelY: 346 },
+    { from: 'S2', to: 'S3', labels: ['contribution_request_wave_opened'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 322, labelY: 512 },
+    { from: 'S3', to: 'S3', labels: ['contribution_assignment_confirmed'], fromAnchor: 'top', toAnchor: 'top', loopAnchor: 'top', loopSize: 46, labelX: 746, labelY: 496 },
+    { from: 'S3', to: 'S4', labels: ['contribution_received'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 744, labelY: 664 },
+    { from: 'S4', to: 'S5', labels: ['contribution_review_started', 'review_cycle_started'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 772, labelY: 842 },
+    { from: 'S4', to: 'S6', labels: ['coordination_risk_raised'], fromAnchor: 'left', toAnchor: 'top', tone: 'feedback', curveX: -112, curveY: 26, labelX: 120, labelY: 888 },
+    { from: 'S5', to: 'S6', labels: ['review_changes_requested', 'rework_requested'], fromAnchor: 'left', toAnchor: 'top', tone: 'feedback', curveX: -92, curveY: 22, labelX: 164, labelY: 980 },
+    { from: 'S5', to: 'S7', labels: ['review_approved', 'draft_integrated_ready'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 766, labelY: 1016 },
+    { from: 'S6', to: 'S5', labels: ['rework_resolved'], fromAnchor: 'top', toAnchor: 'left', curveX: 54, curveY: -106, labelX: 148, labelY: 910 },
+    { from: 'S6', to: 'S4', labels: ['rework_reescalated_to_coordination'], fromAnchor: 'top', toAnchor: 'left', tone: 'feedback', curveX: -26, curveY: -188, labelX: 118, labelY: 740 },
+    { from: 'S7', to: 'S8', labels: ['compliance_gate_opened'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 760, labelY: 1192 },
+    { from: 'S8', to: 'S8', labels: ['compliance_gate_failed'], fromAnchor: 'right', toAnchor: 'right', loopAnchor: 'right', loopSize: 48, tone: 'feedback', labelX: 782, labelY: 1278 },
+    { from: 'S8', to: 'S7', labels: ['compliance_gate_passed'], fromAnchor: 'top', toAnchor: 'bottom', labelX: 758, labelY: 1116 },
+    { from: 'S8', to: 'S6', labels: ['compliance_gate_rework_requested'], fromAnchor: 'left', toAnchor: 'right', tone: 'feedback', curveX: -92, curveY: -14, labelX: 188, labelY: 1162 },
+    { from: 'S8', to: 'S9', labels: ['tender_submitted'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 758, labelY: 1372 },
+    { from: 'S8', to: 'S13', labels: ['tender_stopped_at_gate'], fromAnchor: 'right', toAnchor: 'top', tone: 'terminal', dashed: true, curveX: 112, curveY: 184, labelX: 1092, labelY: 1492 },
+    { from: 'S9', to: 'S9', labels: ['submission_acknowledged'], fromAnchor: 'left', toAnchor: 'left', loopAnchor: 'left', loopSize: 48, labelX: 310, labelY: 1462 },
+    { from: 'S9', to: 'S8', labels: ['submission_failed'], fromAnchor: 'top', toAnchor: 'bottom', tone: 'feedback', labelX: 316, labelY: 1310 },
+    { from: 'S9', to: 'S10', labels: ['clarification_requested'], fromAnchor: 'bottom', toAnchor: 'top', labelX: 758, labelY: 1552 },
+    { from: 'S9', to: 'S11', labels: ['award_confirmed'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: 42, labelX: 1112, labelY: 1506 },
+    { from: 'S9', to: 'S12', labels: ['loss_reason_recorded'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: 122, labelX: 1110, labelY: 1660 },
+    { from: 'S9', to: 'S13', labels: ['tender_excluded', 'tender_withdrawn', 'tender_stopped'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', dashed: true, curveY: 192, labelX: 1096, labelY: 1812 },
+    { from: 'S10', to: 'S10', labels: ['clarification_response_drafted', 'clarification_submitted'], fromAnchor: 'right', toAnchor: 'right', loopAnchor: 'right', loopSize: 48, labelX: 798, labelY: 1608 },
+    { from: 'S10', to: 'S9', labels: ['clarification_closed'], fromAnchor: 'top', toAnchor: 'bottom', labelX: 310, labelY: 1590 },
+    { from: 'S10', to: 'S11', labels: ['award_confirmed'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: -34, labelX: 1114, labelY: 1602 },
+    { from: 'S10', to: 'S12', labels: ['loss_reason_recorded'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', curveY: 24, labelX: 1102, labelY: 1752 },
+    { from: 'S10', to: 'S13', labels: ['tender_excluded', 'tender_withdrawn', 'tender_stopped'], fromAnchor: 'right', toAnchor: 'left', tone: 'terminal', dashed: true, curveY: 84, labelX: 1102, labelY: 1906 },
 ];
 
 const NODE_MAP = new Map(GRAPH_NODES.map((node) => [node.id, node]));
 
-const LABEL_RADII = [0, 40, 76, 112, 148] as const;
+const LABEL_RADII = [0, 48, 92, 138, 184, 230] as const;
 
 function anchorPoint(node: GraphNode, anchor: Anchor): Point {
     switch (anchor) {
@@ -202,49 +206,85 @@ function cubicPoint(start: Point, control1: Point, control2: Point, end: Point, 
     };
 }
 
-function buildLoopGeometry(node: GraphNode, edge: GraphEdge): { path: string; label: Point } {
+function sampleCubicPoints(start: Point, control1: Point, control2: Point, end: Point, steps = 16): Point[] {
+    return Array.from({ length: steps - 1 }, (_, index) => cubicPoint(start, control1, control2, end, (index + 1) / steps));
+}
+
+function buildLoopGeometry(node: GraphNode, edge: GraphEdge): { path: string; label: Point; samples: Point[] } {
     const loopAnchor = edge.loopAnchor || 'top';
     const size = edge.loopSize || 38;
     const center = anchorPoint(node, loopAnchor);
 
     switch (loopAnchor) {
         case 'right': {
-            const path = [
-                `M ${node.x + node.width} ${node.y + node.height * 0.28}`,
-                `C ${node.x + node.width + size} ${node.y + node.height * 0.12}, ${node.x + node.width + size} ${node.y + node.height * 0.88}, ${node.x + node.width} ${node.y + node.height * 0.72}`,
-            ].join(' ');
-            return { path, label: { x: center.x + size + 22 + (edge.labelDx || 0), y: center.y + (edge.labelDy || 0) } };
+            const start = { x: node.x + node.width, y: node.y + node.height * 0.28 };
+            const end = { x: node.x + node.width, y: node.y + node.height * 0.72 };
+            const control1 = { x: node.x + node.width + size, y: node.y + node.height * 0.12 };
+            const control2 = { x: node.x + node.width + size, y: node.y + node.height * 0.88 };
+            const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
+            return {
+                path,
+                label: {
+                    x: edge.labelX ?? (center.x + size + 22 + (edge.labelDx || 0)),
+                    y: edge.labelY ?? (center.y + (edge.labelDy || 0)),
+                },
+                samples: sampleCubicPoints(start, control1, control2, end),
+            };
         }
         case 'left': {
-            const path = [
-                `M ${node.x} ${node.y + node.height * 0.28}`,
-                `C ${node.x - size} ${node.y + node.height * 0.12}, ${node.x - size} ${node.y + node.height * 0.88}, ${node.x} ${node.y + node.height * 0.72}`,
-            ].join(' ');
-            return { path, label: { x: center.x - size - 22 + (edge.labelDx || 0), y: center.y + (edge.labelDy || 0) } };
+            const start = { x: node.x, y: node.y + node.height * 0.28 };
+            const end = { x: node.x, y: node.y + node.height * 0.72 };
+            const control1 = { x: node.x - size, y: node.y + node.height * 0.12 };
+            const control2 = { x: node.x - size, y: node.y + node.height * 0.88 };
+            const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
+            return {
+                path,
+                label: {
+                    x: edge.labelX ?? (center.x - size - 22 + (edge.labelDx || 0)),
+                    y: edge.labelY ?? (center.y + (edge.labelDy || 0)),
+                },
+                samples: sampleCubicPoints(start, control1, control2, end),
+            };
         }
         case 'bottom': {
-            const path = [
-                `M ${node.x + node.width * 0.28} ${node.y + node.height}`,
-                `C ${node.x + node.width * 0.12} ${node.y + node.height + size}, ${node.x + node.width * 0.88} ${node.y + node.height + size}, ${node.x + node.width * 0.72} ${node.y + node.height}`,
-            ].join(' ');
-            return { path, label: { x: center.x + (edge.labelDx || 0), y: center.y + size + 22 + (edge.labelDy || 0) } };
+            const start = { x: node.x + node.width * 0.28, y: node.y + node.height };
+            const end = { x: node.x + node.width * 0.72, y: node.y + node.height };
+            const control1 = { x: node.x + node.width * 0.12, y: node.y + node.height + size };
+            const control2 = { x: node.x + node.width * 0.88, y: node.y + node.height + size };
+            const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
+            return {
+                path,
+                label: {
+                    x: edge.labelX ?? (center.x + (edge.labelDx || 0)),
+                    y: edge.labelY ?? (center.y + size + 22 + (edge.labelDy || 0)),
+                },
+                samples: sampleCubicPoints(start, control1, control2, end),
+            };
         }
         case 'top':
         default: {
-            const path = [
-                `M ${node.x + node.width * 0.28} ${node.y}`,
-                `C ${node.x + node.width * 0.12} ${node.y - size}, ${node.x + node.width * 0.88} ${node.y - size}, ${node.x + node.width * 0.72} ${node.y}`,
-            ].join(' ');
-            return { path, label: { x: center.x + (edge.labelDx || 0), y: center.y - size - 18 + (edge.labelDy || 0) } };
+            const start = { x: node.x + node.width * 0.28, y: node.y };
+            const end = { x: node.x + node.width * 0.72, y: node.y };
+            const control1 = { x: node.x + node.width * 0.12, y: node.y - size };
+            const control2 = { x: node.x + node.width * 0.88, y: node.y - size };
+            const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
+            return {
+                path,
+                label: {
+                    x: edge.labelX ?? (center.x + (edge.labelDx || 0)),
+                    y: edge.labelY ?? (center.y - size - 18 + (edge.labelDy || 0)),
+                },
+                samples: sampleCubicPoints(start, control1, control2, end),
+            };
         }
     }
 }
 
-function buildEdgeGeometry(edge: GraphEdge): { path: string; label: Point } {
+function buildEdgeGeometry(edge: GraphEdge): { path: string; label: Point; samples: Point[] } {
     const fromNode = NODE_MAP.get(edge.from);
     const toNode = NODE_MAP.get(edge.to);
     if (!fromNode || !toNode) {
-        return { path: '', label: { x: 0, y: 0 } };
+        return { path: '', label: { x: 0, y: 0 }, samples: [] };
     }
 
     if (edge.from === edge.to) {
@@ -270,43 +310,61 @@ function buildEdgeGeometry(edge: GraphEdge): { path: string; label: Point } {
     return {
         path: `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`,
         label: {
-            x: midpoint.x + (edge.labelDx || 0),
-            y: midpoint.y + (edge.labelDy || 0),
+            x: edge.labelX ?? (midpoint.x + (edge.labelDx || 0)),
+            y: edge.labelY ?? (midpoint.y + (edge.labelDy || 0)),
         },
+        samples: sampleCubicPoints(start, control1, control2, end),
     };
 }
 
 function wrapEdgeLabel(label: string): string[] {
-    if (label.length <= 24) {
-        return [label];
+    const parts = label.split('_');
+    const lines: string[] = [];
+    let current = '';
+
+    for (const part of parts) {
+        const candidate = current ? `${current}_${part}` : part;
+        if (candidate.length <= 18) {
+            current = candidate;
+            continue;
+        }
+
+        if (current) {
+            lines.push(current);
+        }
+        current = part;
     }
 
-    const midpoint = Math.floor(label.length / 2);
-    const splitIndex = label.indexOf('_', midpoint);
-    if (splitIndex > 0) {
-        return [label.slice(0, splitIndex + 1), label.slice(splitIndex + 1)];
+    if (current) {
+        lines.push(current);
     }
 
-    return [label.slice(0, midpoint), label.slice(midpoint)];
+    return lines.length > 0 ? lines : [label];
 }
 
 function splitNodeLabel(label: string): string[] {
-    const separators = [' / ', ' & '];
-    for (const separator of separators) {
-        if (label.includes(separator)) {
-            return label.split(separator);
+    const words = label.split(' ');
+    const lines: string[] = [];
+    let current = '';
+
+    for (const word of words) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length <= 18) {
+            current = candidate;
+            continue;
         }
+
+        if (current) {
+            lines.push(current);
+        }
+        current = word;
     }
 
-    if (label.length > 24) {
-        const midpoint = Math.floor(label.length / 2);
-        const splitIndex = label.lastIndexOf(' ', midpoint);
-        if (splitIndex > 0) {
-            return [label.slice(0, splitIndex), label.slice(splitIndex + 1)];
-        }
+    if (current) {
+        lines.push(current);
     }
 
-    return [label];
+    return lines.length > 0 ? lines : [label];
 }
 
 function edgeKey(edge: Pick<GraphEdge, 'from' | 'to'>): string {
@@ -331,6 +389,13 @@ function rectsOverlap(a: RectBounds, b: RectBounds): boolean {
 
 function clamp(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
+}
+
+function pointInRect(point: Point, rect: RectBounds): boolean {
+    return point.x >= rect.x
+        && point.x <= (rect.x + rect.width)
+        && point.y >= rect.y
+        && point.y <= (rect.y + rect.height);
 }
 
 function labelRect(x: number, y: number, width: number, height: number): RectBounds {
@@ -363,6 +428,8 @@ function labelAxis(edge: GraphEdge): 'horizontal' | 'vertical' | 'diagonal' | 'l
 
 function labelCandidates(base: Point, edge: GraphEdge): Point[] {
     const axis = labelAxis(edge);
+    const hasPinnedLabel = typeof edge.labelX === 'number' || typeof edge.labelY === 'number';
+    const radii = hasPinnedLabel ? LOCKED_LABEL_RADII : LABEL_RADII;
     const candidates: Point[] = [];
     const seen = new Set<string>();
 
@@ -380,7 +447,7 @@ function labelCandidates(base: Point, edge: GraphEdge): Point[] {
         });
     }
 
-    for (const radius of LABEL_RADII) {
+    for (const radius of radii) {
         if (radius === 0) {
             push(0, 0);
             continue;
@@ -589,8 +656,8 @@ function collectObservedLabels(transitions: KpiTransitions | null): Map<string, 
 
 function labelBoxSize(lines: string[]): { width: number; height: number } {
     const maxLength = lines.reduce((max, line) => Math.max(max, line.length), 0);
-    const width = Math.max(92, Math.min(252, maxLength * 6.7 + 22));
-    const height = Math.max(30, lines.length * 13 + 16);
+    const width = Math.max(112, Math.min(248, maxLength * 6.35 + 26));
+    const height = Math.max(36, lines.length * 13 + 20);
     return { width, height };
 }
 
@@ -620,14 +687,14 @@ function renderLabelBox(lines: string[], x: number, y: number, variant: LabelVar
                 stroke={stroke}
                 strokeWidth={isPresentation ? '1' : '1.2'}
             />
-            <text
-                x="0"
-                y={baseY - y}
-                textAnchor="middle"
-                fontSize={isPresentation ? '10.2' : '10.5'}
-                fontWeight="700"
-                fill={text}
-            >
+                <text
+                    x="0"
+                    y={baseY - y}
+                    textAnchor="middle"
+                    fontSize={isPresentation ? '10' : '10.2'}
+                    fontWeight="700"
+                    fill={text}
+                >
                 {lines.map((line, index) => (
                     <tspan key={`${line}-${index}`} x="0" dy={index === 0 ? 0 : 12}>
                         {line}
@@ -686,8 +753,12 @@ function buildLabelPlacements(edgeRenderData: EdgeRenderData[]): LabelPlacement[
                 return rectsOverlap(expandedRect, otherRect) ? count + 1 : count;
             }, 0);
 
+            const edgeHits = edgeRenderData.reduce((count, other) => (
+                count + other.geometry.samples.filter((point) => pointInRect(point, expandedRect)).length
+            ), 0);
+
             const distancePenalty = Math.abs(clampedX - item.geometry.label.x) + Math.abs(clampedY - item.geometry.label.y);
-            const score = (nodeHits * 1000) + (labelHits * 100) + distancePenalty;
+            const score = (nodeHits * 1000) + (labelHits * 120) + (edgeHits * 18) + distancePenalty;
 
             if (score < bestScore) {
                 bestScore = score;
@@ -747,6 +818,10 @@ export default function MarkovStateGraph({ currentState, transitions, visualMode
         const edgeId = edgeKey(edge);
         const observedLabels = observedLabelsByEdge.get(edgeId) || [];
         const visibility = edgeVisibility(edgeId, visitedEdgeKeys, latestEdgeKey, visualMode);
+        const canonicalLabels = edge.labels.flatMap(wrapEdgeLabel);
+        const activeLabels = visualMode === 'analytical'
+            ? canonicalLabels
+            : observedLabels.flatMap(wrapEdgeLabel);
 
         return {
             edge,
@@ -754,17 +829,18 @@ export default function MarkovStateGraph({ currentState, transitions, visualMode
             geometry: buildEdgeGeometry(edge),
             colors: edgeColors(edge, visitedEdgeKeys, latestEdgeKey, visualMode),
             variant: visibility.isLatest ? ('latest' as const) : ('visited' as const),
-            visibleLabels: observedLabels.length > 0 ? observedLabels.flatMap(wrapEdgeLabel) : [],
+            visibleLabels: activeLabels,
             shouldRender: visibility.shouldRender,
         };
     }).filter((item) => item.shouldRender);
     const labelPlacements = buildLabelPlacements(edgeRenderData);
 
     return (
-        <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+        <div style={{ overflow: 'hidden' }}>
             <svg
                 viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
-                style={{ width: '100%', minWidth: isPresentation ? '1240px' : '1120px', height: 'auto', display: 'block' }}
+                style={{ width: '100%', maxWidth: '100%', height: 'auto', display: 'block' }}
+                preserveAspectRatio="xMidYMin meet"
                 role="img"
                 aria-label="Markov state process graph"
             >
