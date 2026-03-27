@@ -15,6 +15,7 @@ const routeLoaders = {
     '/search': loadPage(() => import('../pages/Search')),
     '/tasks': loadPage(() => import('../pages/TaskManager')),
     '/observability-kpi': loadPage(() => import('../pages/ObservabilityKPI')),
+    '/markov-state-process': loadPage(() => import('../pages/MarkovStateProcess')),
     '/components': loadPage(() => import('../pages/Components')),
     '/settings': loadPage(() => import('../pages/Settings')),
     '/monitor': loadPage(() => import('../pages/SystemMonitor')),
@@ -53,6 +54,10 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
         return '/observability-kpi';
     }
 
+    if (/^\/markov-state-process\/[^/]+$/i.test(path)) {
+        return '/markov-state-process';
+    }
+
     if (/^\/tenders\/[^/]+\/chat$/i.test(path)) {
         return '/tenders/:id/chat';
     }
@@ -63,7 +68,7 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
 export function getLikelyRoutePaths(role?: string | null): Array<keyof typeof routeLoaders> {
     const common: Array<keyof typeof routeLoaders> = ['/proposals', '/library', '/tasks'];
     if (role === 'admin') {
-        return [...common, '/observability-kpi', '/monitor'];
+        return [...common, '/observability-kpi', '/markov-state-process', '/monitor'];
     }
     return common;
 }
@@ -97,6 +102,7 @@ export const ContentLibraryPage = lazyPage('/library');
 export const SearchPage = lazyPage('/search');
 export const TaskManagerPage = lazyPage('/tasks');
 export const ObservabilityKpiPage = lazyPage('/observability-kpi');
+export const MarkovStateProcessPage = lazyPage('/markov-state-process');
 export const ComponentsPage = lazyPage('/components');
 export const SettingsPage = lazyPage('/settings');
 export const SystemMonitorPage = lazyPage('/monitor');

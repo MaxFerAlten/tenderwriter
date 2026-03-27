@@ -594,6 +594,95 @@ def build_terminal_lifecycle_event_payload(
             "notes": notes,
         }
     )
+
+
+def build_coordination_risk_raised_event_payload(
+    *,
+    occurred_at: datetime,
+    external_rework_id: str | None = None,
+    external_contribution_id: str | None = None,
+    severity: str | None = None,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_rework_id": external_rework_id,
+            "external_contribution_id": external_contribution_id,
+            "requested_at": _datetime_to_iso(occurred_at),
+            "is_blocking": True,
+            "severity": severity,
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
+
+
+def build_rework_reescalated_to_coordination_event_payload(
+    *,
+    occurred_at: datetime,
+    external_rework_id: str | None = None,
+    external_contribution_id: str | None = None,
+    severity: str | None = None,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_rework_id": external_rework_id,
+            "external_contribution_id": external_contribution_id,
+            "resolved_at": _datetime_to_iso(occurred_at),
+            "is_blocking": True,
+            "severity": severity,
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
+
+
+def build_compliance_gate_rework_requested_event_payload(
+    *,
+    occurred_at: datetime,
+    external_gate_id: str | None = None,
+    gate_name: str | None = None,
+    external_rework_id: str | None = None,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "external_gate_id": external_gate_id,
+            "gate_name": gate_name,
+            "external_rework_id": external_rework_id,
+            "requested_at": _datetime_to_iso(occurred_at),
+            "is_blocking": True,
+            "severity": "high",
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
+
+
+def build_tender_stopped_at_gate_event_payload(
+    *,
+    recorded_at: datetime,
+    external_gate_id: str | None = None,
+    gate_name: str | None = None,
+    reason_code: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "outcome": "stopped",
+            "recorded_at": _datetime_to_iso(recorded_at),
+            "external_gate_id": external_gate_id,
+            "gate_name": gate_name,
+            "reason_code": reason_code,
+            "notes": notes,
+        }
+    )
+
+
 def _duration_hours(start: datetime | None, end: datetime | None) -> float | None:
     normalized_start = _as_utc(start)
     normalized_end = _as_utc(end)

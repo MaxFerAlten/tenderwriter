@@ -27,6 +27,7 @@ for key, value in _TEST_ENV.items():
 
 from app.api.auth import OTPVerify, UserLogin, UserRegister, register, verify_otp
 from app.api.onlyoffice import (
+    _build_config_dict,
     _build_download_token,
     _build_signed_file_url,
     _validate_callback_token,
@@ -212,6 +213,19 @@ class AuthSchemaValidationTests(unittest.TestCase):
 
 
 class OnlyOfficeSignedUrlTests(unittest.TestCase):
+    def test_onlyoffice_config_forces_a_consistent_ui_theme(self) -> None:
+        config = _build_config_dict(
+            doc_key="doc-key-123",
+            title="Executive Summary.docx",
+            file_url="http://backend.test/files/doc-key-123",
+            callback_url="http://backend.test/api/onlyoffice/callback",
+        )
+
+        self.assertEqual(
+            config["editorConfig"]["customization"]["uiTheme"],
+            "theme-dark",
+        )
+
     def test_signed_file_url_contains_valid_signature(self) -> None:
         download_token = _build_download_token(doc_key="doc-key-123", user_id=7)
         url = _build_signed_file_url("doc-key-123", download_token=download_token)

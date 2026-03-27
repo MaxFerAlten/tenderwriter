@@ -6,6 +6,7 @@ import {
     BarChart3,
     Code,
     FileText,
+    GitBranch,
     LayoutDashboard,
     Library,
     LogOut,
@@ -23,6 +24,7 @@ import {
     DashboardPage,
     DevelopmentsPage,
     LoginPage,
+    MarkovStateProcessPage,
     ObservabilityKpiPage,
     preloadLikelyRoutes,
     preloadRoute,
@@ -44,6 +46,7 @@ const navItems = [
     { path: '/search', label: 'AI Search', icon: Search },
     { path: '/tasks', label: 'Task Manager', icon: Play },
     { path: '/observability-kpi', label: 'Observability KPI', icon: BarChart3, adminOnly: true },
+    { path: '/markov-state-process', label: 'Markov State Process', icon: GitBranch, adminOnly: true },
     { path: '/components', label: 'Components', icon: Server, adminOnly: true },
     { path: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
     { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
@@ -176,6 +179,8 @@ function App() {
                                 <Route path="/observability-kpi/:tenderId" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
                                 <Route path="/observability-kpi/:tenderId/:section" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
                                 <Route path="/observability-kpi/:tenderId/operational-workspace" element={user.role === 'admin' ? <OperationalWorkspacePage /> : <Navigate to="/" />} />
+                                <Route path="/markov-state-process" element={user.role === 'admin' ? <MarkovStateProcessPage /> : <Navigate to="/" />} />
+                                <Route path="/markov-state-process/:tenderId" element={user.role === 'admin' ? <Navigate to="/markov-state-process" replace /> : <Navigate to="/" />} />
                                 <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
                                 <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                                 <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />

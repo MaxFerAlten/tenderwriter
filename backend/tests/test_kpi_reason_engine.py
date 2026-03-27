@@ -49,11 +49,15 @@ from app.services.kpi_reason_engine import (
     build_bid_plan_event_payload,
     build_bid_team_assigned_event_payload,
     build_clarification_event_payload,
+    build_compliance_gate_rework_requested_event_payload,
     build_contribution_assignment_confirmed_event_payload,
+    build_coordination_risk_raised_event_payload,
     build_draft_integrated_ready_event_payload,
+    build_rework_reescalated_to_coordination_event_payload,
     build_submission_status_event_payload,
     build_tender_decision_event_payload,
     build_terminal_lifecycle_event_payload,
+    build_tender_stopped_at_gate_event_payload,
     KpiClientResult,
     KpiReasonEngineClient,
     apply_delivery_result,
@@ -635,6 +639,30 @@ class LifecyclePayloadBuilderTests(unittest.TestCase):
             deadline_at=clarified_at,
             source_label="buyer_portal",
         )
+        coordination_payload = build_coordination_risk_raised_event_payload(
+            occurred_at=clarified_at,
+            external_rework_id="rw-admin-1",
+            external_contribution_id="201",
+            severity="high",
+            reason_code="missing_owner_alignment",
+            notes="Coordination gap opened.",
+        )
+        coordination_recovery_payload = build_rework_reescalated_to_coordination_event_payload(
+            occurred_at=clarified_at,
+            external_rework_id="rw-admin-1",
+            external_contribution_id="201",
+            severity="high",
+            reason_code="owner_alignment_restored",
+            notes="Back to coordination.",
+        )
+        gate_rework_payload = build_compliance_gate_rework_requested_event_payload(
+            occurred_at=clarified_at,
+            external_gate_id="gate-1",
+            gate_name="Auto compliance readiness",
+            external_rework_id="gate-rw-1",
+            reason_code="compliance_gap_reopened",
+            notes="Another blocking fix is required.",
+        )
         submission_payload = build_submission_status_event_payload(
             submission_status="failed",
             occurred_at=clarified_at,
@@ -648,6 +676,13 @@ class LifecyclePayloadBuilderTests(unittest.TestCase):
             reason_code="budget_change",
             notes="Tender withdrawn",
         )
+        gate_stop_payload = build_tender_stopped_at_gate_event_payload(
+            recorded_at=clarified_at,
+            external_gate_id="gate-1",
+            gate_name="Auto compliance readiness",
+            reason_code="compliance_gap_reopened",
+            notes="Stop at gate.",
+        )
 
         self.assertEqual(decision_payload["decision"], "go")
         self.assertEqual(plan_payload["owner_user_ids"], [7, 9])
@@ -655,5 +690,9 @@ class LifecyclePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(assignment_payload["external_request_id"], "301")
         self.assertEqual(draft_payload["readiness_ratio"], 80.0)
         self.assertEqual(clarification_payload["request_id"], "clar-1")
+        self.assertEqual(coordination_payload["external_rework_id"], "rw-admin-1")
+        self.assertEqual(coordination_recovery_payload["resolved_at"], clarified_at.isoformat())
+        self.assertEqual(gate_rework_payload["external_gate_id"], "gate-1")
         self.assertEqual(submission_payload["error_code"], "timeout")
         self.assertEqual(terminal_payload["outcome"], "withdrawn")
+        self.assertEqual(gate_stop_payload["outcome"], "stopped")

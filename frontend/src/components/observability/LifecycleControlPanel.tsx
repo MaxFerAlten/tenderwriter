@@ -42,6 +42,12 @@ function asNumberList(value: string): number[] {
     return value.split(',').map((item) => Number(item.trim())).filter((item) => !Number.isNaN(item));
 }
 
+const TERMINAL_OUTCOME_OPTIONS = ['won', 'lost', 'excluded', 'withdrawn', 'stopped'] as const;
+
+function normalizeOutcomeSelection(value: string | null | undefined): string {
+    return TERMINAL_OUTCOME_OPTIONS.includes(value as typeof TERMINAL_OUTCOME_OPTIONS[number]) ? value as string : 'won';
+}
+
 function statusTone(value: string | null | undefined): { border: string; text: string; soft: string } {
     switch (value) {
         case 'go':
@@ -88,6 +94,8 @@ export default function LifecycleControlPanel({ tender, tenderDetail, analytical
     const [decisionForm, setDecisionForm] = useState({ decision: 'go', reason_code: '', notes: '' });
     const [bidPlanForm, setBidPlanForm] = useState({ plan_status: 'created', owner_user_ids: '', milestone_count: '', notes: '' });
     const [waveForm, setWaveForm] = useState({ contribution_count: '', department_count: '', notes: '' });
+    const [coordinationForm, setCoordinationForm] = useState({ external_rework_id: '', external_contribution_id: '', severity: 'high', reason_code: '', notes: '' });
+    const [gateForm, setGateForm] = useState({ external_gate_id: '', gate_name: '', external_rework_id: '', reason_code: '', notes: '' });
     const [submissionForm, setSubmissionForm] = useState({ submission_status: 'acknowledged', channel: 'manual_admin_update', reference_id: '', error_code: '', error_message: '' });
     const [outcomeForm, setOutcomeForm] = useState({ outcome: 'won', reason_code: '', notes: '' });
     const [clarificationCreateForm, setClarificationCreateForm] = useState({ request_id: '', request_summary: '', deadline_at: '', source_label: '' });
@@ -98,8 +106,10 @@ export default function LifecycleControlPanel({ tender, tenderDetail, analytical
         setDecisionForm({ decision: lifecycle?.decision?.decision || 'go', reason_code: lifecycle?.decision?.reason_code || '', notes: lifecycle?.decision?.notes || '' });
         setBidPlanForm({ plan_status: lifecycle?.bid_plan?.plan_status || 'created', owner_user_ids: (lifecycle?.bid_plan?.owner_user_ids || []).join(', '), milestone_count: lifecycle?.bid_plan?.milestone_count?.toString() || '', notes: lifecycle?.bid_plan?.notes || '' });
         setWaveForm({ contribution_count: lifecycle?.contribution_wave?.contribution_count?.toString() || '', department_count: lifecycle?.contribution_wave?.department_count?.toString() || '', notes: lifecycle?.contribution_wave?.notes || '' });
+        setCoordinationForm({ external_rework_id: '', external_contribution_id: '', severity: 'high', reason_code: '', notes: '' });
+        setGateForm({ external_gate_id: '', gate_name: '', external_rework_id: '', reason_code: '', notes: '' });
         setSubmissionForm({ submission_status: lifecycle?.submission_status?.submission_status || 'acknowledged', channel: lifecycle?.submission_status?.channel || 'manual_admin_update', reference_id: lifecycle?.submission_status?.reference_id || '', error_code: lifecycle?.submission_status?.error_code || '', error_message: lifecycle?.submission_status?.error_message || '' });
-        setOutcomeForm({ outcome: lifecycle?.structured_outcome?.outcome || 'won', reason_code: lifecycle?.structured_outcome?.reason_code || '', notes: lifecycle?.structured_outcome?.notes || '' });
+        setOutcomeForm({ outcome: normalizeOutcomeSelection(lifecycle?.structured_outcome?.outcome), reason_code: lifecycle?.structured_outcome?.reason_code || '', notes: lifecycle?.structured_outcome?.notes || '' });
         setClarificationCreateForm({ request_id: '', request_summary: '', deadline_at: '', source_label: '' });
         setClarificationUpdateForm({ response_summary: '', source_label: '' });
     }, [tender?.id, lifecycle]);
@@ -190,6 +200,62 @@ export default function LifecycleControlPanel({ tender, tenderDetail, analytical
                     }, 'Contribution wave opened.')}><Send size={14} /> {submitKey === 'wave' ? 'Recording...' : 'Open contribution wave'}</button>
                 </SectionCard>
 
+                <SectionCard title="Coordination and rework" subtitle="Drive S4 <-> S6 explicitly when manual recovery or escalation is needed.">
+                    <label style={labelStyle}>External rework id<input value={coordinationForm.external_rework_id} onChange={(event) => setCoordinationForm((current) => ({ ...current, external_rework_id: event.target.value }))} style={inputStyle} placeholder="rw-admin-1" /></label>
+                    <label style={labelStyle}>Contribution id<input value={coordinationForm.external_contribution_id} onChange={(event) => setCoordinationForm((current) => ({ ...current, external_contribution_id: event.target.value }))} style={inputStyle} placeholder="201" /></label>
+                    <label style={labelStyle}>Severity<select value={coordinationForm.severity} onChange={(event) => setCoordinationForm((current) => ({ ...current, severity: event.target.value }))} style={inputStyle}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+                    <label style={labelStyle}>Reason code<input value={coordinationForm.reason_code} onChange={(event) => setCoordinationForm((current) => ({ ...current, reason_code: event.target.value }))} style={inputStyle} placeholder="missing_owner_alignment" /></label>
+                    <label style={labelStyle}>Notes<textarea value={coordinationForm.notes} onChange={(event) => setCoordinationForm((current) => ({ ...current, notes: event.target.value }))} style={{ ...inputStyle, minHeight: '90px', resize: 'vertical' }} /></label>
+                    <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                        <button className="btn btn-secondary btn-sm" disabled={submitKey === 'coordination-risk'} onClick={() => void runAction('coordination-risk', async () => {
+                            await tenderApi.raiseCoordinationRisk(tender.id, {
+                                external_rework_id: coordinationForm.external_rework_id || undefined,
+                                external_contribution_id: coordinationForm.external_contribution_id || undefined,
+                                severity: coordinationForm.severity || undefined,
+                                reason_code: coordinationForm.reason_code || undefined,
+                                notes: coordinationForm.notes || undefined,
+                            });
+                        }, 'Coordination risk raised.')}><AlertTriangle size={14} /> {submitKey === 'coordination-risk' ? 'Recording...' : 'Raise coordination risk'}</button>
+                        <button className="btn btn-primary btn-sm" disabled={submitKey === 'coordination-recovery'} onClick={() => void runAction('coordination-recovery', async () => {
+                            await tenderApi.returnToCoordination(tender.id, {
+                                external_rework_id: coordinationForm.external_rework_id || undefined,
+                                external_contribution_id: coordinationForm.external_contribution_id || undefined,
+                                severity: coordinationForm.severity || undefined,
+                                reason_code: coordinationForm.reason_code || undefined,
+                                notes: coordinationForm.notes || undefined,
+                            });
+                        }, 'Tender returned to coordination.')}><CheckCircle2 size={14} /> {submitKey === 'coordination-recovery' ? 'Recording...' : 'Return to coordination'}</button>
+                    </div>
+                </SectionCard>
+
+                <SectionCard title="Gate exceptions" subtitle="Drive S8 -> S6 and S8 -> S13 explicitly; gate pass only reopens S7 and submission stays manual.">
+                    <label style={labelStyle}>Gate id<input value={gateForm.external_gate_id} onChange={(event) => setGateForm((current) => ({ ...current, external_gate_id: event.target.value }))} style={inputStyle} placeholder="gate-1" /></label>
+                    <label style={labelStyle}>Gate name<input value={gateForm.gate_name} onChange={(event) => setGateForm((current) => ({ ...current, gate_name: event.target.value }))} style={inputStyle} placeholder="Auto compliance readiness" /></label>
+                    <label style={labelStyle}>Linked rework id<input value={gateForm.external_rework_id} onChange={(event) => setGateForm((current) => ({ ...current, external_rework_id: event.target.value }))} style={inputStyle} placeholder="gate-rw-1" /></label>
+                    <label style={labelStyle}>Reason code<input value={gateForm.reason_code} onChange={(event) => setGateForm((current) => ({ ...current, reason_code: event.target.value }))} style={inputStyle} placeholder="compliance_gap_reopened" /></label>
+                    <label style={labelStyle}>Notes<textarea value={gateForm.notes} onChange={(event) => setGateForm((current) => ({ ...current, notes: event.target.value }))} style={{ ...inputStyle, minHeight: '90px', resize: 'vertical' }} /></label>
+                    <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                        <button className="btn btn-secondary btn-sm" disabled={submitKey === 'gate-rework'} onClick={() => void runAction('gate-rework', async () => {
+                            await tenderApi.requestGateRework(tender.id, {
+                                external_gate_id: gateForm.external_gate_id || undefined,
+                                gate_name: gateForm.gate_name || undefined,
+                                external_rework_id: gateForm.external_rework_id || undefined,
+                                reason_code: gateForm.reason_code || undefined,
+                                notes: gateForm.notes || undefined,
+                            });
+                        }, 'Gate rework requested.')}><ShieldCheck size={14} /> {submitKey === 'gate-rework' ? 'Recording...' : 'Request gate rework'}</button>
+                        <button className="btn btn-primary btn-sm" disabled={submitKey === 'gate-stop'} onClick={() => void runAction('gate-stop', async () => {
+                            await tenderApi.stopAtGate(tender.id, {
+                                external_gate_id: gateForm.external_gate_id || undefined,
+                                gate_name: gateForm.gate_name || undefined,
+                                external_rework_id: gateForm.external_rework_id || undefined,
+                                reason_code: gateForm.reason_code || undefined,
+                                notes: gateForm.notes || undefined,
+                            });
+                        }, 'Tender stopped at gate.')}><AlertTriangle size={14} /> {submitKey === 'gate-stop' ? 'Recording...' : 'Stop at gate'}</button>
+                    </div>
+                </SectionCard>
+
                 <SectionCard title="Draft and submission reliability" subtitle="Drive S7, S9 and the submission reliability corridor.">
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Linked proposal: <strong style={{ color: 'var(--text-primary)' }}>{proposalId ?? 'n/a'}</strong></div>
                     <button className="btn btn-secondary btn-sm" disabled={submitKey === 'draft-ready' || !proposalId} onClick={() => void runAction('draft-ready', async () => {
@@ -205,7 +271,7 @@ export default function LifecycleControlPanel({ tender, tenderDetail, analytical
                 </SectionCard>
 
                 <SectionCard title="Terminal outcome" subtitle="Close the tender with the final structured outcome taxonomy.">
-                    <label style={labelStyle}>Outcome<select value={outcomeForm.outcome} onChange={(event) => setOutcomeForm((current) => ({ ...current, outcome: event.target.value }))} style={inputStyle}><option value="won">Won</option><option value="lost">Lost</option><option value="excluded">Excluded</option><option value="withdrawn">Withdrawn</option><option value="no_bid">No Bid</option><option value="stopped">Stopped</option></select></label>
+                    <label style={labelStyle}>Outcome<select value={outcomeForm.outcome} onChange={(event) => setOutcomeForm((current) => ({ ...current, outcome: event.target.value }))} style={inputStyle}><option value="won">Won</option><option value="lost">Lost</option><option value="excluded">Excluded</option><option value="withdrawn">Withdrawn</option><option value="stopped">Stopped</option></select></label>
                     <label style={labelStyle}>Reason code<input value={outcomeForm.reason_code} onChange={(event) => setOutcomeForm((current) => ({ ...current, reason_code: event.target.value }))} style={inputStyle} placeholder="missing_annex" /></label>
                     <label style={labelStyle}>Notes<textarea value={outcomeForm.notes} onChange={(event) => setOutcomeForm((current) => ({ ...current, notes: event.target.value }))} style={{ ...inputStyle, minHeight: '92px', resize: 'vertical' }} /></label>
                     <button className="btn btn-primary btn-sm" disabled={submitKey === 'outcome'} onClick={() => void runAction('outcome', async () => {

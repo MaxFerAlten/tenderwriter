@@ -1922,7 +1922,7 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
             snapshot_response.json()["notes"],
         )
 
-    def test_transitions_endpoint_surfaces_new_lifecycle_event_drivers(self) -> None:
+    def test_transitions_endpoint_surfaces_contextual_and_early_lifecycle_event_drivers(self) -> None:
         self.client.post(
             "/v1/tenders",
             headers=self._auth_headers(),
@@ -1955,6 +1955,12 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
         )
         for payload in [
             {
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-20T07:50:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+            {
                 "event_type": "go_decision_recorded",
                 "occurred_at": "2026-03-20T08:00:00Z",
                 "source": "tw-backend",
@@ -1971,6 +1977,12 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
                 "occurred_at": "2026-03-20T08:20:00Z",
                 "source": "tw-backend",
                 "payload": {"contribution_count": 3},
+            },
+            {
+                "event_type": "contribution_received",
+                "occurred_at": "2026-03-20T08:30:00Z",
+                "source": "tw-backend",
+                "payload": {"external_contribution_id": "C-1", "external_request_id": "R-1"},
             },
             {
                 "event_type": "draft_integrated_ready",
@@ -2011,12 +2023,169 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
 
         self.assertEqual(transitions_response.status_code, 200)
         transitions = transitions_response.json()
-        source_event_types = {item["source_event_type"] for item in transitions["items"]}
-        self.assertIn("tender_excluded", source_event_types)
-        self.assertIn("clarification_requested", source_event_types)
-        self.assertIn("draft_integrated_ready", source_event_types)
-        self.assertIn("bid_plan_created", source_event_types)
-        self.assertIn("go_decision_recorded", source_event_types)
+        items_by_event = {
+            item["source_event_type"]: (item["from_state"], item["to_state"])
+            for item in transitions["items"]
+        }
+        self.assertEqual(items_by_event["tender_document_ingested"], ("S0", "S1"))
+        self.assertEqual(items_by_event["go_decision_recorded"], ("S1", "S2"))
+        self.assertEqual(items_by_event["contribution_received"], ("S3", "S4"))
+        self.assertEqual(items_by_event["clarification_requested"], ("S9", "S10"))
+        self.assertEqual(items_by_event["tender_excluded"], ("S10", "S13"))
 
+    def test_transitions_endpoint_resolves_terminal_outcomes_from_active_clarifications(self) -> None:
+        terminal_expectations = {
+            "award_confirmed": "S11",
+            "loss_reason_recorded": "S12",
+            "tender_excluded": "S13",
+        }
+
+        for index, (event_type, to_state) in enumerate(terminal_expectations.items(), start=1):
+            external_tender_id = f"TEN-S10-TERM-{index}"
+            with self.subTest(event_type=event_type):
+                sync_response = self.client.post(
+                    "/v1/tenders",
+                    headers=self._auth_headers(),
+                    json={
+                        "external_tender_id": external_tender_id,
+                        "title": "Terminal Clarification Tender",
+                        "customer_name": "Northwind",
+                        "due_at": "2030-04-30T10:00:00Z",
+                        "current_status": "submitted",
+                        "departments": [],
+                        "requirement_contexts": [],
+                        "section_contexts": [],
+                        "metadata": {},
+                    },
+                )
+                self.assertEqual(sync_response.status_code, 202)
+
+                for payload in [
+                    {
+                        "event_type": "tender_submitted",
+                        "occurred_at": "2026-03-20T09:00:00Z",
+                        "source": "tw-backend",
+                        "payload": {"submission_id": "SUB-1"},
+                    },
+                    {
+                        "event_type": "clarification_requested",
+                        "occurred_at": "2026-03-20T09:30:00Z",
+                        "source": "tw-backend",
+                        "payload": {"request_id": "clar-1"},
+                    },
+                    {
+                        "event_type": event_type,
+                        "occurred_at": "2026-03-20T10:00:00Z",
+                        "source": "tw-backend",
+                        "payload": {"reason_code": "manual_terminal_resolution"},
+                    },
+                ]:
+                    response = self.client.post(
+                        f"/v1/tenders/{external_tender_id}/events",
+                        headers=self._auth_headers(),
+                        json=payload,
+                    )
+                    self.assertEqual(response.status_code, 202)
+
+                transitions_response = self.client.get(
+                    f"/v1/tenders/{external_tender_id}/transitions",
+                    headers=self._auth_headers(),
+                )
+
+                self.assertEqual(transitions_response.status_code, 200)
+                items_by_event = {
+                    item["source_event_type"]: (item["from_state"], item["to_state"])
+                    for item in transitions_response.json()["items"]
+                }
+                self.assertEqual(items_by_event[event_type], ("S10", to_state))
+
+    def test_transitions_endpoint_surfaces_manual_recovery_and_gate_branch_drivers(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-MANUAL-BRANCHES",
+                "title": "Manual Branch Tender",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["legal"],
+                "requirement_contexts": [],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Compliance",
+                        "owner_department": "legal",
+                        "status": "in_progress",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+        for payload in [
+            {
+                "event_type": "contribution_received",
+                "occurred_at": "2026-03-20T08:30:00Z",
+                "source": "tw-backend",
+                "payload": {"external_contribution_id": "C-1", "external_request_id": "R-1"},
+            },
+            {
+                "event_type": "coordination_risk_raised",
+                "occurred_at": "2026-03-20T08:40:00Z",
+                "source": "admin-ui",
+                "payload": {"external_rework_id": "rw-admin-1", "external_contribution_id": "C-1", "reason_code": "missing_owner_alignment"},
+            },
+            {
+                "event_type": "rework_reescalated_to_coordination",
+                "occurred_at": "2026-03-20T08:50:00Z",
+                "source": "admin-ui",
+                "payload": {"external_rework_id": "rw-admin-1", "external_contribution_id": "C-1", "reason_code": "owner_alignment_restored"},
+            },
+            {
+                "event_type": "draft_integrated_ready",
+                "occurred_at": "2026-03-20T09:00:00Z",
+                "source": "tw-backend",
+                "payload": {"proposal_id": 41},
+            },
+            {
+                "event_type": "compliance_gate_opened",
+                "occurred_at": "2026-03-20T09:10:00Z",
+                "source": "tw-backend",
+                "payload": {"external_gate_id": "gate-1", "gate_name": "Auto compliance readiness"},
+            },
+            {
+                "event_type": "compliance_gate_rework_requested",
+                "occurred_at": "2026-03-20T09:20:00Z",
+                "source": "admin-ui",
+                "payload": {"external_gate_id": "gate-1", "gate_name": "Auto compliance readiness", "external_rework_id": "gate-rw-1", "reason_code": "compliance_gap_reopened"},
+            },
+            {
+                "event_type": "tender_stopped_at_gate",
+                "occurred_at": "2026-03-20T09:30:00Z",
+                "source": "admin-ui",
+                "payload": {"external_gate_id": "gate-1", "gate_name": "Auto compliance readiness", "reason_code": "strategic_stop"},
+            },
+        ]:
+            response = self.client.post(
+                "/v1/tenders/TEN-MANUAL-BRANCHES/events",
+                headers=self._auth_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 202)
+
+        transitions_response = self.client.get(
+            "/v1/tenders/TEN-MANUAL-BRANCHES/transitions",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(transitions_response.status_code, 200)
+        items_by_event = {
+            item["source_event_type"]: (item["from_state"], item["to_state"])
+            for item in transitions_response.json()["items"]
+        }
+        self.assertEqual(items_by_event["coordination_risk_raised"], ("S4", "S6"))
+        self.assertEqual(items_by_event["rework_reescalated_to_coordination"], ("S6", "S4"))
+        self.assertEqual(items_by_event["compliance_gate_rework_requested"], ("S8", "S6"))
+        self.assertEqual(items_by_event["tender_stopped_at_gate"], ("S8", "S13"))
 
 

@@ -465,6 +465,64 @@ describe('tenderApi', () => {
             })
         );
     });
+
+    it('records coordination risk through the tender lifecycle endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ status: 'accepted', event_type: 'coordination_risk_raised', tender_id: 12, payload: {} }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.raiseCoordinationRisk(12, {
+            external_rework_id: 'rw-admin-1',
+            external_contribution_id: '201',
+            severity: 'high',
+            reason_code: 'missing_owner_alignment',
+        });
+
+        expect(response.event_type).toBe('coordination_risk_raised');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/coordination-risk',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    external_rework_id: 'rw-admin-1',
+                    external_contribution_id: '201',
+                    severity: 'high',
+                    reason_code: 'missing_owner_alignment',
+                }),
+            })
+        );
+    });
+
+    it('records gate stop through the tender lifecycle endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ status: 'accepted', event_type: 'tender_stopped_at_gate', tender_id: 12, payload: {} }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.stopAtGate(12, {
+            external_gate_id: 'gate-1',
+            gate_name: 'Auto compliance readiness',
+            reason_code: 'compliance_gap_reopened',
+        });
+
+        expect(response.event_type).toBe('tender_stopped_at_gate');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/gate-stop',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    external_gate_id: 'gate-1',
+                    gate_name: 'Auto compliance readiness',
+                    reason_code: 'compliance_gap_reopened',
+                }),
+            })
+        );
+    });
 });
 
 

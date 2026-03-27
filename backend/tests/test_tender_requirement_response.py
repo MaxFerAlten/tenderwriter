@@ -19,10 +19,14 @@ for key, value in _TEST_ENV.items():
 
 from app.api.tenders import (
     TenderClarificationUpdate,
+    TenderGateLifecycleRequest,
+    TenderOutcomeRecordRequest,
     _requirement_to_response,
     _tender_to_response,
     close_tender_clarification,
     draft_tender_clarification_response,
+    record_structured_outcome,
+    stop_tender_at_gate,
     submit_tender_clarification_response,
 )
 from app.models import ComplianceStatus, ProposalSection, SectionStatus, Tender, TenderRequirement, TenderStatus
@@ -130,6 +134,65 @@ class TenderClarificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(tender.metadata_json, {"lifecycle": {}})
                     self.assertFalse(db.flush_called)
                     sync_mock.assert_not_called()
+
+
+class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_structured_outcome_rejects_no_bid(self) -> None:
+        current_user = type("User", (), {"id": 7, "role": "admin"})()
+        tender = Tender(id=13, title="Lifecycle tender", client="ACME", status=TenderStatus.ACTIVE)
+        db = _FakeAsyncSession()
+        data = TenderOutcomeRecordRequest(outcome="no_bid", reason_code="strategic_fit")
+
+        with (
+            patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
+            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+        ):
+            with self.assertRaises(HTTPException) as exc:
+                await record_structured_outcome(
+                    tender_id=13,
+                    data=data,
+                    current_user=current_user,
+                    db=db,
+                )
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Unsupported structured outcome")
+            self.assertFalse(db.flush_called)
+            sync_mock.assert_not_called()
+
+    async def test_gate_stop_records_terminal_outcome_and_event(self) -> None:
+        current_user = type("User", (), {"id": 7, "role": "admin"})()
+        tender = Tender(id=13, title="Lifecycle tender", client="ACME", status=TenderStatus.ACTIVE)
+        tender.metadata_json = {"lifecycle": {}}
+        db = _FakeAsyncSession()
+        data = TenderGateLifecycleRequest(
+            external_gate_id="gate-1",
+            gate_name="Auto compliance readiness",
+            reason_code="compliance_gap_reopened",
+            notes="Stopping the tender from the gate corridor.",
+        )
+
+        with (
+            patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
+            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+        ):
+            response = await stop_tender_at_gate(
+                tender_id=13,
+                data=data,
+                current_user=current_user,
+                db=db,
+            )
+
+            self.assertEqual(response.event_type, "tender_stopped_at_gate")
+            self.assertTrue(db.flush_called)
+            self.assertEqual(tender.status, TenderStatus.CANCELLED)
+            assert tender.metadata_json is not None
+            self.assertEqual(tender.metadata_json["lifecycle"]["structured_outcome"]["outcome"], "stopped")
+            sync_mock.assert_awaited_once()
+            event_payload = sync_mock.await_args.kwargs["event_payload"]
+            self.assertEqual(sync_mock.await_args.kwargs["event_type"], "tender_stopped_at_gate")
+            self.assertEqual(event_payload["external_gate_id"], "gate-1")
+            self.assertEqual(event_payload["outcome"], "stopped")
 
 
 if __name__ == "__main__":

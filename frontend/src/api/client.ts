@@ -72,6 +72,14 @@ export const tenderApi = {
         request<TenderLifecycleActionResponse>(`/tenders/${id}/bid-plan`, { method: 'POST', body: data }),
     openContributionWave: (id: number, data: ContributionWaveRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/contribution-wave`, { method: 'POST', body: data }),
+    raiseCoordinationRisk: (id: number, data: TenderCoordinationRiskRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/coordination-risk`, { method: 'POST', body: data }),
+    returnToCoordination: (id: number, data: TenderCoordinationRecoveryRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/coordination-recovery`, { method: 'POST', body: data }),
+    requestGateRework: (id: number, data: TenderGateLifecycleRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/gate-rework`, { method: 'POST', body: data }),
+    stopAtGate: (id: number, data: TenderGateLifecycleRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/gate-stop`, { method: 'POST', body: data }),
     recordOutcome: (id: number, data: TenderOutcomeRecordRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/outcome`, { method: 'POST', body: data }),
     createClarification: (id: number, data: TenderClarificationCreateRequest) =>
@@ -785,6 +793,33 @@ export interface TenderOutcomeRecordRequest {
     recorded_at?: string;
     reason_code?: string;
     notes?: string;
+}
+
+export interface TenderCoordinationRiskRequest {
+    external_rework_id?: string;
+    external_contribution_id?: string;
+    severity?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
+}
+
+export interface TenderCoordinationRecoveryRequest {
+    external_rework_id?: string;
+    external_contribution_id?: string;
+    severity?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
+}
+
+export interface TenderGateLifecycleRequest {
+    external_gate_id?: string;
+    gate_name?: string;
+    external_rework_id?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
 }
 
 export interface TenderClarificationCreateRequest {

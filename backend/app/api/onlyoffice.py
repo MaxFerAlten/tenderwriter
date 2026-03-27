@@ -200,6 +200,8 @@ def _build_config_dict(
                 "help": True,
                 "hideRightMenu": True,
                 "hideRulers": False,
+                # Force a deterministic UI theme across proposal/library/create editors.
+                "uiTheme": settings.onlyoffice_ui_theme,
                 "logo": {
                     "image": "",
                     "visible": False,

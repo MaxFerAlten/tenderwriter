@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
     backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
     onlyoffice_file_token_ttl_seconds: int = 3600
+    onlyoffice_ui_theme: str = "theme-dark"
 
     # --- KPI Reason Engine ---
     kpi_reason_engine_base_url: str = "http://tw-kpi-reason-engine:8010"
