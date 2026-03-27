@@ -330,7 +330,14 @@ async def update_tender(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a tender. RBAC-checked."""
-    tender = await check_tender_access(tender_id, current_user, db)
+    # First check access (uses eager loading for requirements/proposals)
+    await check_tender_access(tender_id, current_user, db)
+
+    # Re-fetch with FOR UPDATE lock to prevent concurrent overwrites
+    result = await db.execute(
+        select(Tender).where(Tender.id == tender_id).with_for_update()
+    )
+    tender = result.scalar_one()
     previous_status = tender.status
 
     update_data = data.model_dump(exclude_unset=True)

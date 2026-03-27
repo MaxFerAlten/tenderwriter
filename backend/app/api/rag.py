@@ -104,16 +104,23 @@ async def rag_query(
             async for token in engine.query_stream(rag_query):
                 full_response += token
                 yield f"data: {token}\n\n"
-            
+
             # Save history when stream completes
-            history = SearchHistory(
-                user_id=current_user.id,
-                query=data.query,
-                response=full_response
-            )
-            db.add(history)
-            await db.commit()
-            
+            try:
+                history = SearchHistory(
+                    user_id=current_user.id,
+                    query=data.query,
+                    response=full_response
+                )
+                db.add(history)
+                await db.commit()
+            except Exception:
+                import structlog
+                structlog.get_logger().warning(
+                    "Failed to save search history during stream",
+                    user_id=current_user.id,
+                )
+
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
