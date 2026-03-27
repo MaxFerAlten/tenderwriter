@@ -109,6 +109,14 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.llm_route, LLMRoute.EXTERNAL_ANONYMIZED)
         self.assertTrue(result.anonymized)
         self.assertEqual(result.sources[0]["metadata"]["document_id"], "doc-1")
+        trace = engine.get_last_privacy_debug_trace()
+        self.assertIsNotNone(trace)
+        self.assertEqual(trace["llm_route"], "external_anonymized")
+        self.assertTrue(trace["anonymized"])
+        self.assertEqual(
+            trace["anonymized_prompt_variables"]["query"],
+            "Chi e [PERSONA_1]?",
+        )
 
         call_kwargs = engine._generate.await_args.kwargs
         self.assertIs(call_kwargs["generator"], external_generator)

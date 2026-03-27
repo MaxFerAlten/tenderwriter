@@ -8,6 +8,7 @@ fuses results, re-ranks them, and generates responses using a local LLM.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from enum import Enum
 import time
 from typing import Any, AsyncIterator
@@ -114,6 +115,7 @@ class HybridRAGEngine:
         self._anonymizer_fallback_events = 0
         self._anonymizer_circuit_open_events = 0
         self._last_anonymizer_error_reason: str | None = None
+        self._last_privacy_debug_trace: dict[str, Any] | None = None
         self._initialized = False
 
     async def initialize(self):
@@ -494,6 +496,50 @@ class HybridRAGEngine:
             "last_error_reason": self._last_anonymizer_error_reason,
         }
 
+    def get_last_privacy_debug_trace(self) -> dict[str, Any] | None:
+        if self._last_privacy_debug_trace is None:
+            return None
+        return dict(self._last_privacy_debug_trace)
+
+    def _truncate_debug_text(self, value: str, *, limit: int = 4000) -> str:
+        if len(value) <= limit:
+            return value
+        return f"{value[:limit]}..."
+
+    def _set_last_privacy_debug_trace(
+        self,
+        *,
+        rag_query: RAGQuery,
+        llm_route: LLMRoute,
+        anonymizer_enabled: bool,
+        anonymized: bool,
+        session_id: str | None,
+        prompt_variables: dict[str, Any] | None,
+        note: str | None = None,
+    ) -> None:
+        debug_prompt = None
+        if isinstance(prompt_variables, dict):
+            debug_prompt = {
+                key: self._truncate_debug_text(value)
+                for key, value in prompt_variables.items()
+                if isinstance(value, str) and value.strip()
+            }
+        self._last_privacy_debug_trace = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mode": rag_query.mode.value,
+            "route_key": rag_query.route_key,
+            "tender_id": rag_query.tender_id,
+            "llm_route": llm_route.value,
+            "anonymizer_enabled": anonymizer_enabled,
+            "anonymized": anonymized,
+            "session_token": self._mask_session_token(session_id),
+            "target_id": rag_query.external_target_id,
+            "target_provider": rag_query.external_target_provider,
+            "target_base_url": rag_query.external_target_url,
+            "anonymized_prompt_variables": debug_prompt,
+            "note": note,
+        }
+
     def _anonymizer_headers(self) -> dict[str, str]:
         if not settings.anonymizer_admin_token:
             return {}
@@ -542,6 +588,15 @@ class HybridRAGEngine:
                 variables = anonymized_variables
                 llm_route = LLMRoute.EXTERNAL_ANONYMIZED
                 anonymized = True
+                self._set_last_privacy_debug_trace(
+                    rag_query=rag_query,
+                    llm_route=llm_route,
+                    anonymizer_enabled=anonymizer_enabled,
+                    anonymized=True,
+                    session_id=deanonymize_session_id,
+                    prompt_variables=variables,
+                    note="external route uses anonymized prompt variables",
+                )
             except AnonymizerUnavailableError as exc:
                 logger.warning(
                     "Anonymizer unavailable, falling back to internal LLM",
@@ -556,6 +611,25 @@ class HybridRAGEngine:
                 )
                 self._anonymizer_fallback_events += 1
                 llm_route = LLMRoute.INTERNAL_FALLBACK
+                self._set_last_privacy_debug_trace(
+                    rag_query=rag_query,
+                    llm_route=llm_route,
+                    anonymizer_enabled=anonymizer_enabled,
+                    anonymized=False,
+                    session_id=deanonymize_session_id,
+                    prompt_variables=None,
+                    note=f"fallback to internal because anonymizer failed: {exc}",
+                )
+        else:
+            self._set_last_privacy_debug_trace(
+                rag_query=rag_query,
+                llm_route=llm_route,
+                anonymizer_enabled=anonymizer_enabled,
+                anonymized=False,
+                session_id=None,
+                prompt_variables=None,
+                note="internal route used; no anonymized prompt generated",
+            )
 
         return (
             generator,

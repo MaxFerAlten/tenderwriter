@@ -30,6 +30,7 @@ import {
     type AnonymizerPolicyRuleData,
     type EffectiveAnonymizerPolicyData,
     type AnonymizerAuditEntryData,
+    type AnonymizerLastRagDebugData,
     type AnonymizerTestResult,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -94,6 +95,7 @@ const Settings: FC = () => {
     const [anonymizerPolicy, setAnonymizerPolicy] = useState<AnonymizerPolicyData>(DEFAULT_ANONYMIZER_POLICY);
     const [anonymizerEffectivePolicy, setAnonymizerEffectivePolicy] = useState<EffectiveAnonymizerPolicyData | null>(null);
     const [anonymizerAuditEntries, setAnonymizerAuditEntries] = useState<AnonymizerAuditEntryData[]>([]);
+    const [anonymizerLastRagDebug, setAnonymizerLastRagDebug] = useState<AnonymizerLastRagDebugData | null>(null);
     const [anonymizerLoading, setAnonymizerLoading] = useState(false);
     const [anonymizerError, setAnonymizerError] = useState<string | null>(null);
     const [anonymizerTesting, setAnonymizerTesting] = useState(false);
@@ -185,11 +187,12 @@ const Settings: FC = () => {
         try {
             setAnonymizerLoading(true);
             setAnonymizerError(null);
-            const [config, stats, policy, audit] = await Promise.all([
+            const [config, stats, policy, audit, lastRagDebug] = await Promise.all([
                 anonymizerApi.getConfig(),
                 anonymizerApi.getStats(),
                 anonymizerApi.getPolicy(),
                 anonymizerApi.getAudit({ limit: 8 }),
+                anonymizerApi.getLastRagDebug(),
             ]);
             setAnonymizerConfig({
                 entities: config.entities?.length ? config.entities : DEFAULT_ANONYMIZER_CONFIG.entities,
@@ -205,6 +208,7 @@ const Settings: FC = () => {
                 tenders: policy.tenders || {},
             });
             setAnonymizerAuditEntries(audit);
+            setAnonymizerLastRagDebug(lastRagDebug);
         } catch (err) {
             setAnonymizerError(err instanceof Error ? err.message : 'Impossibile caricare il modulo anonymizer.');
         } finally {
@@ -1227,6 +1231,62 @@ const Settings: FC = () => {
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+
+                                <div style={{ display: 'grid', gap: '0.75rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                        <div>
+                                            <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Ultima Request RAG Anonimizzata</h4>
+                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                                Viewer admin-only del prompt gia anonimizzato inviato dal backend nell&apos;ultimo routing RAG.
+                                            </p>
+                                        </div>
+                                        <button className="btn btn-ghost btn-sm" onClick={loadAnonymizerPanel} disabled={anonymizerLoading}>
+                                            <RefreshCw size={14} /> Aggiorna
+                                        </button>
+                                    </div>
+
+                                    {!anonymizerLastRagDebug && (
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                            Nessuna trace disponibile. Esegui prima una query RAG e poi aggiorna questa sezione.
+                                        </div>
+                                    )}
+
+                                    {anonymizerLastRagDebug && (
+                                        <div style={{ display: 'grid', gap: '0.75rem' }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                                                {[
+                                                    { label: 'Timestamp', value: new Date(anonymizerLastRagDebug.timestamp).toLocaleString('it-IT') },
+                                                    { label: 'Mode', value: anonymizerLastRagDebug.mode },
+                                                    { label: 'Route', value: anonymizerLastRagDebug.route_key },
+                                                    { label: 'LLM Route', value: anonymizerLastRagDebug.llm_route },
+                                                    { label: 'Anonymizer', value: anonymizerLastRagDebug.anonymizer_enabled ? 'enabled' : 'disabled' },
+                                                    { label: 'Anonymized', value: anonymizerLastRagDebug.anonymized ? 'true' : 'false' },
+                                                    { label: 'Provider', value: anonymizerLastRagDebug.target_provider || 'internal' },
+                                                    { label: 'Session', value: anonymizerLastRagDebug.session_token || 'n/a' },
+                                                ].map((item) => (
+                                                    <div key={item.label} style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-glass)' }}>
+                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.label}</div>
+                                                        <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginTop: '0.2rem', wordBreak: 'break-word' }}>{item.value}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-glass)' }}>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Note</div>
+                                                <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', marginTop: '0.2rem', wordBreak: 'break-word' }}>
+                                                    {anonymizerLastRagDebug.note || 'n/a'}
+                                                </div>
+                                            </div>
+
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: '#0f172a', color: '#e2e8f0' }}>
+                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Prompt variables anonimizzate</div>
+                                                <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                                    {JSON.stringify(anonymizerLastRagDebug.anonymized_prompt_variables || {}, null, 2)}
+                                                </pre>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

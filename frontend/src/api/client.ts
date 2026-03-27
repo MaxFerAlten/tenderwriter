@@ -603,6 +603,22 @@ export interface AnonymizerAuditEntryData {
     created_at: string;
 }
 
+export interface AnonymizerLastRagDebugData {
+    timestamp: string;
+    mode: string;
+    route_key: string;
+    tender_id?: number | null;
+    llm_route: string;
+    anonymizer_enabled: boolean;
+    anonymized: boolean;
+    session_token?: string | null;
+    target_id?: number | null;
+    target_provider?: string | null;
+    target_base_url?: string | null;
+    anonymized_prompt_variables?: Record<string, string> | null;
+    note?: string | null;
+}
+
 export interface AnonymizerChunkResult {
     text: string;
     anonymized_text: string;
@@ -724,6 +740,7 @@ export const anonymizerApi = {
             : '';
         return request<AnonymizerAuditEntryData[]>(`/anonymizer/audit${query}`);
     },
+    getLastRagDebug: () => request<AnonymizerLastRagDebugData | null>('/anonymizer/debug/last-rag'),
     test: (data: { text: string; session_id?: string; config?: Partial<AnonymizerConfigData> }) =>
         request<AnonymizerTestResult>('/anonymizer/test', { method: 'POST', body: data }),
     deanonymize: (data: { text: string; session_id: string }) =>

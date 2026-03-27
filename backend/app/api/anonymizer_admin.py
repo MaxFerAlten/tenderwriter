@@ -77,6 +77,22 @@ class AnonymizerAuditEntry(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AnonymizerLastRagDebugTrace(BaseModel):
+    timestamp: str
+    mode: str
+    route_key: str
+    tender_id: int | None = None
+    llm_route: str
+    anonymizer_enabled: bool
+    anonymized: bool
+    session_token: str | None = None
+    target_id: int | None = None
+    target_provider: str | None = None
+    target_base_url: str | None = None
+    anonymized_prompt_variables: dict[str, str] | None = None
+    note: str | None = None
+
+
 async def _proxy_anonymizer(
     method: str,
     path: str,
@@ -161,6 +177,18 @@ async def get_anonymizer_stats(
     if rag_engine and hasattr(rag_engine, "get_anonymizer_runtime_stats"):
         stats.update(rag_engine.get_anonymizer_runtime_stats())
     return stats
+
+
+@router.get("/debug/last-rag", response_model=AnonymizerLastRagDebugTrace | None)
+async def get_last_rag_debug_trace(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    rag_engine = getattr(request.app.state, "rag_engine", None)
+    if not rag_engine or not hasattr(rag_engine, "get_last_privacy_debug_trace"):
+        return None
+    return rag_engine.get_last_privacy_debug_trace()
 
 
 @router.post("/test")

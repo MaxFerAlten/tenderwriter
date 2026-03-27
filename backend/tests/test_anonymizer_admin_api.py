@@ -70,7 +70,24 @@ class AnonymizerAdminApiTests(unittest.TestCase):
         app.state.rag_engine = type(
             "FakeRagEngine",
             (),
-            {"get_anonymizer_runtime_stats": lambda self: {"fallback_events": 2, "circuit_open": False}},
+            {
+                "get_anonymizer_runtime_stats": lambda self: {"fallback_events": 2, "circuit_open": False},
+                "get_last_privacy_debug_trace": lambda self: {
+                    "timestamp": "2026-03-27T10:30:00+00:00",
+                    "mode": "qa",
+                    "route_key": "tender",
+                    "tender_id": 42,
+                    "llm_route": "external_anonymized",
+                    "anonymizer_enabled": True,
+                    "anonymized": True,
+                    "session_token": "sess...1234",
+                    "target_id": 7,
+                    "target_provider": "openai",
+                    "target_base_url": "https://llm.example.com/v1",
+                    "anonymized_prompt_variables": {"query": "Chi e [PERSONA_1]?"},
+                    "note": "external route uses anonymized prompt variables",
+                },
+            },
         )()
         app.dependency_overrides[get_current_user] = lambda: UserResponse(
             id=1,
@@ -127,6 +144,16 @@ class AnonymizerAdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["requests"], 4)
         self.assertEqual(response.json()["fallback_events"], 2)
+
+    def test_debug_endpoint_returns_last_rag_trace(self) -> None:
+        response = self.client.get("/anonymizer/debug/last-rag")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["llm_route"], "external_anonymized")
+        self.assertEqual(
+            response.json()["anonymized_prompt_variables"]["query"],
+            "Chi e [PERSONA_1]?",
+        )
 
     def test_deanonymize_endpoint_proxies_payload(self) -> None:
         with patch(
