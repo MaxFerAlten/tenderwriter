@@ -13,11 +13,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.rag.engine import QueryMode, RAGQuery
 from app.api.auth import get_current_user, UserResponse
 from app.config import settings
 from app.db.database import get_db
 from app.models import AppSettings, SearchHistory
+from app.privacy_audit import persist_privacy_audit
+from app.privacy_policy import EffectivePrivacyPolicy, resolve_effective_privacy_policy
+from app.rag.engine import QueryMode, RAGQuery
 
 router = APIRouter()
 
@@ -30,6 +32,21 @@ async def _load_runtime_anonymizer_enabled(db: AsyncSession) -> bool:
     return settings.anonymizer_enabled
 
 
+async def _resolve_runtime_privacy_policy(
+    db: AsyncSession,
+    *,
+    route_key: str = "tender",
+    tender_id: int | None = None,
+) -> EffectivePrivacyPolicy:
+    anonymizer_enabled = await _load_runtime_anonymizer_enabled(db)
+    return await resolve_effective_privacy_policy(
+        db,
+        route_key=route_key,
+        tender_id=tender_id,
+        anonymizer_enabled_override=anonymizer_enabled,
+    )
+
+
 # ── Schemas ──
 
 
@@ -40,6 +57,8 @@ class RAGQueryRequest(BaseModel):
     top_k: int | None = None
     temperature: float = 0.3
     stream: bool = False
+    route_key: str = "tender"
+    tender_id: int | None = None
 
 
 class GenerateSectionRequest(BaseModel):
@@ -49,16 +68,22 @@ class GenerateSectionRequest(BaseModel):
     requirements: str = ""
     filters: dict = {}
     temperature: float = 0.3
+    route_key: str = "tender"
+    tender_id: int | None = None
 
 
 class ComplianceCheckRequest(BaseModel):
     requirement: str
     section_content: str
     filters: dict = {}
+    route_key: str = "tender"
+    tender_id: int | None = None
 
 
 class AnalyzeRequirementsRequest(BaseModel):
     document_text: str
+    route_key: str = "tender"
+    tender_id: int | None = None
 
 
 class RAGSourceResponse(BaseModel):
@@ -73,6 +98,32 @@ class RAGResponse(BaseModel):
     mode: str
     llm_route: str | None = None
     anonymized: bool = False
+
+
+async def _audit_rag_result(
+    *,
+    db: AsyncSession,
+    action: str,
+    current_user: UserResponse,
+    rag_query: RAGQuery,
+    policy: EffectivePrivacyPolicy,
+    llm_route: str | None,
+    anonymized: bool,
+    payload: dict,
+) -> None:
+    await persist_privacy_audit(
+        db=db,
+        action=action,
+        current_user=current_user,
+        tender_id=rag_query.tender_id,
+        route_key=rag_query.route_key,
+        llm_route=llm_route,
+        anonymized=anonymized,
+        target_id=policy.target_id,
+        target_provider=policy.target_provider,
+        target_base_url=policy.target_base_url,
+        payload=payload,
+    )
 
 
 # ── Routes ──
@@ -91,6 +142,11 @@ async def rag_query(
     Supports modes: search, qa, write_section, exec_summary, analyze_reqs, compliance
     """
     engine = request.app.state.rag_engine
+    policy = await _resolve_runtime_privacy_policy(
+        db,
+        route_key=data.route_key,
+        tender_id=data.tender_id,
+    )
 
     try:
         mode = QueryMode(data.mode)
@@ -106,7 +162,14 @@ async def rag_query(
         filters=data.filters,
         top_k=data.top_k,
         temperature=data.temperature,
-        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
+        anonymizer_enabled_override=policy.anonymizer_enabled,
+        route_key=policy.route_key,
+        tender_id=policy.tender_id,
+        external_target_url=policy.target_base_url,
+        external_target_model=policy.target_model,
+        external_target_provider=policy.target_provider,
+        external_target_id=policy.target_id,
+        external_target_timeout_ms=policy.target_timeout_ms,
     )
 
     if data.stream:
@@ -124,6 +187,16 @@ async def rag_query(
                 response=full_response
             )
             db.add(history)
+            await _audit_rag_result(
+                db=db,
+                action="rag_query_stream",
+                current_user=current_user,
+                rag_query=rag_query,
+                policy=policy,
+                llm_route=None,
+                anonymized=policy.mode == "external_anonymized",
+                payload={"mode": mode.value, "stream": True, "policy": policy.as_dict()},
+            )
             await db.commit()
             
             yield "data: [DONE]\n\n"
@@ -142,6 +215,16 @@ async def rag_query(
         response=result.answer
     )
     db.add(history)
+    await _audit_rag_result(
+        db=db,
+        action="rag_query",
+        current_user=current_user,
+        rag_query=rag_query,
+        policy=policy,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
+        payload={"mode": mode.value, "stream": False, "policy": policy.as_dict()},
+    )
     await db.commit()
 
     return RAGResponse(
@@ -188,6 +271,7 @@ async def get_search_history(
 async def generate_section(
     data: GenerateSectionRequest,
     request: Request,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -197,6 +281,11 @@ async def generate_section(
     for the specified section.
     """
     engine = request.app.state.rag_engine
+    policy = await _resolve_runtime_privacy_policy(
+        db,
+        route_key=data.route_key,
+        tender_id=data.tender_id,
+    )
 
     rag_query = RAGQuery(
         text=data.query,
@@ -206,10 +295,28 @@ async def generate_section(
         requirements=data.requirements,
         filters=data.filters,
         temperature=data.temperature,
-        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
+        anonymizer_enabled_override=policy.anonymizer_enabled,
+        route_key=policy.route_key,
+        tender_id=policy.tender_id,
+        external_target_url=policy.target_base_url,
+        external_target_model=policy.target_model,
+        external_target_provider=policy.target_provider,
+        external_target_id=policy.target_id,
+        external_target_timeout_ms=policy.target_timeout_ms,
     )
 
     result = await engine.query(rag_query)
+    await _audit_rag_result(
+        db=db,
+        action="rag_generate_section",
+        current_user=current_user,
+        rag_query=rag_query,
+        policy=policy,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
+        payload={"mode": QueryMode.WRITE_SECTION.value, "policy": policy.as_dict()},
+    )
+    await db.commit()
 
     return RAGResponse(
         answer=result.answer,
@@ -231,6 +338,7 @@ async def generate_section(
 async def compliance_check(
     data: ComplianceCheckRequest,
     request: Request,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -239,6 +347,11 @@ async def compliance_check(
     Returns compliance status, gaps, and suggestions for improvement.
     """
     engine = request.app.state.rag_engine
+    policy = await _resolve_runtime_privacy_policy(
+        db,
+        route_key=data.route_key,
+        tender_id=data.tender_id,
+    )
 
     rag_query = RAGQuery(
         text=data.requirement,
@@ -247,10 +360,28 @@ async def compliance_check(
         section_content=data.section_content,
         filters=data.filters,
         temperature=0.1,  # Low temperature for factual analysis
-        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
+        anonymizer_enabled_override=policy.anonymizer_enabled,
+        route_key=policy.route_key,
+        tender_id=policy.tender_id,
+        external_target_url=policy.target_base_url,
+        external_target_model=policy.target_model,
+        external_target_provider=policy.target_provider,
+        external_target_id=policy.target_id,
+        external_target_timeout_ms=policy.target_timeout_ms,
     )
 
     result = await engine.query(rag_query)
+    await _audit_rag_result(
+        db=db,
+        action="rag_compliance_check",
+        current_user=current_user,
+        rag_query=rag_query,
+        policy=policy,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
+        payload={"mode": QueryMode.COMPLIANCE.value, "policy": policy.as_dict()},
+    )
+    await db.commit()
 
     # Try to parse JSON from LLM response
     import json
@@ -274,6 +405,7 @@ async def compliance_check(
 async def analyze_requirements(
     data: AnalyzeRequirementsRequest,
     request: Request,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -282,16 +414,39 @@ async def analyze_requirements(
     Returns a structured list of requirements with categories and priorities.
     """
     engine = request.app.state.rag_engine
+    policy = await _resolve_runtime_privacy_policy(
+        db,
+        route_key=data.route_key,
+        tender_id=data.tender_id,
+    )
 
     rag_query = RAGQuery(
         text="Extract requirements from the tender document",
         mode=QueryMode.ANALYZE_REQS,
         document_text=data.document_text,
         temperature=0.1,
-        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
+        anonymizer_enabled_override=policy.anonymizer_enabled,
+        route_key=policy.route_key,
+        tender_id=policy.tender_id,
+        external_target_url=policy.target_base_url,
+        external_target_model=policy.target_model,
+        external_target_provider=policy.target_provider,
+        external_target_id=policy.target_id,
+        external_target_timeout_ms=policy.target_timeout_ms,
     )
 
     result = await engine.query(rag_query)
+    await _audit_rag_result(
+        db=db,
+        action="rag_analyze_requirements",
+        current_user=current_user,
+        rag_query=rag_query,
+        policy=policy,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
+        payload={"mode": QueryMode.ANALYZE_REQS.value, "policy": policy.as_dict()},
+    )
+    await db.commit()
 
     # Try to parse JSON array from LLM response
     import json

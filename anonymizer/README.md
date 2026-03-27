@@ -1,10 +1,11 @@
 # tw-anonymizer
 
-Privacy gateway per TenderWriter. In V2 copre tre aree:
+Privacy gateway per TenderWriter. In V3a copre quattro aree:
 
 - anonimizza testo o chunk prima dell'invio a LLM esterne
 - supporta strategy `redaction` e `faking`
 - espone endpoint admin protetti per config, stats e deanonymize
+- supporta policy privacy differenziate lato backend e audit trail strutturato
 - mantiene il relay HTTP legacy con protezione SSRF
 
 ## Endpoint
@@ -87,11 +88,14 @@ Se `strategy` vale `faking`, l'output contiene valori sintetici coerenti invece 
 - Usare Redis DB separato da Celery. Nel compose di progetto: `redis://redis:6379/1`.
 - Il backend V1 applica timeout stretto e circuit breaker leggero verso `tw-anonymizer`.
 - Il backend V2 inoltra `X-Anonymizer-Admin-Token` verso gli endpoint protetti del servizio.
+- Il backend V3a risolve policy effettive per `route_key` e `tender_id`, con override per target gateway.
+- Il backend V3a persiste audit trail di routing/privacy e di azioni admin sensibili.
 - Se `ANONYMIZER_ENABLED=true` e l'anonymizer non risponde, il backend devia su LLM interna.
 - Se non esiste `EXTERNAL_LLM_URL`, il backend resta su route interna e non prova ad anonimizzare.
 
 ## Limiti residui
 
-- `query_stream()` nel backend non usa ancora il ciclo anonymize/deanonymize; il flusso viene forzato su route interna.
+- `query_stream()` nel backend usa buffering completo prima della deanonymize quando passa da route esterna anonimizzata.
 - Il deanonymize è pensato per uso server-side/admin/debug, non per il flusso utente standard.
 - La strategy `faking` e utile per test e admin governance, ma richiede ancora benchmark qualitativo dedicato prima di essere considerata definitiva.
+- Policy avanzate, benchmark qualitativo e dashboard restano ancora incompleti rispetto alla V3 piena.

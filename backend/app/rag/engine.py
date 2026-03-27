@@ -66,6 +66,13 @@ class RAGQuery:
     temperature: float = 0.3
     stream: bool = False
     anonymizer_enabled_override: bool | None = None
+    route_key: str = "tender"
+    tender_id: int | None = None
+    external_target_url: str | None = None
+    external_target_model: str | None = None
+    external_target_provider: str | None = None
+    external_target_id: int | None = None
+    external_target_timeout_ms: int | None = None
 
 
 @dataclass
@@ -101,7 +108,7 @@ class HybridRAGEngine:
         self.fusion: RankFusion | None = None
         self.reranker: Reranker | None = None
         self.generator: Generator | None = None
-        self._external_generator: Generator | None = None
+        self._external_generators: dict[tuple[str, str, int], Generator] = {}
         self._anonymizer_failure_count = 0
         self._anonymizer_circuit_open_until = 0.0
         self._anonymizer_fallback_events = 0
@@ -278,41 +285,25 @@ class HybridRAGEngine:
             )
 
         template, variables = self._resolve_template(rag_query, context)
-        generator = self.generator
-        llm_route = LLMRoute.INTERNAL
-        anonymized = False
-        deanonymize_session_id: str | None = None
-        anonymizer_enabled = (
-            rag_query.anonymizer_enabled_override
-            if rag_query.anonymizer_enabled_override is not None
-            else settings.anonymizer_enabled
-        )
-
-        if anonymizer_enabled and self._has_external_llm():
-            try:
-                variables, deanonymize_session_id = await self._anonymize_prompt_variables(
-                    variables
-                )
-                generator = self._get_external_generator()
-                llm_route = LLMRoute.EXTERNAL_ANONYMIZED
-                anonymized = True
-            except AnonymizerUnavailableError as exc:
-                logger.warning(
-                    "Anonymizer unavailable, falling back to internal LLM",
-                    fallback_event=True,
-                    anonymizer_used=False,
-                    session_token=self._mask_session_token(deanonymize_session_id),
-                    error=str(exc),
-                )
-                self._anonymizer_fallback_events += 1
-                llm_route = LLMRoute.INTERNAL_FALLBACK
+        (
+            generator,
+            variables,
+            llm_route,
+            anonymized,
+            deanonymize_session_id,
+            anonymizer_enabled,
+        ) = await self._prepare_generation_route(rag_query, variables)
         logger.info(
             "RAG route selected",
             mode=rag_query.mode.value,
+            route_key=rag_query.route_key,
+            tender_id=rag_query.tender_id,
             anonymizer_enabled=anonymizer_enabled,
             anonymizer_used=anonymized,
             llm_route=llm_route.value,
             session_token=self._mask_session_token(deanonymize_session_id),
+            target_id=rag_query.external_target_id,
+            target_provider=rag_query.external_target_provider,
         )
 
         # ─── Step 5: Generate response ───
@@ -368,11 +359,15 @@ class HybridRAGEngine:
         logger.info(
             "RAG query completed",
             mode=rag_query.mode.value,
+            route_key=rag_query.route_key,
+            tender_id=rag_query.tender_id,
             anonymizer_used=anonymized,
             llm_route=llm_route.value,
             session_token=self._mask_session_token(deanonymize_session_id),
             source_count=len(sources),
             answer_len=len(generation_result.text),
+            target_id=rag_query.external_target_id,
+            target_provider=rag_query.external_target_provider,
         )
         return RAGResponse(
             answer=generation_result.text,
@@ -389,20 +384,6 @@ class HybridRAGEngine:
 
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
-        anonymizer_enabled = (
-            rag_query.anonymizer_enabled_override
-            if rag_query.anonymizer_enabled_override is not None
-            else settings.anonymizer_enabled
-        )
-        if anonymizer_enabled and self._has_external_llm():
-            logger.info(
-                "RAG stream forced to internal route",
-                reason="v1_streaming_not_supported",
-                anonymizer_enabled=anonymizer_enabled,
-                anonymizer_used=False,
-                llm_route=LLMRoute.INTERNAL.value,
-            )
-
         # Run retrieval pipeline (same as query, but stream the generation)
         # For brevity, we reuse the query method's retrieval logic
         rag_query_copy = RAGQuery(
@@ -411,22 +392,55 @@ class HybridRAGEngine:
             filters=rag_query.filters,
             top_k=rag_query.top_k,
             anonymizer_enabled_override=rag_query.anonymizer_enabled_override,
+            route_key=rag_query.route_key,
+            tender_id=rag_query.tender_id,
         )
         search_result = await self.query(rag_query_copy)
         context = "\n\n---\n\n".join(s["text"] for s in search_result.sources)
 
         # Determine template and variables
         template, variables = self._resolve_template(rag_query, context)
+        (
+            generator,
+            stream_variables,
+            llm_route,
+            anonymized,
+            deanonymize_session_id,
+            _anonymizer_enabled,
+        ) = await self._prepare_generation_route(rag_query, variables)
 
-        # Stream generation
-        async for token in self.generator.generate_stream(
+        if llm_route == LLMRoute.EXTERNAL_ANONYMIZED and deanonymize_session_id:
+            logger.info(
+                "RAG stream buffered for deanonymization",
+                route_key=rag_query.route_key,
+                tender_id=rag_query.tender_id,
+                llm_route=llm_route.value,
+                target_id=rag_query.external_target_id,
+                target_provider=rag_query.external_target_provider,
+                session_token=self._mask_session_token(deanonymize_session_id),
+            )
+            buffered_tokens: list[str] = []
+            async for token in generator.generate_stream(
+                template=template,
+                variables=stream_variables,
+                temperature=rag_query.temperature,
+            ):
+                buffered_tokens.append(token)
+            restored = await self._deanonymize_text("".join(buffered_tokens), deanonymize_session_id)
+            if restored:
+                yield restored
+            return
+
+        async for token in generator.generate_stream(
             template=template,
-            variables=variables,
+            variables=stream_variables,
             temperature=rag_query.temperature,
         ):
             yield token
 
-    def _has_external_llm(self) -> bool:
+    def _has_external_llm(self, rag_query: RAGQuery | None = None) -> bool:
+        if rag_query and rag_query.external_target_url:
+            return True
         return bool(settings.external_llm_url.strip())
 
     def _mask_session_token(self, session_id: str | None) -> str | None:
@@ -485,14 +499,72 @@ class HybridRAGEngine:
             return {}
         return {"x-anonymizer-admin-token": settings.anonymizer_admin_token}
 
-    def _get_external_generator(self) -> Generator:
-        if self._external_generator is None:
-            self._external_generator = Generator(
-                base_url=settings.external_llm_url,
-                model=settings.external_llm_model or settings.llama_model,
-                timeout=settings.llama_timeout,
+    def _get_external_generator(self, rag_query: RAGQuery) -> Generator:
+        base_url = (rag_query.external_target_url or settings.external_llm_url).strip()
+        model = rag_query.external_target_model or settings.external_llm_model or settings.llama_model
+        timeout = (
+            rag_query.external_target_timeout_ms / 1000
+            if rag_query.external_target_timeout_ms
+            else settings.llama_timeout
+        )
+        cache_key = (base_url, model, int(timeout))
+        generator = self._external_generators.get(cache_key)
+        if generator is None:
+            generator = Generator(
+                base_url=base_url,
+                model=model,
+                timeout=int(timeout),
             )
-        return self._external_generator
+            self._external_generators[cache_key] = generator
+        return generator
+
+    async def _prepare_generation_route(
+        self,
+        rag_query: RAGQuery,
+        variables: dict[str, Any],
+    ) -> tuple[Generator, dict[str, Any], LLMRoute, bool, str | None, bool]:
+        generator = self.generator
+        llm_route = LLMRoute.INTERNAL
+        anonymized = False
+        deanonymize_session_id: str | None = None
+        anonymizer_enabled = (
+            rag_query.anonymizer_enabled_override
+            if rag_query.anonymizer_enabled_override is not None
+            else settings.anonymizer_enabled
+        )
+
+        if anonymizer_enabled and self._has_external_llm(rag_query):
+            try:
+                anonymized_variables, deanonymize_session_id = await self._anonymize_prompt_variables(
+                    variables
+                )
+                generator = self._get_external_generator(rag_query)
+                variables = anonymized_variables
+                llm_route = LLMRoute.EXTERNAL_ANONYMIZED
+                anonymized = True
+            except AnonymizerUnavailableError as exc:
+                logger.warning(
+                    "Anonymizer unavailable, falling back to internal LLM",
+                    route_key=rag_query.route_key,
+                    tender_id=rag_query.tender_id,
+                    fallback_event=True,
+                    anonymizer_used=False,
+                    session_token=self._mask_session_token(deanonymize_session_id),
+                    target_id=rag_query.external_target_id,
+                    target_provider=rag_query.external_target_provider,
+                    error=str(exc),
+                )
+                self._anonymizer_fallback_events += 1
+                llm_route = LLMRoute.INTERNAL_FALLBACK
+
+        return (
+            generator,
+            variables,
+            llm_route,
+            anonymized,
+            deanonymize_session_id,
+            anonymizer_enabled,
+        )
 
     async def _anonymize_prompt_variables(
         self,

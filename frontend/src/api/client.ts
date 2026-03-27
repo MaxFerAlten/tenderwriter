@@ -558,6 +558,51 @@ export interface AnonymizerStatsData {
     last_error_reason?: string | null;
 }
 
+export interface AnonymizerPolicyRuleData {
+    mode?: 'internal_only' | 'external_anonymized';
+    anonymizer_enabled?: boolean;
+}
+
+export interface AnonymizerPolicyData {
+    default: AnonymizerPolicyRuleData;
+    routes: Record<string, AnonymizerPolicyRuleData>;
+    tenders: Record<string, AnonymizerPolicyRuleData>;
+}
+
+export interface EffectiveAnonymizerPolicyData {
+    route_key: string;
+    tender_id?: number | null;
+    mode: 'internal_only' | 'external_anonymized';
+    anonymizer_enabled: boolean;
+    target_id?: number | null;
+    target_kind?: string | null;
+    target_provider?: string | null;
+    target_base_url?: string | null;
+    target_model?: string | null;
+    target_timeout_ms?: number | null;
+    target_use_anonymizer?: boolean | null;
+    sources: string[];
+}
+
+export interface AnonymizerAuditEntryData {
+    id: number;
+    action: string;
+    user_email: string;
+    user_role: string;
+    tender_id?: number | null;
+    route_key?: string | null;
+    llm_route?: string | null;
+    anonymized?: boolean | null;
+    target_id?: number | null;
+    target_provider?: string | null;
+    target_base_url?: string | null;
+    session_token?: string | null;
+    success: boolean;
+    error_message?: string | null;
+    payload_json?: Record<string, unknown> | null;
+    created_at: string;
+}
+
 export interface AnonymizerChunkResult {
     text: string;
     anonymized_text: string;
@@ -656,6 +701,29 @@ export const anonymizerApi = {
     updateConfig: (data: Partial<AnonymizerConfigData>) =>
         request<AnonymizerConfigData>('/anonymizer/config', { method: 'POST', body: data }),
     getStats: () => request<AnonymizerStatsData>('/anonymizer/stats'),
+    getPolicy: () => request<AnonymizerPolicyData>('/anonymizer/policy'),
+    updatePolicy: (data: AnonymizerPolicyData) =>
+        request<AnonymizerPolicyData>('/anonymizer/policy', { method: 'PUT', body: data }),
+    getEffectivePolicy: (params?: { route_key?: string; tender_id?: number }) => {
+        const query = params
+            ? '?' + new URLSearchParams(
+                Object.entries(params)
+                    .filter(([, value]) => value !== undefined && value !== null)
+                    .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+            ).toString()
+            : '';
+        return request<EffectiveAnonymizerPolicyData>(`/anonymizer/policy/effective${query}`);
+    },
+    getAudit: (params?: { limit?: number }) => {
+        const query = params
+            ? '?' + new URLSearchParams(
+                Object.entries(params)
+                    .filter(([, value]) => value !== undefined && value !== null)
+                    .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+            ).toString()
+            : '';
+        return request<AnonymizerAuditEntryData[]>(`/anonymizer/audit${query}`);
+    },
     test: (data: { text: string; session_id?: string; config?: Partial<AnonymizerConfigData> }) =>
         request<AnonymizerTestResult>('/anonymizer/test', { method: 'POST', body: data }),
     deanonymize: (data: { text: string; session_id: string }) =>
@@ -1613,4 +1681,3 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
-

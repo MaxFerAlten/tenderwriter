@@ -5,9 +5,15 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import UserResponse, get_current_user
 from app.config import settings
+from app.db.database import get_db
+from app.models import AnonymizerAuditLog, AppSettings
+from app.privacy_audit import persist_privacy_audit
+from app.privacy_policy import load_privacy_policy_document, resolve_effective_privacy_policy
 
 router = APIRouter()
 
@@ -37,6 +43,38 @@ class AnonymizerTestPayload(BaseModel):
 class AnonymizerDeanonymizePayload(BaseModel):
     text: str
     session_id: str
+
+
+class PolicyRulePayload(BaseModel):
+    mode: str | None = Field(default=None, pattern="^(internal_only|external_anonymized)$")
+    anonymizer_enabled: bool | None = None
+
+
+class AnonymizerPolicyPayload(BaseModel):
+    default: PolicyRulePayload = Field(default_factory=PolicyRulePayload)
+    routes: dict[str, PolicyRulePayload] = Field(default_factory=dict)
+    tenders: dict[str, PolicyRulePayload] = Field(default_factory=dict)
+
+
+class AnonymizerAuditEntry(BaseModel):
+    id: int
+    action: str
+    user_email: str
+    user_role: str
+    tender_id: int | None = None
+    route_key: str | None = None
+    llm_route: str | None = None
+    anonymized: bool | None = None
+    target_id: int | None = None
+    target_provider: str | None = None
+    target_base_url: str | None = None
+    session_token: str | None = None
+    success: bool
+    error_message: str | None = None
+    payload_json: dict[str, Any] | None = None
+    created_at: Any
+
+    model_config = {"from_attributes": True}
 
 
 async def _proxy_anonymizer(
@@ -93,14 +131,23 @@ async def get_anonymizer_config(
 @router.post("/config")
 async def update_anonymizer_config(
     payload: AnonymizerConfigPayload,
+    db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    return await _proxy_anonymizer(
+    result = await _proxy_anonymizer(
         "POST",
         "/v1/config",
         payload.model_dump(exclude_none=True),
     )
+    await persist_privacy_audit(
+        db=db,
+        action="anonymizer_config_update",
+        current_user=current_user,
+        payload=payload.model_dump(exclude_none=True),
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/stats")
@@ -119,24 +166,110 @@ async def get_anonymizer_stats(
 @router.post("/test")
 async def test_anonymizer(
     payload: AnonymizerTestPayload,
+    db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    return await _proxy_anonymizer(
+    result = await _proxy_anonymizer(
         "POST",
         "/v1/anonymize",
         payload.model_dump(exclude_none=True),
     )
+    await persist_privacy_audit(
+        db=db,
+        action="anonymizer_test",
+        current_user=current_user,
+        session_id=result.get("session_id") if isinstance(result, dict) else None,
+        payload={"text_len": len(payload.text), "config": payload.config or {}},
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/deanonymize")
 async def deanonymize_anonymizer_text(
     payload: AnonymizerDeanonymizePayload,
+    db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    return await _proxy_anonymizer(
+    result = await _proxy_anonymizer(
         "POST",
         "/v1/deanonymize",
         payload.model_dump(exclude_none=True),
     )
+    await persist_privacy_audit(
+        db=db,
+        action="anonymizer_deanonymize",
+        current_user=current_user,
+        session_id=payload.session_id,
+        payload={"mapping_size": result.get("mapping_size")},
+    )
+    await db.commit()
+    return result
+
+
+@router.get("/policy")
+async def get_anonymizer_policy(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    return await load_privacy_policy_document(db)
+
+
+@router.put("/policy")
+async def update_anonymizer_policy(
+    payload: AnonymizerPolicyPayload,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if not row:
+        row = AppSettings(data={})
+        db.add(row)
+
+    current_data = dict(row.data) if isinstance(row.data, dict) else {}
+    current_data["anonymizer_policy"] = payload.model_dump(exclude_none=True)
+    row.data = current_data
+    await db.flush()
+    await persist_privacy_audit(
+        db=db,
+        action="anonymizer_policy_update",
+        current_user=current_user,
+        payload=current_data["anonymizer_policy"],
+    )
+    await db.commit()
+    return current_data["anonymizer_policy"]
+
+
+@router.get("/policy/effective")
+async def get_effective_anonymizer_policy(
+    route_key: str = "tender",
+    tender_id: int | None = None,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    policy = await resolve_effective_privacy_policy(
+        db,
+        route_key=route_key,
+        tender_id=tender_id,
+    )
+    return policy.as_dict()
+
+
+@router.get("/audit", response_model=list[AnonymizerAuditEntry])
+async def list_anonymizer_audit(
+    limit: int = 50,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    stmt = select(AnonymizerAuditLog).order_by(AnonymizerAuditLog.created_at.desc()).limit(
+        max(1, min(limit, 200))
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

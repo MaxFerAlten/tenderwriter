@@ -468,6 +468,32 @@ class AIGatewayTarget(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+
+class AnonymizerAuditLog(Base):
+    __tablename__ = "anonymizer_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_email = Column(String(255), nullable=False, default="")
+    user_role = Column(String(50), nullable=False, default="")
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
+    route_key = Column(String(50), nullable=True, index=True)
+    llm_route = Column(String(50), nullable=True, index=True)
+    anonymized = Column(Boolean, nullable=True)
+    target_id = Column(Integer, ForeignKey("ai_gateway_targets.id", ondelete="SET NULL"), nullable=True, index=True)
+    target_provider = Column(String(50), nullable=True)
+    target_base_url = Column(String(500), nullable=True)
+    session_token = Column(String(64), nullable=True)
+    success = Column(Boolean, default=True, nullable=False, index=True)
+    error_message = Column(Text, nullable=True)
+    payload_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    tender = relationship("Tender", foreign_keys=[tender_id])
+    target = relationship("AIGatewayTarget", foreign_keys=[target_id])
+
 from app.models.operational_observability import (
     AttendanceRecord,
     AttendanceStatus,
@@ -486,5 +512,4 @@ from app.models.operational_observability import (
 )
 from app.models.llm_settings import LLMSettings
 from app.models.app_settings import AppSettings
-
 

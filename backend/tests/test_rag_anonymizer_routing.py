@@ -69,6 +69,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine.generator = Mock(name="internal_generator")
         return engine
 
+    async def _collect_stream(self, iterator) -> str:
+        chunks: list[str] = []
+        async for item in iterator:
+            chunks.append(item)
+        return "".join(chunks)
+
     async def test_external_route_uses_anonymized_prompt_and_deanonymized_answer(self) -> None:
         engine = self._build_engine()
         external_generator = Mock(name="external_generator")
@@ -157,6 +163,75 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.llm_route, LLMRoute.INTERNAL)
         self.assertFalse(result.anonymized)
         engine._anonymize_prompt_variables.assert_not_awaited()
+
+    async def test_external_target_override_uses_dynamic_generator_configuration(self) -> None:
+        engine = self._build_engine()
+        engine._anonymize_prompt_variables = AsyncMock(
+            return_value=({"context": "[PERSONA_1]", "query": "Chi e [PERSONA_1]?"}, "session-9")
+        )
+        engine._deanonymize_text = AsyncMock(return_value="Mario Rossi")
+        engine._generate = AsyncMock(
+            return_value=GenerationResult(
+                text="[PERSONA_1]",
+                model="dynamic-external",
+                template_used="general_qa",
+            )
+        )
+
+        with patch("app.rag.engine.settings.anonymizer_enabled", True):
+            result = await engine.query(
+                RAGQuery(
+                    text="Chi e Mario Rossi?",
+                    mode=QueryMode.QA,
+                    external_target_url="https://gateway.example.com/v1",
+                    external_target_model="gpt-tender",
+                    external_target_provider="openai",
+                    external_target_timeout_ms=9000,
+                    external_target_id=11,
+                )
+            )
+
+        self.assertEqual(result.llm_route, LLMRoute.EXTERNAL_ANONYMIZED)
+        generator_used = engine._generate.await_args.kwargs["generator"]
+        self.assertEqual(generator_used.base_url, "https://gateway.example.com/v1")
+        self.assertEqual(generator_used.model, "gpt-tender")
+
+    async def test_query_stream_buffers_external_route_then_deanonymizes(self) -> None:
+        engine = self._build_engine()
+        engine._anonymize_prompt_variables = AsyncMock(
+            return_value=(
+                {"context": "[PERSONA_1] guida il progetto.", "query": "Chi e [PERSONA_1]?"},
+                "session-stream",
+            )
+        )
+        engine._deanonymize_text = AsyncMock(return_value="Mario Rossi guida il progetto.")
+
+        external_generator = Mock()
+
+        async def fake_generate_stream(**_kwargs):
+            for token in ("[PERSONA_1]", " guida", " il progetto."):
+                yield token
+
+        external_generator.generate_stream = fake_generate_stream
+        engine._get_external_generator = Mock(return_value=external_generator)
+
+        with patch("app.rag.engine.settings.anonymizer_enabled", True):
+            output = await self._collect_stream(
+                engine.query_stream(
+                    RAGQuery(
+                        text="Chi e Mario Rossi?",
+                        mode=QueryMode.QA,
+                        external_target_url="https://gateway.example.com/v1",
+                        external_target_model="gpt-tender",
+                    )
+                )
+            )
+
+        self.assertEqual(output, "Mario Rossi guida il progetto.")
+        engine._deanonymize_text.assert_awaited_once_with(
+            "[PERSONA_1] guida il progetto.",
+            "session-stream",
+        )
 
     async def test_anonymizer_circuit_open_short_circuits_requests(self) -> None:
         engine = self._build_engine()
