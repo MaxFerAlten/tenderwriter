@@ -26,6 +26,10 @@ import {
     type SystemCapabilitiesData,
     type AnonymizerConfigData,
     type AnonymizerStatsData,
+    type AnonymizerPolicyData,
+    type AnonymizerPolicyRuleData,
+    type EffectiveAnonymizerPolicyData,
+    type AnonymizerAuditEntryData,
     type AnonymizerTestResult,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -56,6 +60,14 @@ const DEFAULT_ANONYMIZER_CONFIG: AnonymizerConfigData = {
     mask_cig: false,
 };
 
+const DEFAULT_ANONYMIZER_POLICY: AnonymizerPolicyData = {
+    default: {},
+    routes: {},
+    tenders: {},
+};
+
+const ROUTE_POLICY_OPTIONS = ['tender', 'opencode'] as const;
+
 const Settings: FC = () => {
     const { user } = useAuth();
     const [health, setHealth] = useState<RAGHealth | null>(null);
@@ -79,6 +91,9 @@ const Settings: FC = () => {
     const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
     const [anonymizerConfig, setAnonymizerConfig] = useState<AnonymizerConfigData>(DEFAULT_ANONYMIZER_CONFIG);
     const [anonymizerStats, setAnonymizerStats] = useState<AnonymizerStatsData | null>(null);
+    const [anonymizerPolicy, setAnonymizerPolicy] = useState<AnonymizerPolicyData>(DEFAULT_ANONYMIZER_POLICY);
+    const [anonymizerEffectivePolicy, setAnonymizerEffectivePolicy] = useState<EffectiveAnonymizerPolicyData | null>(null);
+    const [anonymizerAuditEntries, setAnonymizerAuditEntries] = useState<AnonymizerAuditEntryData[]>([]);
     const [anonymizerLoading, setAnonymizerLoading] = useState(false);
     const [anonymizerError, setAnonymizerError] = useState<string | null>(null);
     const [anonymizerTesting, setAnonymizerTesting] = useState(false);
@@ -87,6 +102,9 @@ const Settings: FC = () => {
     );
     const [anonymizerTestResult, setAnonymizerTestResult] = useState<AnonymizerTestResult | null>(null);
     const [anonymizerTestError, setAnonymizerTestError] = useState<string | null>(null);
+    const [policyPreviewRouteKey, setPolicyPreviewRouteKey] = useState<'tender' | 'opencode'>('tender');
+    const [policyPreviewTenderId, setPolicyPreviewTenderId] = useState<number | ''>('');
+    const [policyDraftTenderId, setPolicyDraftTenderId] = useState<number | ''>('');
 
     // ── Global save state ──
     const [isSaving, setIsSaving] = useState(false);
@@ -167,9 +185,11 @@ const Settings: FC = () => {
         try {
             setAnonymizerLoading(true);
             setAnonymizerError(null);
-            const [config, stats] = await Promise.all([
+            const [config, stats, policy, audit] = await Promise.all([
                 anonymizerApi.getConfig(),
                 anonymizerApi.getStats(),
+                anonymizerApi.getPolicy(),
+                anonymizerApi.getAudit({ limit: 8 }),
             ]);
             setAnonymizerConfig({
                 entities: config.entities?.length ? config.entities : DEFAULT_ANONYMIZER_CONFIG.entities,
@@ -179,10 +199,31 @@ const Settings: FC = () => {
                 mask_cig: config.mask_cig ?? DEFAULT_ANONYMIZER_CONFIG.mask_cig,
             });
             setAnonymizerStats(stats);
+            setAnonymizerPolicy({
+                default: policy.default || {},
+                routes: policy.routes || {},
+                tenders: policy.tenders || {},
+            });
+            setAnonymizerAuditEntries(audit);
         } catch (err) {
             setAnonymizerError(err instanceof Error ? err.message : 'Impossibile caricare il modulo anonymizer.');
         } finally {
             setAnonymizerLoading(false);
+        }
+    };
+
+    const loadEffectiveAnonymizerPolicy = async () => {
+        if (user?.role !== 'admin') {
+            return;
+        }
+        try {
+            const effective = await anonymizerApi.getEffectivePolicy({
+                route_key: policyPreviewRouteKey,
+                tender_id: policyPreviewTenderId === '' ? undefined : Number(policyPreviewTenderId),
+            });
+            setAnonymizerEffectivePolicy(effective);
+        } catch (err) {
+            setAnonymizerError(err instanceof Error ? err.message : 'Impossibile calcolare la policy effettiva.');
         }
     };
 
@@ -224,9 +265,17 @@ const Settings: FC = () => {
             loadGatewayTargets();
             loadSystemCapabilities();
             loadAnonymizerPanel();
+            loadEffectiveAnonymizerPolicy();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.role]);
+
+    useEffect(() => {
+        if (user?.role === 'admin') {
+            loadEffectiveAnonymizerPolicy();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [policyPreviewRouteKey, policyPreviewTenderId, user?.role]);
 
     // ── Gateway local-only operations ──
 
@@ -271,6 +320,81 @@ const Settings: FC = () => {
                 entities: alreadyEnabled
                     ? prev.entities.filter((item) => item !== entity)
                     : [...prev.entities, entity],
+            };
+        });
+    };
+
+    const updatePolicyRule = (
+        scope: 'default' | 'routes' | 'tenders',
+        key: string | null,
+        field: 'mode' | 'anonymizer_enabled',
+        value: string
+    ) => {
+        setAnonymizerPolicy((prev) => {
+            const next: AnonymizerPolicyData = {
+                default: { ...prev.default },
+                routes: { ...prev.routes },
+                tenders: { ...prev.tenders },
+            };
+            const rule: AnonymizerPolicyRuleData =
+                scope === 'default'
+                    ? { ...next.default }
+                    : scope === 'routes'
+                        ? { ...(next.routes[key || ''] || {}) }
+                        : { ...(next.tenders[key || ''] || {}) };
+
+            if (field === 'mode') {
+                if (!value) {
+                    delete rule.mode;
+                } else {
+                    rule.mode = value as AnonymizerPolicyRuleData['mode'];
+                }
+            } else if (value === 'inherit') {
+                delete rule.anonymizer_enabled;
+            } else {
+                rule.anonymizer_enabled = value === 'enabled';
+            }
+
+            if (scope === 'default') {
+                next.default = rule;
+            } else if (scope === 'routes' && key) {
+                next.routes[key] = rule;
+            } else if (scope === 'tenders' && key) {
+                if (Object.keys(rule).length === 0) {
+                    delete next.tenders[key];
+                } else {
+                    next.tenders[key] = rule;
+                }
+            }
+
+            return next;
+        });
+    };
+
+    const addTenderPolicyOverride = () => {
+        const tenderId = Number(policyDraftTenderId);
+        if (!Number.isFinite(tenderId) || tenderId <= 0) {
+            setAnonymizerError('Tender ID non valido per la policy override.');
+            return;
+        }
+        setAnonymizerError(null);
+        setAnonymizerPolicy((prev) => ({
+            ...prev,
+            tenders: {
+                ...prev.tenders,
+                [String(tenderId)]: prev.tenders[String(tenderId)] || {},
+            },
+        }));
+        setPolicyDraftTenderId('');
+    };
+
+    const removeTenderPolicyOverride = (tenderKey: string) => {
+        setAnonymizerPolicy((prev) => {
+            const nextTenders = { ...prev.tenders };
+            delete nextTenders[tenderKey];
+            return {
+                ...prev,
+                tenders: nextTenders,
             };
         });
     };
@@ -337,6 +461,12 @@ const Settings: FC = () => {
                 await anonymizerApi.updateConfig(anonymizerConfig);
             } catch (err) {
                 errors.push(err instanceof Error ? err.message : 'Errore salvataggio configurazione anonymizer');
+            }
+
+            try {
+                await anonymizerApi.updatePolicy(anonymizerPolicy);
+            } catch (err) {
+                errors.push(err instanceof Error ? err.message : 'Errore salvataggio policy anonymizer');
             }
         }
 
@@ -423,6 +553,11 @@ const Settings: FC = () => {
 
             try {
                 await loadAnonymizerPanel();
+            } catch {
+                // ignore refresh error
+            }
+            try {
+                await loadEffectiveAnonymizerPolicy();
             } catch {
                 // ignore refresh error
             }
@@ -875,6 +1010,223 @@ const Settings: FC = () => {
                                             </div>
                                         </div>
                                     )}
+                                </div>
+
+                                <div style={{ display: 'grid', gap: '1rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                    <div>
+                                        <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Policy Privacy V3</h4>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                            Definisci la regola di default, gli override per route e gli override mirati per tender.
+                                        </p>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gap: '0.75rem' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.75rem', alignItems: 'center' }}>
+                                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Default globale</div>
+                                            <select
+                                                className="form-select"
+                                                value={anonymizerPolicy.default.mode || ''}
+                                                onChange={(e) => updatePolicyRule('default', null, 'mode', e.target.value)}
+                                            >
+                                                <option value="">Inherit</option>
+                                                <option value="internal_only">internal_only</option>
+                                                <option value="external_anonymized">external_anonymized</option>
+                                            </select>
+                                            <select
+                                                className="form-select"
+                                                value={
+                                                    anonymizerPolicy.default.anonymizer_enabled === undefined
+                                                        ? 'inherit'
+                                                        : anonymizerPolicy.default.anonymizer_enabled
+                                                            ? 'enabled'
+                                                            : 'disabled'
+                                                }
+                                                onChange={(e) => updatePolicyRule('default', null, 'anonymizer_enabled', e.target.value)}
+                                            >
+                                                <option value="inherit">inherit</option>
+                                                <option value="enabled">enabled</option>
+                                                <option value="disabled">disabled</option>
+                                            </select>
+                                        </div>
+
+                                        {ROUTE_POLICY_OPTIONS.map((routeKey) => (
+                                            <div key={routeKey} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.75rem', alignItems: 'center' }}>
+                                                <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>{`Route ${routeKey}`}</div>
+                                                <select
+                                                    className="form-select"
+                                                    value={anonymizerPolicy.routes[routeKey]?.mode || ''}
+                                                    onChange={(e) => updatePolicyRule('routes', routeKey, 'mode', e.target.value)}
+                                                >
+                                                    <option value="">Inherit</option>
+                                                    <option value="internal_only">internal_only</option>
+                                                    <option value="external_anonymized">external_anonymized</option>
+                                                </select>
+                                                <select
+                                                    className="form-select"
+                                                    value={
+                                                        anonymizerPolicy.routes[routeKey]?.anonymizer_enabled === undefined
+                                                            ? 'inherit'
+                                                            : anonymizerPolicy.routes[routeKey]?.anonymizer_enabled
+                                                                ? 'enabled'
+                                                                : 'disabled'
+                                                    }
+                                                    onChange={(e) => updatePolicyRule('routes', routeKey, 'anonymizer_enabled', e.target.value)}
+                                                >
+                                                    <option value="inherit">inherit</option>
+                                                    <option value="enabled">enabled</option>
+                                                    <option value="disabled">disabled</option>
+                                                </select>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div style={{ display: 'grid', gap: '0.75rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Override per Tender</div>
+                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                <input
+                                                    type="number"
+                                                    className="form-input"
+                                                    placeholder="Tender ID"
+                                                    value={policyDraftTenderId}
+                                                    onChange={(e) => setPolicyDraftTenderId(e.target.value === '' ? '' : Number(e.target.value))}
+                                                    style={{ width: '140px' }}
+                                                />
+                                                <button className="btn btn-primary btn-sm" onClick={addTenderPolicyOverride}>
+                                                    <Plus size={14} /> Aggiungi
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {Object.keys(anonymizerPolicy.tenders).length === 0 && (
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Nessun override tender configurato.</div>
+                                        )}
+
+                                        {Object.entries(anonymizerPolicy.tenders)
+                                            .sort(([left], [right]) => Number(left) - Number(right))
+                                            .map(([tenderKey, rule]) => (
+                                                <div key={tenderKey} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr auto', gap: '0.75rem', alignItems: 'center' }}>
+                                                    <div style={{ fontWeight: 500, fontSize: '0.85rem' }}>Tender #{tenderKey}</div>
+                                                    <select
+                                                        className="form-select"
+                                                        value={rule.mode || ''}
+                                                        onChange={(e) => updatePolicyRule('tenders', tenderKey, 'mode', e.target.value)}
+                                                    >
+                                                        <option value="">Inherit</option>
+                                                        <option value="internal_only">internal_only</option>
+                                                        <option value="external_anonymized">external_anonymized</option>
+                                                    </select>
+                                                    <select
+                                                        className="form-select"
+                                                        value={
+                                                            rule.anonymizer_enabled === undefined
+                                                                ? 'inherit'
+                                                                : rule.anonymizer_enabled
+                                                                    ? 'enabled'
+                                                                    : 'disabled'
+                                                        }
+                                                        onChange={(e) => updatePolicyRule('tenders', tenderKey, 'anonymizer_enabled', e.target.value)}
+                                                    >
+                                                        <option value="inherit">inherit</option>
+                                                        <option value="enabled">enabled</option>
+                                                        <option value="disabled">disabled</option>
+                                                    </select>
+                                                    <button className="btn btn-ghost btn-sm" onClick={() => removeTenderPolicyOverride(tenderKey)} title="Rimuovi override">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gap: '1rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                    <div>
+                                        <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Policy Effettiva</h4>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                            Verifica come il backend risolve davvero il routing privacy per route e tender selezionati.
+                                        </p>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.75rem', alignItems: 'center' }}>
+                                        <select
+                                            className="form-select"
+                                            value={policyPreviewRouteKey}
+                                            onChange={(e) => setPolicyPreviewRouteKey(e.target.value as 'tender' | 'opencode')}
+                                        >
+                                            {ROUTE_POLICY_OPTIONS.map((routeKey) => (
+                                                <option key={routeKey} value={routeKey}>{routeKey}</option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type="number"
+                                            className="form-input"
+                                            placeholder="Tender ID opzionale"
+                                            value={policyPreviewTenderId}
+                                            onChange={(e) => setPolicyPreviewTenderId(e.target.value === '' ? '' : Number(e.target.value))}
+                                        />
+                                        <button className="btn btn-ghost btn-sm" onClick={loadEffectiveAnonymizerPolicy}>
+                                            <RefreshCw size={14} /> Preview
+                                        </button>
+                                    </div>
+
+                                    {anonymizerEffectivePolicy && (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                                            {[
+                                                { label: 'Mode', value: anonymizerEffectivePolicy.mode },
+                                                { label: 'Anonymizer', value: anonymizerEffectivePolicy.anonymizer_enabled ? 'enabled' : 'disabled' },
+                                                { label: 'Provider', value: anonymizerEffectivePolicy.target_provider || 'internal' },
+                                                { label: 'Target ID', value: anonymizerEffectivePolicy.target_id ?? 'n/a' },
+                                                { label: 'Target URL', value: anonymizerEffectivePolicy.target_base_url || 'internal only' },
+                                                { label: 'Timeout', value: anonymizerEffectivePolicy.target_timeout_ms ? `${anonymizerEffectivePolicy.target_timeout_ms} ms` : 'n/a' },
+                                            ].map((item) => (
+                                                <div key={item.label} style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-glass)' }}>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.label}</div>
+                                                    <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginTop: '0.2rem', wordBreak: 'break-word' }}>{String(item.value)}</div>
+                                                </div>
+                                            ))}
+                                            <div style={{ gridColumn: 'span 2', padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-glass)' }}>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sources</div>
+                                                <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', marginTop: '0.2rem' }}>
+                                                    {anonymizerEffectivePolicy.sources.length > 0 ? anonymizerEffectivePolicy.sources.join(' · ') : 'none'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div style={{ display: 'grid', gap: '0.75rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                    <div>
+                                        <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Audit Recente</h4>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                            Ultimi eventi di routing privacy, test e operazioni admin sensibili.
+                                        </p>
+                                    </div>
+
+                                    {anonymizerAuditEntries.length === 0 && (
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Nessun evento audit disponibile.</div>
+                                    )}
+
+                                    {anonymizerAuditEntries.map((entry) => (
+                                        <div key={entry.id} style={{ display: 'grid', gap: '0.25rem', padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-glass)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{entry.action}</div>
+                                                <div style={{ fontSize: '0.78rem', color: entry.success ? '#10b981' : '#ef4444' }}>
+                                                    {entry.success ? 'success' : 'failed'}
+                                                </div>
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                                {entry.created_at ? new Date(entry.created_at).toLocaleString('it-IT') : 'timestamp n/a'}
+                                                {' · '}route {entry.route_key || 'n/a'}
+                                                {' · '}llm {entry.llm_route || 'n/a'}
+                                                {' · '}provider {entry.target_provider || 'n/a'}
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                                utente {entry.user_email || 'system'}
+                                                {entry.session_token ? ` · session ${entry.session_token}` : ''}
+                                                {entry.error_message ? ` · errore ${entry.error_message}` : ''}
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
