@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     llama_temperature: float = 0.3
     llama_stop_tokens: str = "</s>,<|im_end|>,<|endoftext|>"
 
+    # --- Privacy Gateway / External LLM Routing ---
+    anonymizer_enabled: bool = False
+    anonymizer_url: str = "http://tw-anonymizer:8090"
+    anonymizer_timeout: float = 8.0
+    external_llm_url: str = ""
+    external_llm_model: str = ""
+
     # --- Embeddings ---
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_device: str = "cpu"
@@ -162,5 +169,4 @@ class Settings(BaseSettings):
 
 # Singleton settings instance
 settings = Settings()
-
 

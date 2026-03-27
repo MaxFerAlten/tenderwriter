@@ -306,6 +306,11 @@ services:
       OPS_AGENT_BASE_URL: ${OPS_AGENT_BASE_URL:-http://tw-ops-agent:8070}
       OPS_AGENT_TOKEN: ${OPS_AGENT_TOKEN}
       OPS_AGENT_TIMEOUT: ${OPS_AGENT_TIMEOUT:-5}
+      ANONYMIZER_ENABLED: ${ANONYMIZER_ENABLED:-false}
+      ANONYMIZER_URL: ${ANONYMIZER_URL:-http://tw-anonymizer:8090}
+      ANONYMIZER_TIMEOUT: ${ANONYMIZER_TIMEOUT:-8}
+      EXTERNAL_LLM_URL: ${EXTERNAL_LLM_URL:-}
+      EXTERNAL_LLM_MODEL: ${EXTERNAL_LLM_MODEL:-}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
@@ -403,6 +408,14 @@ services:
       dockerfile: Dockerfile
     container_name: tw-anonymizer
     restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      ANONYMIZER_REDIS_URL: ${ANONYMIZER_REDIS_URL:-redis://redis:6379/1}
+      ANONYMIZER_NER_BACKEND: ${ANONYMIZER_NER_BACKEND:-presidio_spacy}
     ports:
       - "8090:8090"
 
@@ -419,7 +432,6 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
-
 
 
 

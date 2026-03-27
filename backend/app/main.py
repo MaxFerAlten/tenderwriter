@@ -112,12 +112,13 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, auth, chat, content_library, gateway_admin, kpi_admin, observability, onlyoffice, proposals, rag, system, tenders
+    from app.api import admin, anonymizer_admin, auth, chat, content_library, gateway_admin, kpi_admin, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(system.router, prefix="/api/system", tags=["System Dashboard"])
     app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    app.include_router(anonymizer_admin.router, prefix="/api/anonymizer", tags=["Anonymizer"])
     app.include_router(kpi_admin.router, prefix="/api/admin/kpi", tags=["Admin KPI"])
     app.include_router(gateway_admin.router, prefix="/api/gateway", tags=["Gateway"])
     app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
@@ -137,5 +138,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
 

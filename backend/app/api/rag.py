@@ -62,6 +62,8 @@ class RAGResponse(BaseModel):
     answer: str
     sources: list[RAGSourceResponse]
     mode: str
+    llm_route: str | None = None
+    anonymized: bool = False
 
 
 # ── Routes ──
@@ -143,6 +145,8 @@ async def rag_query(
             for s in result.sources
         ],
         mode=result.mode.value,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
     )
 
 @router.get("/history")
@@ -203,6 +207,8 @@ async def generate_section(data: GenerateSectionRequest, request: Request):
             for s in result.sources
         ],
         mode=result.mode.value,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
     )
 
 

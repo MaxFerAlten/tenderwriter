@@ -40,6 +40,9 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("/api/proposals/{proposal_id}/draft-ready", paths)
         self.assertIn("/api/proposals/{proposal_id}/submission-status", paths)
         self.assertIn("/api/system/capabilities", paths)
+        self.assertIn("/api/anonymizer/config", paths)
+        self.assertIn("/api/anonymizer/stats", paths)
+        self.assertIn("/api/anonymizer/test", paths)
 
     def test_lifespan_awaits_rag_initialization(self) -> None:
         source = inspect.getsource(lifespan)

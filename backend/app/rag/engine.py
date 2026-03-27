@@ -7,10 +7,11 @@ fuses results, re-ranks them, and generates responses using a local LLM.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
+import httpx
 import structlog
 
 from app.config import settings
@@ -34,6 +35,17 @@ class QueryMode(str, Enum):
     EXEC_SUMMARY = "exec_summary"     # Generate executive summary
     ANALYZE_REQS = "analyze_reqs"     # Analyze tender requirements
     COMPLIANCE = "compliance"          # Check compliance
+
+
+class LLMRoute(str, Enum):
+    """Effective generation route chosen for the query."""
+    INTERNAL = "internal"
+    EXTERNAL_ANONYMIZED = "external_anonymized"
+    INTERNAL_FALLBACK = "internal_fallback"
+
+
+class AnonymizerUnavailableError(RuntimeError):
+    """Raised when the anonymizer cannot be reached or returns an invalid payload."""
 
 
 @dataclass
@@ -61,6 +73,8 @@ class RAGResponse:
     sources: list[dict]
     mode: QueryMode
     generation_result: GenerationResult | None = None
+    llm_route: LLMRoute | None = None
+    anonymized: bool = False
 
 
 class HybridRAGEngine:
@@ -85,6 +99,7 @@ class HybridRAGEngine:
         self.fusion: RankFusion | None = None
         self.reranker: Reranker | None = None
         self.generator: Generator | None = None
+        self._external_generator: Generator | None = None
         self._initialized = False
 
     async def initialize(self):
@@ -251,15 +266,53 @@ class HybridRAGEngine:
                 answer="",
                 sources=sources,
                 mode=rag_query.mode,
+                llm_route=None,
+                anonymized=False,
             )
+
+        template, variables = self._resolve_template(rag_query, context)
+        generator = self.generator
+        llm_route = LLMRoute.INTERNAL
+        anonymized = False
+        deanonymize_session_id: str | None = None
+
+        if settings.anonymizer_enabled and self._has_external_llm():
+            try:
+                variables, deanonymize_session_id = await self._anonymize_prompt_variables(
+                    variables
+                )
+                generator = self._get_external_generator()
+                llm_route = LLMRoute.EXTERNAL_ANONYMIZED
+                anonymized = True
+            except AnonymizerUnavailableError as exc:
+                logger.warning(
+                    "Anonymizer unavailable, falling back to internal LLM",
+                    error=str(exc),
+                )
+                llm_route = LLMRoute.INTERNAL_FALLBACK
 
         # ─── Step 5: Generate response ───
         try:
-            generation_result = await self._generate(rag_query, context)
+            generation_result = await self._generate(
+                rag_query,
+                context,
+                generator=generator,
+                template=template,
+                variables=variables,
+            )
+            if deanonymize_session_id:
+                generation_result = replace(
+                    generation_result,
+                    text=await self._deanonymize_text(
+                        generation_result.text,
+                        deanonymize_session_id,
+                    ),
+                )
         except Exception as e:
             logger.error(
                 "Generation failed",
                 mode=rag_query.mode.value,
+                llm_route=llm_route.value,
                 error=str(e),
             )
             if rag_query.mode == QueryMode.QA:
@@ -274,6 +327,8 @@ class HybridRAGEngine:
                     sources=sources,
                     mode=rag_query.mode,
                     generation_result=generation_result,
+                    llm_route=llm_route,
+                    anonymized=anonymized,
                 )
             raise
 
@@ -282,6 +337,8 @@ class HybridRAGEngine:
             sources=sources,
             mode=rag_query.mode,
             generation_result=generation_result,
+            llm_route=llm_route,
+            anonymized=anonymized,
         )
 
     async def query_stream(self, rag_query: RAGQuery) -> AsyncIterator[str]:
@@ -312,11 +369,107 @@ class HybridRAGEngine:
         ):
             yield token
 
-    async def _generate(self, rag_query: RAGQuery, context: str) -> GenerationResult:
-        """Generate LLM response based on the query mode."""
-        template, variables = self._resolve_template(rag_query, context)
+    def _has_external_llm(self) -> bool:
+        return bool(settings.external_llm_url.strip())
 
-        return await self.generator.generate(
+    def _get_external_generator(self) -> Generator:
+        if self._external_generator is None:
+            self._external_generator = Generator(
+                base_url=settings.external_llm_url,
+                model=settings.external_llm_model or settings.llama_model,
+                timeout=settings.llama_timeout,
+            )
+        return self._external_generator
+
+    async def _anonymize_prompt_variables(
+        self,
+        variables: dict[str, Any],
+    ) -> tuple[dict[str, Any], str | None]:
+        string_items = [
+            (key, value)
+            for key, value in variables.items()
+            if isinstance(value, str) and value.strip()
+        ]
+        if not string_items:
+            return variables, None
+
+        anonymized_chunks, session_id = await self._anonymize_chunks(
+            [value for _, value in string_items]
+        )
+        anonymized_variables = dict(variables)
+        for (key, _), anonymized_value in zip(string_items, anonymized_chunks):
+            anonymized_variables[key] = anonymized_value
+        return anonymized_variables, session_id
+
+    async def _anonymize_chunks(self, chunks: list[str]) -> tuple[list[str], str]:
+        if not settings.anonymizer_url.strip():
+            raise AnonymizerUnavailableError("anonymizer url is not configured")
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.anonymizer_timeout) as client:
+                response = await client.post(
+                    f"{settings.anonymizer_url.rstrip('/')}/v1/anonymize",
+                    json={"chunks": chunks},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AnonymizerUnavailableError("anonymizer request failed") from exc
+
+        anonymized_items = payload.get("chunks")
+        session_id = payload.get("session_id")
+        if not isinstance(anonymized_items, list) or len(anonymized_items) != len(chunks):
+            raise AnonymizerUnavailableError("anonymizer response has invalid chunks")
+        if not isinstance(session_id, str) or not session_id:
+            raise AnonymizerUnavailableError("anonymizer response has no session id")
+
+        anonymized_chunks: list[str] = []
+        for item in anonymized_items:
+            if not isinstance(item, dict):
+                raise AnonymizerUnavailableError("anonymizer response has invalid chunk item")
+            anonymized_text = item.get("anonymized_text")
+            if not isinstance(anonymized_text, str):
+                raise AnonymizerUnavailableError("anonymizer chunk has no anonymized_text")
+            anonymized_chunks.append(anonymized_text)
+        return anonymized_chunks, session_id
+
+    async def _deanonymize_text(self, text: str, session_id: str) -> str:
+        if not text.strip() or not session_id or not settings.anonymizer_url.strip():
+            return text
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.anonymizer_timeout) as client:
+                response = await client.post(
+                    f"{settings.anonymizer_url.rstrip('/')}/v1/deanonymize",
+                    json={"text": text, "session_id": session_id},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "Deanonymization failed, returning anonymized answer",
+                error=str(exc),
+            )
+            return text
+
+        restored_text = payload.get("text")
+        return restored_text if isinstance(restored_text, str) else text
+
+    async def _generate(
+        self,
+        rag_query: RAGQuery,
+        context: str,
+        *,
+        generator: Generator | None = None,
+        template: str | None = None,
+        variables: dict[str, Any] | None = None,
+    ) -> GenerationResult:
+        """Generate LLM response based on the query mode."""
+        if template is None or variables is None:
+            template, variables = self._resolve_template(rag_query, context)
+
+        active_generator = generator or self.generator
+        return await active_generator.generate(
             template=template,
             variables=variables,
             temperature=rag_query.temperature,
