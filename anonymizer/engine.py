@@ -349,6 +349,7 @@ class AnonymizerEngine:
 
         stored_session = await self.vault.get_session(session_id)
         reverse_mapping = dict((stored_session or {}).get("mapping") or {})
+        alias_mapping = dict((((stored_session or {}).get("metadata") or {}).get("aliases") or {}))
         counters: dict[str, int] = defaultdict(int)
         for placeholder in reverse_mapping:
             inside = placeholder.strip("[]").rsplit("_", 1)
@@ -367,6 +368,7 @@ class AnonymizerEngine:
             replacement = placeholder
             if strategy == AnonymizationStrategy.FAKING:
                 replacement = self.faker.replace(detection.entity_type, detection.text, placeholder)
+                alias_mapping[replacement] = detection.text
             replacements[detection.text] = replacement
             output_parts.append(text[cursor : detection.start])
             output_parts.append(replacement)
@@ -385,13 +387,14 @@ class AnonymizerEngine:
         await self.vault.store_session(
             session_id=session_id,
             mapping=reverse_mapping,
-            metadata={"config": runtime_config},
+            metadata={"config": runtime_config, "aliases": alias_mapping},
             ttl_seconds=ttl_seconds,
         )
         await self.vault.update_stats(
             requests=1,
             sessions=1 if stored_session is None else 0,
             entities_detected=len(detections),
+            faking_requests=1 if strategy == AnonymizationStrategy.FAKING else 0,
         )
 
         return {
@@ -433,7 +436,11 @@ class AnonymizerEngine:
 
         restored = text
         mapping = dict(session.get("mapping") or {})
-        for placeholder, original_value in sorted(mapping.items(), key=lambda item: -len(item[0])):
+        aliases = dict(((session.get("metadata") or {}).get("aliases") or {}))
+        for placeholder, original_value in sorted(
+            {**mapping, **aliases}.items(),
+            key=lambda item: -len(item[0]),
+        ):
             restored = restored.replace(placeholder, original_value)
 
         await self.vault.update_stats(deanonymize_requests=1)

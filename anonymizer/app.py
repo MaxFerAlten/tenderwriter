@@ -3,35 +3,15 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Request, Response, status
 import structlog
 
 from config import get_settings
 from engine import AnonymizerEngine
+from schemas import AnonymizeRequest, ConfigRequest, DeanonymizeRequest
 from vault import RedisVault
 
 logger = structlog.get_logger()
-
-
-class AnonymizeRequest(BaseModel):
-    text: str | None = None
-    chunks: list[str] | None = None
-    session_id: str | None = None
-    config: dict | None = None
-
-
-class DeanonymizeRequest(BaseModel):
-    text: str
-    session_id: str
-
-
-class ConfigRequest(BaseModel):
-    entities: list[str] | None = None
-    ttl_seconds: int | None = Field(default=None, ge=1)
-    strategy: str | None = None
-    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    mask_cig: bool | None = None
 
 
 @asynccontextmanager
@@ -110,6 +90,19 @@ def _mask_session_token(session_id: str | None) -> str | None:
     return f"{session_id[:8]}..."
 
 
+def _require_admin_token(request: Request) -> None:
+    settings = request.app.state.settings
+    if not settings.admin_token:
+        return
+    provided = request.headers.get("x-anonymizer-admin-token", "")
+    if provided != settings.admin_token:
+        logger.warning("Protected anonymizer endpoint denied", path=request.url.path)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin token required",
+        )
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "tw-anonymizer"}
@@ -173,6 +166,7 @@ async def anonymize(payload: AnonymizeRequest, request: Request):
 
 @app.post("/v1/deanonymize")
 async def deanonymize(payload: DeanonymizeRequest, request: Request):
+    _require_admin_token(request)
     engine: AnonymizerEngine = request.app.state.engine
     try:
         result = await engine.deanonymize_text(text=payload.text, session_id=payload.session_id)
@@ -193,21 +187,25 @@ async def deanonymize(payload: DeanonymizeRequest, request: Request):
 
 @app.get("/v1/config")
 async def get_config(request: Request):
+    _require_admin_token(request)
     return await request.app.state.vault.load_config()
 
 
 @app.post("/v1/config")
 async def save_config(payload: ConfigRequest, request: Request):
+    _require_admin_token(request)
     settings = request.app.state.settings
     current = settings.default_config()
     current.update(await request.app.state.vault.load_config())
     update = payload.model_dump(exclude_none=True)
     current.update(update)
+    logger.info("Anonymizer config updated", config=current)
     return await request.app.state.vault.save_config(current)
 
 
 @app.get("/v1/stats")
 async def get_stats(request: Request):
+    _require_admin_token(request)
     return await request.app.state.vault.get_stats()
 
 

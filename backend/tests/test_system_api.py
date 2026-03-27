@@ -24,6 +24,7 @@ for key, value in _TEST_ENV.items():
 from app.api.auth import UserResponse, get_current_user
 from app.api.system import router
 from app.db.database import get_db
+from app.models.app_settings import AppSettings
 from app.services.ops_agent import OpsAgentClientResult
 
 
@@ -44,6 +45,8 @@ class _FakeDb:
         self.execute = AsyncMock(side_effect=self._execute)
 
     def _add(self, row):
+        if not isinstance(row, AppSettings):
+            row = AppSettings(data=getattr(row, "data", {}))
         self.row = row
 
     async def _execute(self, _stmt):
@@ -182,6 +185,7 @@ class SystemApiTests(unittest.TestCase):
                     "nginx_read_timeout": 111,
                     "nginx_connect_timeout": 222,
                     "nginx_send_timeout": 333,
+                    "anonymizer_enabled": True,
                 },
             )
             apply_response = self.client.post(
@@ -195,6 +199,7 @@ class SystemApiTests(unittest.TestCase):
 
         self.assertEqual(save_response.status_code, 200)
         self.assertEqual(save_response.json()["nginx_read_timeout"], 111)
+        self.assertTrue(save_response.json()["anonymizer_enabled"])
         self.assertEqual(apply_response.status_code, 503)
         self.assertEqual(apply_response.json()["detail"], "Ops agent unavailable")
 

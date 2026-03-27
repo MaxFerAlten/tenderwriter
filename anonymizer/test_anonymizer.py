@@ -12,6 +12,8 @@ from config import Settings
 from engine import AnonymizerEngine, Detection
 from vault import RedisVault
 
+ADMIN_HEADERS = {"x-anonymizer-admin-token": "tw-anonymizer-admin-token-change-me"}
+
 
 def test_rejects_loopback_target_url() -> None:
     with TestClient(anonymizer_app.app) as client:
@@ -155,6 +157,7 @@ def test_api_deanonymize_roundtrip() -> None:
                 "text": payload["chunk"]["anonymized_text"],
                 "session_id": session_id,
             },
+            headers=ADMIN_HEADERS,
         )
 
     assert deanonymize_response.status_code == 200
@@ -163,12 +166,13 @@ def test_api_deanonymize_roundtrip() -> None:
 
 def test_api_config_roundtrip() -> None:
     with TestClient(anonymizer_app.app) as client:
-        initial = client.get("/v1/config")
+        initial = client.get("/v1/config", headers=ADMIN_HEADERS)
         response = client.post(
             "/v1/config",
             json={"ttl_seconds": 120, "mask_cig": True, "min_confidence": 0.5},
+            headers=ADMIN_HEADERS,
         )
-        stored = client.get("/v1/config")
+        stored = client.get("/v1/config", headers=ADMIN_HEADERS)
 
     assert initial.status_code == 200
     assert initial.json()["strategy"] == "redaction"
@@ -194,8 +198,9 @@ def test_api_stats_track_requests() -> None:
                 "text": payload["chunk"]["anonymized_text"],
                 "session_id": payload["session_id"],
             },
+            headers=ADMIN_HEADERS,
         )
-        stats = client.get("/v1/stats")
+        stats = client.get("/v1/stats", headers=ADMIN_HEADERS)
 
     assert anonymize_response.status_code == 200
     assert deanonymize_response.status_code == 200
@@ -226,3 +231,57 @@ def test_api_rejects_too_large_text() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "text exceeds max_chunk_chars"
+
+
+def test_api_denies_protected_endpoints_without_admin_token() -> None:
+    with TestClient(anonymizer_app.app) as client:
+        config_response = client.get("/v1/config")
+        stats_response = client.get("/v1/stats")
+        deanonymize_response = client.post(
+            "/v1/deanonymize",
+            json={"text": "[PERSONA_1]", "session_id": "missing"},
+        )
+
+    assert config_response.status_code == 403
+    assert stats_response.status_code == 403
+    assert deanonymize_response.status_code == 403
+
+
+def test_engine_faking_strategy_produces_synthetic_values() -> None:
+    settings = Settings()
+    vault = RedisVault(redis_url="memory://", default_ttl_seconds=60)
+    engine = AnonymizerEngine(settings=settings, vault=vault)
+
+    result = asyncio.run(
+        engine.anonymize_text(
+            "Mario Rossi ha CF RSSMRA85M01H501Z",
+            config={"strategy": "faking", "entities": ["PERSON", "CODICE_FISCALE"]},
+        )
+    )
+
+    anonymized = result["chunk"]["anonymized_text"]
+    assert "Mario Rossi" not in anonymized
+    assert "RSSMRA85M01H501Z" not in anonymized
+    assert "[PERSONA_1]" not in anonymized
+
+
+def test_cig_is_masked_only_when_enabled() -> None:
+    settings = Settings()
+    vault = RedisVault(redis_url="memory://", default_ttl_seconds=60)
+    engine = AnonymizerEngine(settings=settings, vault=vault)
+
+    disabled = asyncio.run(
+        engine.anonymize_text(
+            "CIG A1B2C3D4E5",
+            config={"mask_cig": False, "entities": ["CIG"]},
+        )
+    )
+    enabled = asyncio.run(
+        engine.anonymize_text(
+            "CIG A1B2C3D4E5",
+            config={"mask_cig": True, "entities": ["CIG"]},
+        )
+    )
+
+    assert "A1B2C3D4E5" in disabled["chunk"]["anonymized_text"]
+    assert "[CIG_1]" in enabled["chunk"]["anonymized_text"]

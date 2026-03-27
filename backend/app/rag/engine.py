@@ -65,6 +65,7 @@ class RAGQuery:
     document_text: str = ""
     temperature: float = 0.3
     stream: bool = False
+    anonymizer_enabled_override: bool | None = None
 
 
 @dataclass
@@ -103,6 +104,9 @@ class HybridRAGEngine:
         self._external_generator: Generator | None = None
         self._anonymizer_failure_count = 0
         self._anonymizer_circuit_open_until = 0.0
+        self._anonymizer_fallback_events = 0
+        self._anonymizer_circuit_open_events = 0
+        self._last_anonymizer_error_reason: str | None = None
         self._initialized = False
 
     async def initialize(self):
@@ -278,8 +282,13 @@ class HybridRAGEngine:
         llm_route = LLMRoute.INTERNAL
         anonymized = False
         deanonymize_session_id: str | None = None
+        anonymizer_enabled = (
+            rag_query.anonymizer_enabled_override
+            if rag_query.anonymizer_enabled_override is not None
+            else settings.anonymizer_enabled
+        )
 
-        if settings.anonymizer_enabled and self._has_external_llm():
+        if anonymizer_enabled and self._has_external_llm():
             try:
                 variables, deanonymize_session_id = await self._anonymize_prompt_variables(
                     variables
@@ -295,11 +304,12 @@ class HybridRAGEngine:
                     session_token=self._mask_session_token(deanonymize_session_id),
                     error=str(exc),
                 )
+                self._anonymizer_fallback_events += 1
                 llm_route = LLMRoute.INTERNAL_FALLBACK
         logger.info(
             "RAG route selected",
             mode=rag_query.mode.value,
-            anonymizer_enabled=settings.anonymizer_enabled,
+            anonymizer_enabled=anonymizer_enabled,
             anonymizer_used=anonymized,
             llm_route=llm_route.value,
             session_token=self._mask_session_token(deanonymize_session_id),
@@ -379,11 +389,16 @@ class HybridRAGEngine:
 
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
-        if settings.anonymizer_enabled and self._has_external_llm():
+        anonymizer_enabled = (
+            rag_query.anonymizer_enabled_override
+            if rag_query.anonymizer_enabled_override is not None
+            else settings.anonymizer_enabled
+        )
+        if anonymizer_enabled and self._has_external_llm():
             logger.info(
                 "RAG stream forced to internal route",
                 reason="v1_streaming_not_supported",
-                anonymizer_enabled=True,
+                anonymizer_enabled=anonymizer_enabled,
                 anonymizer_used=False,
                 llm_route=LLMRoute.INTERNAL.value,
             )
@@ -395,6 +410,7 @@ class HybridRAGEngine:
             mode=QueryMode.SEARCH,
             filters=rag_query.filters,
             top_k=rag_query.top_k,
+            anonymizer_enabled_override=rag_query.anonymizer_enabled_override,
         )
         search_result = await self.query(rag_query_copy)
         context = "\n\n---\n\n".join(s["text"] for s in search_result.sources)
@@ -429,9 +445,11 @@ class HybridRAGEngine:
             )
         self._anonymizer_failure_count = 0
         self._anonymizer_circuit_open_until = 0.0
+        self._last_anonymizer_error_reason = None
 
     def _record_anonymizer_failure(self, *, reason: str) -> None:
         self._anonymizer_failure_count += 1
+        self._last_anonymizer_error_reason = reason
         logger.warning(
             "Anonymizer failure recorded",
             failure_count=self._anonymizer_failure_count,
@@ -441,6 +459,8 @@ class HybridRAGEngine:
             self._anonymizer_failure_count
             >= settings.anonymizer_circuit_breaker_threshold
         ):
+            if not self._anonymizer_circuit_is_open():
+                self._anonymizer_circuit_open_events += 1
             self._anonymizer_circuit_open_until = (
                 time.monotonic() + settings.anonymizer_circuit_open_seconds
             )
@@ -450,6 +470,20 @@ class HybridRAGEngine:
                 open_for_seconds=settings.anonymizer_circuit_open_seconds,
                 reason=reason,
             )
+
+    def get_anonymizer_runtime_stats(self) -> dict[str, Any]:
+        return {
+            "fallback_events": self._anonymizer_fallback_events,
+            "runtime_failure_count": self._anonymizer_failure_count,
+            "circuit_open": self._anonymizer_circuit_is_open(),
+            "circuit_open_events": self._anonymizer_circuit_open_events,
+            "last_error_reason": self._last_anonymizer_error_reason,
+        }
+
+    def _anonymizer_headers(self) -> dict[str, str]:
+        if not settings.anonymizer_admin_token:
+            return {}
+        return {"x-anonymizer-admin-token": settings.anonymizer_admin_token}
 
     def _get_external_generator(self) -> Generator:
         if self._external_generator is None:
@@ -556,6 +590,7 @@ class HybridRAGEngine:
                     response = await client.post(
                         f"{settings.anonymizer_url.rstrip('/')}{path}",
                         json=payload,
+                        headers=self._anonymizer_headers(),
                     )
                     response.raise_for_status()
                     response_payload = response.json()

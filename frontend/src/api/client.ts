@@ -534,6 +534,43 @@ export interface AppSettingsData {
     nginx_connect_timeout?: number;
     nginx_send_timeout?: number;
     admin_enabled?: boolean;
+    anonymizer_enabled?: boolean;
+}
+
+export interface AnonymizerConfigData {
+    entities: string[];
+    ttl_seconds: number;
+    strategy: 'redaction' | 'faking';
+    min_confidence: number;
+    mask_cig: boolean;
+}
+
+export interface AnonymizerStatsData {
+    requests: number;
+    sessions: number;
+    entities_detected: number;
+    deanonymize_requests: number;
+    faking_requests?: number;
+    fallback_events?: number;
+    runtime_failure_count?: number;
+    circuit_open?: boolean;
+    circuit_open_events?: number;
+    last_error_reason?: string | null;
+}
+
+export interface AnonymizerChunkResult {
+    text: string;
+    anonymized_text: string;
+    detections: Array<Record<string, unknown>>;
+    replacements: Record<string, string>;
+}
+
+export interface AnonymizerTestResult {
+    session_id: string;
+    config: AnonymizerConfigData;
+    chunk?: AnonymizerChunkResult;
+    chunks?: AnonymizerChunkResult[];
+    mapping?: Record<string, string>;
 }
 
 // ── Admin ──
@@ -612,6 +649,20 @@ export const gatewayApi = {
     updateTarget: (id: number, data: Partial<Omit<GatewayTarget, 'id'>>) =>
         request<GatewayTarget>(`/gateway/targets/${id}`, { method: 'PUT', body: data }),
     deleteTarget: (id: number) => request(`/gateway/targets/${id}`, { method: 'DELETE' }),
+};
+
+export const anonymizerApi = {
+    getConfig: () => request<AnonymizerConfigData>('/anonymizer/config'),
+    updateConfig: (data: Partial<AnonymizerConfigData>) =>
+        request<AnonymizerConfigData>('/anonymizer/config', { method: 'POST', body: data }),
+    getStats: () => request<AnonymizerStatsData>('/anonymizer/stats'),
+    test: (data: { text: string; session_id?: string; config?: Partial<AnonymizerConfigData> }) =>
+        request<AnonymizerTestResult>('/anonymizer/test', { method: 'POST', body: data }),
+    deanonymize: (data: { text: string; session_id: string }) =>
+        request<{ session_id: string; text: string; mapping_size: number }>('/anonymizer/deanonymize', {
+            method: 'POST',
+            body: data,
+        }),
 };
 
 // ── Types ──
@@ -1562,5 +1613,4 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
-
 

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user, UserResponse
+from app.config import settings
 from app.db.database import get_db
 from app.models.app_settings import AppSettings
 from app.services.ops_agent import OpsAgentClient, OpsAgentClientResult
@@ -114,6 +115,7 @@ class AppSettingsPayload(BaseModel):
     nginx_connect_timeout: int | None = None
     nginx_send_timeout: int | None = None
     admin_enabled: bool | None = None
+    anonymizer_enabled: bool | None = None
 
 
 @router.get("/app-settings")
@@ -133,6 +135,7 @@ async def get_app_settings(
         "nginx_connect_timeout": 300,
         "nginx_send_timeout": 300,
         "admin_enabled": True,
+        "anonymizer_enabled": settings.anonymizer_enabled,
     }
 
 

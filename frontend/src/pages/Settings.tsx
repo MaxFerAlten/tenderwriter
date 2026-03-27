@@ -15,7 +15,19 @@ import {
     ToggleRight,
     ToggleLeft,
 } from 'lucide-react';
-import { ragApi, systemApi, gatewayApi, llmSettingsApi, authApi, GatewayTarget, type SystemCapabilitiesData } from '../api/client';
+import {
+    ragApi,
+    systemApi,
+    gatewayApi,
+    llmSettingsApi,
+    authApi,
+    anonymizerApi,
+    GatewayTarget,
+    type SystemCapabilitiesData,
+    type AnonymizerConfigData,
+    type AnonymizerStatsData,
+    type AnonymizerTestResult,
+} from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 interface RAGHealth {
@@ -26,6 +38,23 @@ interface RAGHealth {
 }
 
 let tempIdCounter = -1;
+
+const ANONYMIZER_ENTITY_OPTIONS = [
+    { key: 'PERSON', label: 'Persone' },
+    { key: 'ORGANIZATION', label: 'Organizzazioni' },
+    { key: 'LOCATION', label: 'Luoghi' },
+    { key: 'CODICE_FISCALE', label: 'Codice fiscale' },
+    { key: 'PARTITA_IVA', label: 'Partita IVA' },
+    { key: 'IBAN', label: 'IBAN' },
+] as const;
+
+const DEFAULT_ANONYMIZER_CONFIG: AnonymizerConfigData = {
+    entities: ['PERSON', 'CODICE_FISCALE', 'PARTITA_IVA', 'IBAN'],
+    ttl_seconds: 3600,
+    strategy: 'redaction',
+    min_confidence: 0.35,
+    mask_cig: false,
+};
 
 const Settings: FC = () => {
     const { user } = useAuth();
@@ -41,12 +70,23 @@ const Settings: FC = () => {
     const [connectTimeout, setConnectTimeout] = useState(300);
     const [sendTimeout, setSendTimeout] = useState(300);
     const [adminEnabled, setAdminEnabled] = useState(true);
+    const [anonymizerEnabled, setAnonymizerEnabled] = useState(false);
     const [llmMaxTokens, setLlmMaxTokens] = useState<number | ''>(256);
     const [llmTemperature, setLlmTemperature] = useState<number | ''>(0.3);
     const [llmStopTokens, setLlmStopTokens] = useState<string>('');
     const [systemCapabilities, setSystemCapabilities] = useState<SystemCapabilitiesData | null>(null);
     const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
     const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+    const [anonymizerConfig, setAnonymizerConfig] = useState<AnonymizerConfigData>(DEFAULT_ANONYMIZER_CONFIG);
+    const [anonymizerStats, setAnonymizerStats] = useState<AnonymizerStatsData | null>(null);
+    const [anonymizerLoading, setAnonymizerLoading] = useState(false);
+    const [anonymizerError, setAnonymizerError] = useState<string | null>(null);
+    const [anonymizerTesting, setAnonymizerTesting] = useState(false);
+    const [anonymizerTestInput, setAnonymizerTestInput] = useState(
+        'Mario Rossi ha CF RSSMRA85M01H501Z e coordina la gara CIG A1B2C3D4E5.'
+    );
+    const [anonymizerTestResult, setAnonymizerTestResult] = useState<AnonymizerTestResult | null>(null);
+    const [anonymizerTestError, setAnonymizerTestError] = useState<string | null>(null);
 
     // ── Global save state ──
     const [isSaving, setIsSaving] = useState(false);
@@ -102,6 +142,7 @@ const Settings: FC = () => {
             if (s.nginx_connect_timeout !== undefined) setConnectTimeout(s.nginx_connect_timeout);
             if (s.nginx_send_timeout !== undefined) setSendTimeout(s.nginx_send_timeout);
             if (s.admin_enabled !== undefined) setAdminEnabled(s.admin_enabled);
+            if (s.anonymizer_enabled !== undefined) setAnonymizerEnabled(s.anonymizer_enabled);
         } catch {
             // defaults already set
         }
@@ -116,6 +157,32 @@ const Settings: FC = () => {
             } catch {
                 // defaults
             }
+        }
+    };
+
+    const loadAnonymizerPanel = async () => {
+        if (user?.role !== 'admin') {
+            return;
+        }
+        try {
+            setAnonymizerLoading(true);
+            setAnonymizerError(null);
+            const [config, stats] = await Promise.all([
+                anonymizerApi.getConfig(),
+                anonymizerApi.getStats(),
+            ]);
+            setAnonymizerConfig({
+                entities: config.entities?.length ? config.entities : DEFAULT_ANONYMIZER_CONFIG.entities,
+                ttl_seconds: config.ttl_seconds ?? DEFAULT_ANONYMIZER_CONFIG.ttl_seconds,
+                strategy: config.strategy ?? DEFAULT_ANONYMIZER_CONFIG.strategy,
+                min_confidence: config.min_confidence ?? DEFAULT_ANONYMIZER_CONFIG.min_confidence,
+                mask_cig: config.mask_cig ?? DEFAULT_ANONYMIZER_CONFIG.mask_cig,
+            });
+            setAnonymizerStats(stats);
+        } catch (err) {
+            setAnonymizerError(err instanceof Error ? err.message : 'Impossibile caricare il modulo anonymizer.');
+        } finally {
+            setAnonymizerLoading(false);
         }
     };
 
@@ -156,6 +223,7 @@ const Settings: FC = () => {
         if (user?.role === 'admin') {
             loadGatewayTargets();
             loadSystemCapabilities();
+            loadAnonymizerPanel();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.role]);
@@ -195,6 +263,35 @@ const Settings: FC = () => {
         setGatewayTargets((prev) => prev.filter((x) => x.id !== id));
     };
 
+    const toggleAnonymizerEntity = (entity: string) => {
+        setAnonymizerConfig((prev) => {
+            const alreadyEnabled = prev.entities.includes(entity);
+            return {
+                ...prev,
+                entities: alreadyEnabled
+                    ? prev.entities.filter((item) => item !== entity)
+                    : [...prev.entities, entity],
+            };
+        });
+    };
+
+    const handleRunAnonymizerTest = async () => {
+        try {
+            setAnonymizerTesting(true);
+            setAnonymizerTestError(null);
+            const result = await anonymizerApi.test({
+                text: anonymizerTestInput,
+                config: anonymizerConfig,
+            });
+            setAnonymizerTestResult(result);
+            await loadAnonymizerPanel();
+        } catch (err) {
+            setAnonymizerTestError(err instanceof Error ? err.message : 'Test anonymizer fallito.');
+        } finally {
+            setAnonymizerTesting(false);
+        }
+    };
+
     // ── Single global save ──
 
     const handleSaveAll = async () => {
@@ -212,13 +309,14 @@ const Settings: FC = () => {
 
         // 2) Save app settings
         try {
-            await systemApi.updateAppSettings({
-                rag_model: ragModel,
-                nginx_read_timeout: readTimeout,
-                nginx_connect_timeout: connectTimeout,
-                nginx_send_timeout: sendTimeout,
-                admin_enabled: adminEnabled,
-            });
+                await systemApi.updateAppSettings({
+                    rag_model: ragModel,
+                    nginx_read_timeout: readTimeout,
+                    nginx_connect_timeout: connectTimeout,
+                    nginx_send_timeout: sendTimeout,
+                    admin_enabled: adminEnabled,
+                    anonymizer_enabled: anonymizerEnabled,
+                });
         } catch (err) {
             errors.push(err instanceof Error ? err.message : 'Errore salvataggio impostazioni app');
         }
@@ -233,6 +331,12 @@ const Settings: FC = () => {
                 });
             } catch (err) {
                 errors.push(err instanceof Error ? err.message : 'Errore salvataggio LLM settings');
+            }
+
+            try {
+                await anonymizerApi.updateConfig(anonymizerConfig);
+            } catch (err) {
+                errors.push(err instanceof Error ? err.message : 'Errore salvataggio configurazione anonymizer');
             }
         }
 
@@ -315,6 +419,12 @@ const Settings: FC = () => {
                 savedTargetsRef.current = sorted.map((t) => ({ ...t }));
             } catch {
                 // ignore reload error
+            }
+
+            try {
+                await loadAnonymizerPanel();
+            } catch {
+                // ignore refresh error
             }
         }
 
@@ -606,6 +716,165 @@ const Settings: FC = () => {
                                         <label className="form-label">Stop tokens (comma-separated)</label>
                                         <input className="form-input" value={llmStopTokens} onChange={(e) => setLlmStopTokens(e.target.value)} />
                                     </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(14, 116, 144, 0.28)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                                    <div>
+                                        <h3 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Privacy Gateway / Anonymizer</h3>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.35rem 0 0 0' }}>
+                                            Governa anonimizzazione, strategy, entita da mascherare e test rapido prima di usare LLM esterne.
+                                        </p>
+                                    </div>
+                                    <button className="btn btn-ghost btn-sm" onClick={loadAnonymizerPanel} disabled={anonymizerLoading}>
+                                        {anonymizerLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                                        Aggiorna
+                                    </button>
+                                </div>
+
+                                {anonymizerError && (
+                                    <div style={{ padding: '0.75rem', borderRadius: 'var(--radius-sm)', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '0.85rem' }}>
+                                        {anonymizerError}
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: 'rgba(14, 116, 144, 0.08)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(14, 116, 144, 0.2)' }}>
+                                    <div>
+                                        <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Anonymizer globale</h4>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                            Se attivo, il backend prova a anonimizzare prima di usare route esterne e ripiega sull&apos;LLM interna in caso di errore.
+                                        </p>
+                                    </div>
+                                    <label className="switch">
+                                        <input
+                                            type="checkbox"
+                                            checked={anonymizerEnabled}
+                                            onChange={(e) => setAnonymizerEnabled(e.target.checked)}
+                                        />
+                                        <span className="slider round"></span>
+                                    </label>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Strategy</label>
+                                        <select
+                                            className="form-select"
+                                            value={anonymizerConfig.strategy}
+                                            onChange={(e) => setAnonymizerConfig((prev) => ({ ...prev, strategy: e.target.value as AnonymizerConfigData['strategy'] }))}
+                                        >
+                                            <option value="redaction">Redaction</option>
+                                            <option value="faking">Faking</option>
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">TTL sessione (s)</label>
+                                        <input
+                                            type="number"
+                                            className="form-input"
+                                            min={1}
+                                            value={anonymizerConfig.ttl_seconds}
+                                            onChange={(e) => setAnonymizerConfig((prev) => ({ ...prev, ttl_seconds: Math.max(1, Number(e.target.value) || 1) }))}
+                                        />
+                                    </div>
+                                    <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                                        <label className="form-label">Soglia confidence: {anonymizerConfig.min_confidence.toFixed(2)}</label>
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={1}
+                                            step={0.05}
+                                            value={anonymizerConfig.min_confidence}
+                                            onChange={(e) => setAnonymizerConfig((prev) => ({ ...prev, min_confidence: Number(e.target.value) }))}
+                                            style={{ width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                                    {ANONYMIZER_ENTITY_OPTIONS.map((option) => (
+                                        <label
+                                            key={option.key}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', fontSize: '0.85rem' }}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={anonymizerConfig.entities.includes(option.key)}
+                                                onChange={() => toggleAnonymizerEntity(option.key)}
+                                            />
+                                            {option.label}
+                                        </label>
+                                    ))}
+                                    <label
+                                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', fontSize: '0.85rem' }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={anonymizerConfig.mask_cig}
+                                            onChange={(e) => setAnonymizerConfig((prev) => ({ ...prev, mask_cig: e.target.checked }))}
+                                        />
+                                        Maschera CIG
+                                    </label>
+                                </div>
+
+                                {anonymizerStats && (
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem' }}>
+                                        {[
+                                            { label: 'Richieste', value: anonymizerStats.requests },
+                                            { label: 'Sessioni', value: anonymizerStats.sessions },
+                                            { label: 'Entita rilevate', value: anonymizerStats.entities_detected },
+                                            { label: 'Deanonymize', value: anonymizerStats.deanonymize_requests },
+                                            { label: 'Fallback backend', value: anonymizerStats.fallback_events ?? 0 },
+                                            { label: 'Faking requests', value: anonymizerStats.faking_requests ?? 0 },
+                                        ].map((item) => (
+                                            <div key={item.label} style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.label}</div>
+                                                <div style={{ fontWeight: 700, fontSize: '1.1rem', marginTop: '0.15rem' }}>{item.value}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {anonymizerStats && (
+                                    <div style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                        Circuit breaker: <strong style={{ color: anonymizerStats.circuit_open ? '#ef4444' : 'var(--text-primary)' }}>{anonymizerStats.circuit_open ? 'OPEN' : 'CLOSED'}</strong>
+                                        {' · '}failure count: <strong style={{ color: 'var(--text-primary)' }}>{anonymizerStats.runtime_failure_count ?? 0}</strong>
+                                        {' · '}last error: <strong style={{ color: 'var(--text-primary)' }}>{anonymizerStats.last_error_reason || 'none'}</strong>
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'grid', gap: '0.75rem', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+                                    <div>
+                                        <h4 style={{ fontWeight: 600, fontSize: '0.9rem', margin: 0 }}>Area test</h4>
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                                            Prova la resa della configurazione corrente senza toccare il flusso utente.
+                                        </p>
+                                    </div>
+                                    <textarea
+                                        className="form-input"
+                                        rows={5}
+                                        value={anonymizerTestInput}
+                                        onChange={(e) => setAnonymizerTestInput(e.target.value)}
+                                        style={{ resize: 'vertical' }}
+                                    />
+                                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <button className="btn btn-primary btn-sm" onClick={handleRunAnonymizerTest} disabled={anonymizerTesting || !anonymizerTestInput.trim()}>
+                                            {anonymizerTesting ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
+                                            Test Anonimizzazione
+                                        </button>
+                                        {anonymizerTestError && <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>{anonymizerTestError}</span>}
+                                    </div>
+                                    {anonymizerTestResult && (
+                                        <div style={{ display: 'grid', gap: '0.75rem' }}>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                                Sessione: <strong style={{ color: 'var(--text-primary)' }}>{anonymizerTestResult.session_id}</strong>
+                                            </div>
+                                            <div style={{ padding: '0.85rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', background: '#0f172a', color: '#e2e8f0', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                                                {anonymizerTestResult.chunk?.anonymized_text || anonymizerTestResult.chunks?.map((item) => item.anonymized_text).join('\n\n---\n\n') || 'Nessun output'}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

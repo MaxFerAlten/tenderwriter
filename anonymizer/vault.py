@@ -107,7 +107,13 @@ class RedisVault:
 
     async def get_stats(self) -> dict[str, int]:
         if self._redis is not None:
-            keys = ["requests", "sessions", "entities_detected", "deanonymize_requests"]
+            keys = [
+                "requests",
+                "sessions",
+                "entities_detected",
+                "deanonymize_requests",
+                "faking_requests",
+            ]
             values = await asyncio.gather(
                 *(self._redis.get(f"stats:{key}") for key in keys)
             )

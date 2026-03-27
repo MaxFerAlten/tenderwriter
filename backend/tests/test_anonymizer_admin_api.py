@@ -25,6 +25,11 @@ class AnonymizerAdminApiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         app = FastAPI()
         app.include_router(router, prefix="/anonymizer")
+        app.state.rag_engine = type(
+            "FakeRagEngine",
+            (),
+            {"get_anonymizer_runtime_stats": lambda self: {"fallback_events": 2, "circuit_open": False}},
+        )()
         app.dependency_overrides[get_current_user] = lambda: UserResponse(
             id=1,
             email="admin@test.local",
@@ -59,6 +64,34 @@ class AnonymizerAdminApiTests(unittest.TestCase):
             "POST",
             "/v1/anonymize",
             {"text": "Mario Rossi", "config": {"entities": ["PERSON"]}},
+        )
+
+    def test_stats_endpoint_merges_runtime_metrics(self) -> None:
+        with patch(
+            "app.api.anonymizer_admin._proxy_anonymizer",
+            AsyncMock(return_value={"requests": 4, "sessions": 2}),
+        ):
+            response = self.client.get("/anonymizer/stats")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["requests"], 4)
+        self.assertEqual(response.json()["fallback_events"], 2)
+
+    def test_deanonymize_endpoint_proxies_payload(self) -> None:
+        with patch(
+            "app.api.anonymizer_admin._proxy_anonymizer",
+            AsyncMock(return_value={"text": "Mario Rossi", "mapping_size": 1, "session_id": "sess-1"}),
+        ) as proxy_mock:
+            response = self.client.post(
+                "/anonymizer/deanonymize",
+                json={"text": "[PERSONA_1]", "session_id": "sess-1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        proxy_mock.assert_awaited_once_with(
+            "POST",
+            "/v1/deanonymize",
+            {"text": "[PERSONA_1]", "session_id": "sess-1"},
         )
 
 

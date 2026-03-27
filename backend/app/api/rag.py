@@ -15,10 +15,19 @@ from sqlalchemy import select
 
 from app.rag.engine import QueryMode, RAGQuery
 from app.api.auth import get_current_user, UserResponse
+from app.config import settings
 from app.db.database import get_db
-from app.models import SearchHistory
+from app.models import AppSettings, SearchHistory
 
 router = APIRouter()
+
+
+async def _load_runtime_anonymizer_enabled(db: AsyncSession) -> bool:
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if row and isinstance(row.data, dict) and "anonymizer_enabled" in row.data:
+        return bool(row.data["anonymizer_enabled"])
+    return settings.anonymizer_enabled
 
 
 # ── Schemas ──
@@ -97,6 +106,7 @@ async def rag_query(
         filters=data.filters,
         top_k=data.top_k,
         temperature=data.temperature,
+        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
     )
 
     if data.stream:
@@ -175,7 +185,11 @@ async def get_search_history(
 
 
 @router.post("/generate-section", response_model=RAGResponse)
-async def generate_section(data: GenerateSectionRequest, request: Request):
+async def generate_section(
+    data: GenerateSectionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Generate a proposal section using RAG.
 
@@ -192,6 +206,7 @@ async def generate_section(data: GenerateSectionRequest, request: Request):
         requirements=data.requirements,
         filters=data.filters,
         temperature=data.temperature,
+        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
     )
 
     result = await engine.query(rag_query)
@@ -213,7 +228,11 @@ async def generate_section(data: GenerateSectionRequest, request: Request):
 
 
 @router.post("/compliance-check")
-async def compliance_check(data: ComplianceCheckRequest, request: Request):
+async def compliance_check(
+    data: ComplianceCheckRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Check if a proposal section adequately addresses a requirement.
 
@@ -228,6 +247,7 @@ async def compliance_check(data: ComplianceCheckRequest, request: Request):
         section_content=data.section_content,
         filters=data.filters,
         temperature=0.1,  # Low temperature for factual analysis
+        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
     )
 
     result = await engine.query(rag_query)
@@ -251,7 +271,11 @@ async def compliance_check(data: ComplianceCheckRequest, request: Request):
 
 
 @router.post("/analyze-requirements")
-async def analyze_requirements(data: AnalyzeRequirementsRequest, request: Request):
+async def analyze_requirements(
+    data: AnalyzeRequirementsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Extract and categorize requirements from tender document text.
 
@@ -264,6 +288,7 @@ async def analyze_requirements(data: AnalyzeRequirementsRequest, request: Reques
         mode=QueryMode.ANALYZE_REQS,
         document_text=data.document_text,
         temperature=0.1,
+        anonymizer_enabled_override=await _load_runtime_anonymizer_enabled(db),
     )
 
     result = await engine.query(rag_query)

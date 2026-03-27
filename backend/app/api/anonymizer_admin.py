@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.auth import UserResponse, get_current_user
@@ -34,6 +34,11 @@ class AnonymizerTestPayload(BaseModel):
     config: dict[str, Any] | None = None
 
 
+class AnonymizerDeanonymizePayload(BaseModel):
+    text: str
+    session_id: str
+
+
 async def _proxy_anonymizer(
     method: str,
     path: str,
@@ -49,6 +54,13 @@ async def _proxy_anonymizer(
                 method,
                 f"{base_url.rstrip('/')}{path}",
                 json=payload,
+                headers={
+                    **(
+                        {"x-anonymizer-admin-token": settings.anonymizer_admin_token}
+                        if settings.anonymizer_admin_token
+                        else {}
+                    ),
+                },
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail="Anonymizer service unavailable") from exc
@@ -93,10 +105,15 @@ async def update_anonymizer_config(
 
 @router.get("/stats")
 async def get_anonymizer_stats(
+    request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
     _require_admin(current_user)
-    return await _proxy_anonymizer("GET", "/v1/stats")
+    stats = await _proxy_anonymizer("GET", "/v1/stats")
+    rag_engine = getattr(request.app.state, "rag_engine", None)
+    if rag_engine and hasattr(rag_engine, "get_anonymizer_runtime_stats"):
+        stats.update(rag_engine.get_anonymizer_runtime_stats())
+    return stats
 
 
 @router.post("/test")
@@ -108,5 +125,18 @@ async def test_anonymizer(
     return await _proxy_anonymizer(
         "POST",
         "/v1/anonymize",
+        payload.model_dump(exclude_none=True),
+    )
+
+
+@router.post("/deanonymize")
+async def deanonymize_anonymizer_text(
+    payload: AnonymizerDeanonymizePayload,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    return await _proxy_anonymizer(
+        "POST",
+        "/v1/deanonymize",
         payload.model_dump(exclude_none=True),
     )

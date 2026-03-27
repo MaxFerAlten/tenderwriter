@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     anonymizer_enabled: bool = False
     anonymizer_url: str = "http://tw-anonymizer:8090"
     anonymizer_timeout: float = 8.0
+    anonymizer_admin_token: str = ""
     anonymizer_max_retries: int = 2
     anonymizer_circuit_breaker_threshold: int = 3
     anonymizer_circuit_open_seconds: float = 30.0

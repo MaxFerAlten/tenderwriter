@@ -309,6 +309,7 @@ services:
       ANONYMIZER_ENABLED: ${ANONYMIZER_ENABLED:-false}
       ANONYMIZER_URL: ${ANONYMIZER_URL:-http://tw-anonymizer:8090}
       ANONYMIZER_TIMEOUT: ${ANONYMIZER_TIMEOUT:-8}
+      ANONYMIZER_ADMIN_TOKEN: ${ANONYMIZER_ADMIN_TOKEN:-}
       EXTERNAL_LLM_URL: ${EXTERNAL_LLM_URL:-}
       EXTERNAL_LLM_MODEL: ${EXTERNAL_LLM_MODEL:-}
     ports:
@@ -432,7 +433,6 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
-
 
 
 
