@@ -204,3 +204,25 @@ def test_api_stats_track_requests() -> None:
     assert stats.json()["sessions"] == 1
     assert stats.json()["entities_detected"] >= 1
     assert stats.json()["deanonymize_requests"] == 1
+
+
+def test_api_rejects_too_many_chunks() -> None:
+    with TestClient(anonymizer_app.app) as client:
+        response = client.post(
+            "/v1/anonymize",
+            json={"chunks": ["x"] * 33},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "too many chunks"
+
+
+def test_api_rejects_too_large_text() -> None:
+    with TestClient(anonymizer_app.app) as client:
+        response = client.post(
+            "/v1/anonymize",
+            json={"text": "x" * 12001},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "text exceeds max_chunk_chars"

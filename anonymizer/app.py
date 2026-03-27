@@ -5,10 +5,13 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+import structlog
 
 from config import get_settings
 from engine import AnonymizerEngine
 from vault import RedisVault
+
+logger = structlog.get_logger()
 
 
 class AnonymizeRequest(BaseModel):
@@ -44,7 +47,15 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.vault = vault
     app.state.engine = AnonymizerEngine(settings=settings, vault=vault)
+    logger.info(
+        "Anonymizer service started",
+        redis_url=settings.redis_url,
+        max_chunks=settings.max_chunks,
+        max_chunk_chars=settings.max_chunk_chars,
+        relay_timeout_seconds=settings.relay_timeout_seconds,
+    )
     yield
+    logger.info("Anonymizer service stopped")
     await vault.close()
 
 
@@ -93,6 +104,12 @@ def _is_allowed_target_url(target_url: str) -> bool:
     )
 
 
+def _mask_session_token(session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    return f"{session_id[:8]}..."
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "tw-anonymizer"}
@@ -108,27 +125,69 @@ async def anonymize(payload: AnonymizeRequest, request: Request):
 
     if payload.text is not None:
         if len(payload.text) > settings.max_chunk_chars:
+            logger.warning(
+                "Anonymize request rejected: text exceeds max_chunk_chars",
+                text_len=len(payload.text),
+                max_chunk_chars=settings.max_chunk_chars,
+            )
             raise HTTPException(status_code=400, detail="text exceeds max_chunk_chars")
-        return await engine.anonymize_text(
+        result = await engine.anonymize_text(
             text=payload.text, session_id=payload.session_id, config=payload.config
         )
+        logger.info(
+            "Anonymize request completed",
+            mode="text",
+            text_len=len(payload.text),
+            session_token=_mask_session_token(result.get("session_id")),
+            detections=len(result["chunk"].get("detections", [])),
+        )
+        return result
 
     chunks = payload.chunks or []
     if len(chunks) > settings.max_chunks:
+        logger.warning(
+            "Anonymize request rejected: too many chunks",
+            chunk_count=len(chunks),
+            max_chunks=settings.max_chunks,
+        )
         raise HTTPException(status_code=400, detail="too many chunks")
     if any(len(chunk) > settings.max_chunk_chars for chunk in chunks):
+        logger.warning(
+            "Anonymize request rejected: one or more chunks exceed max_chunk_chars",
+            chunk_count=len(chunks),
+            max_chunk_chars=settings.max_chunk_chars,
+        )
         raise HTTPException(status_code=400, detail="one or more chunks exceed max_chunk_chars")
-    return await engine.anonymize_chunks(
+    result = await engine.anonymize_chunks(
         chunks=chunks, session_id=payload.session_id, config=payload.config
     )
+    logger.info(
+        "Anonymize request completed",
+        mode="chunks",
+        chunk_count=len(chunks),
+        session_token=_mask_session_token(result.get("session_id")),
+        detections=sum(len(chunk.get("detections", [])) for chunk in result.get("chunks", [])),
+    )
+    return result
 
 
 @app.post("/v1/deanonymize")
 async def deanonymize(payload: DeanonymizeRequest, request: Request):
     engine: AnonymizerEngine = request.app.state.engine
     try:
-        return await engine.deanonymize_text(text=payload.text, session_id=payload.session_id)
+        result = await engine.deanonymize_text(text=payload.text, session_id=payload.session_id)
+        logger.info(
+            "Deanonymize request completed",
+            text_len=len(payload.text),
+            session_token=_mask_session_token(payload.session_id),
+            mapping_size=result.get("mapping_size"),
+        )
+        return result
     except KeyError as exc:
+        logger.warning(
+            "Deanonymize request failed: session not found",
+            session_token=_mask_session_token(payload.session_id),
+        )
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -167,8 +226,9 @@ async def forward(path: str, request: Request) -> Response:
 
     body = await request.body()
     headers = {k: v for k, v in request.headers.items() if k.lower() != "x-target-url"}
+    settings = request.app.state.settings
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.relay_timeout_seconds) as client:
         upstream_resp = await client.request(
             request.method,
             target_url,
@@ -176,6 +236,13 @@ async def forward(path: str, request: Request) -> Response:
             content=body,
             headers=headers,
         )
+
+    logger.info(
+        "Relay request completed",
+        method=request.method,
+        target_host=urlparse(target_url).hostname,
+        status_code=upstream_resp.status_code,
+    )
 
     return Response(
         content=upstream_resp.content,

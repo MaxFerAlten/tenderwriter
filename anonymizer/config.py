@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     enable_cig_by_default: bool = False
     max_chunks: int = 32
     max_chunk_chars: int = 12000
+    relay_timeout_seconds: float = 30.0
 
     def default_config(self) -> dict[str, Any]:
         return {

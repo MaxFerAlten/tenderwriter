@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import Enum
+import time
 from typing import Any, AsyncIterator
 
 import httpx
@@ -100,6 +101,8 @@ class HybridRAGEngine:
         self.reranker: Reranker | None = None
         self.generator: Generator | None = None
         self._external_generator: Generator | None = None
+        self._anonymizer_failure_count = 0
+        self._anonymizer_circuit_open_until = 0.0
         self._initialized = False
 
     async def initialize(self):
@@ -287,9 +290,20 @@ class HybridRAGEngine:
             except AnonymizerUnavailableError as exc:
                 logger.warning(
                     "Anonymizer unavailable, falling back to internal LLM",
+                    fallback_event=True,
+                    anonymizer_used=False,
+                    session_token=self._mask_session_token(deanonymize_session_id),
                     error=str(exc),
                 )
                 llm_route = LLMRoute.INTERNAL_FALLBACK
+        logger.info(
+            "RAG route selected",
+            mode=rag_query.mode.value,
+            anonymizer_enabled=settings.anonymizer_enabled,
+            anonymizer_used=anonymized,
+            llm_route=llm_route.value,
+            session_token=self._mask_session_token(deanonymize_session_id),
+        )
 
         # ─── Step 5: Generate response ───
         try:
@@ -312,7 +326,9 @@ class HybridRAGEngine:
             logger.error(
                 "Generation failed",
                 mode=rag_query.mode.value,
+                anonymizer_used=anonymized,
                 llm_route=llm_route.value,
+                session_token=self._mask_session_token(deanonymize_session_id),
                 error=str(e),
             )
             if rag_query.mode == QueryMode.QA:
@@ -321,6 +337,13 @@ class HybridRAGEngine:
                     text=fallback_answer,
                     model=self.generator.model if self.generator else "unknown",
                     template_used="fallback_unavailable",
+                )
+                logger.warning(
+                    "RAG query returned fallback answer",
+                    mode=rag_query.mode.value,
+                    anonymizer_used=anonymized,
+                    llm_route=llm_route.value,
+                    session_token=self._mask_session_token(deanonymize_session_id),
                 )
                 return RAGResponse(
                     answer=fallback_answer,
@@ -332,6 +355,15 @@ class HybridRAGEngine:
                 )
             raise
 
+        logger.info(
+            "RAG query completed",
+            mode=rag_query.mode.value,
+            anonymizer_used=anonymized,
+            llm_route=llm_route.value,
+            session_token=self._mask_session_token(deanonymize_session_id),
+            source_count=len(sources),
+            answer_len=len(generation_result.text),
+        )
         return RAGResponse(
             answer=generation_result.text,
             sources=sources,
@@ -347,6 +379,15 @@ class HybridRAGEngine:
 
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
+        if settings.anonymizer_enabled and self._has_external_llm():
+            logger.info(
+                "RAG stream forced to internal route",
+                reason="v1_streaming_not_supported",
+                anonymizer_enabled=True,
+                anonymizer_used=False,
+                llm_route=LLMRoute.INTERNAL.value,
+            )
+
         # Run retrieval pipeline (same as query, but stream the generation)
         # For brevity, we reuse the query method's retrieval logic
         rag_query_copy = RAGQuery(
@@ -371,6 +412,44 @@ class HybridRAGEngine:
 
     def _has_external_llm(self) -> bool:
         return bool(settings.external_llm_url.strip())
+
+    def _mask_session_token(self, session_id: str | None) -> str | None:
+        if not session_id:
+            return None
+        return f"{session_id[:8]}..."
+
+    def _anonymizer_circuit_is_open(self) -> bool:
+        return time.monotonic() < self._anonymizer_circuit_open_until
+
+    def _record_anonymizer_success(self) -> None:
+        if self._anonymizer_failure_count or self._anonymizer_circuit_open_until:
+            logger.info(
+                "Anonymizer circuit reset",
+                previous_failures=self._anonymizer_failure_count,
+            )
+        self._anonymizer_failure_count = 0
+        self._anonymizer_circuit_open_until = 0.0
+
+    def _record_anonymizer_failure(self, *, reason: str) -> None:
+        self._anonymizer_failure_count += 1
+        logger.warning(
+            "Anonymizer failure recorded",
+            failure_count=self._anonymizer_failure_count,
+            reason=reason,
+        )
+        if (
+            self._anonymizer_failure_count
+            >= settings.anonymizer_circuit_breaker_threshold
+        ):
+            self._anonymizer_circuit_open_until = (
+                time.monotonic() + settings.anonymizer_circuit_open_seconds
+            )
+            logger.warning(
+                "Anonymizer circuit opened",
+                failure_count=self._anonymizer_failure_count,
+                open_for_seconds=settings.anonymizer_circuit_open_seconds,
+                reason=reason,
+            )
 
     def _get_external_generator(self) -> Generator:
         if self._external_generator is None:
@@ -404,31 +483,28 @@ class HybridRAGEngine:
     async def _anonymize_chunks(self, chunks: list[str]) -> tuple[list[str], str]:
         if not settings.anonymizer_url.strip():
             raise AnonymizerUnavailableError("anonymizer url is not configured")
+        if self._anonymizer_circuit_is_open():
+            raise AnonymizerUnavailableError("anonymizer circuit is open")
 
-        try:
-            async with httpx.AsyncClient(timeout=settings.anonymizer_timeout) as client:
-                response = await client.post(
-                    f"{settings.anonymizer_url.rstrip('/')}/v1/anonymize",
-                    json={"chunks": chunks},
-                )
-                response.raise_for_status()
-                payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise AnonymizerUnavailableError("anonymizer request failed") from exc
+        payload = await self._post_to_anonymizer("/v1/anonymize", {"chunks": chunks})
 
         anonymized_items = payload.get("chunks")
         session_id = payload.get("session_id")
         if not isinstance(anonymized_items, list) or len(anonymized_items) != len(chunks):
+            self._record_anonymizer_failure(reason="invalid_chunks_payload")
             raise AnonymizerUnavailableError("anonymizer response has invalid chunks")
         if not isinstance(session_id, str) or not session_id:
+            self._record_anonymizer_failure(reason="missing_session_id")
             raise AnonymizerUnavailableError("anonymizer response has no session id")
 
         anonymized_chunks: list[str] = []
         for item in anonymized_items:
             if not isinstance(item, dict):
+                self._record_anonymizer_failure(reason="invalid_chunk_item")
                 raise AnonymizerUnavailableError("anonymizer response has invalid chunk item")
             anonymized_text = item.get("anonymized_text")
             if not isinstance(anonymized_text, str):
+                self._record_anonymizer_failure(reason="missing_anonymized_text")
                 raise AnonymizerUnavailableError("anonymizer chunk has no anonymized_text")
             anonymized_chunks.append(anonymized_text)
         return anonymized_chunks, session_id
@@ -436,24 +512,86 @@ class HybridRAGEngine:
     async def _deanonymize_text(self, text: str, session_id: str) -> str:
         if not text.strip() or not session_id or not settings.anonymizer_url.strip():
             return text
+        if self._anonymizer_circuit_is_open():
+            logger.warning(
+                "Deanonymization skipped because anonymizer circuit is open",
+                session_token=self._mask_session_token(session_id),
+            )
+            return text
 
         try:
-            async with httpx.AsyncClient(timeout=settings.anonymizer_timeout) as client:
-                response = await client.post(
-                    f"{settings.anonymizer_url.rstrip('/')}/v1/deanonymize",
-                    json={"text": text, "session_id": session_id},
-                )
-                response.raise_for_status()
-                payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+            payload = await self._post_to_anonymizer(
+                "/v1/deanonymize",
+                {"text": text, "session_id": session_id},
+            )
+        except AnonymizerUnavailableError as exc:
             logger.warning(
                 "Deanonymization failed, returning anonymized answer",
+                session_token=self._mask_session_token(session_id),
                 error=str(exc),
             )
             return text
 
         restored_text = payload.get("text")
+        if not isinstance(restored_text, str):
+            self._record_anonymizer_failure(reason="invalid_deanonymize_payload")
+            logger.warning(
+                "Deanonymization returned invalid payload, returning anonymized answer",
+                session_token=self._mask_session_token(session_id),
+            )
+            return text
         return restored_text if isinstance(restored_text, str) else text
+
+    async def _post_to_anonymizer(
+        self,
+        path: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        attempts = max(1, settings.anonymizer_max_retries + 1)
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=settings.anonymizer_timeout) as client:
+                    response = await client.post(
+                        f"{settings.anonymizer_url.rstrip('/')}{path}",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    response_payload = response.json()
+                self._record_anonymizer_success()
+                return response_payload
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                retriable = status_code in {502, 503, 504} and attempt < attempts
+                logger.warning(
+                    "Anonymizer HTTP error",
+                    path=path,
+                    attempt=attempt,
+                    retriable=retriable,
+                    status_code=status_code,
+                )
+                last_error = exc
+                if retriable:
+                    continue
+                self._record_anonymizer_failure(reason=f"http_{status_code}")
+                break
+            except (httpx.TimeoutException, httpx.TransportError, ValueError) as exc:
+                retriable = attempt < attempts
+                logger.warning(
+                    "Anonymizer transport error",
+                    path=path,
+                    attempt=attempt,
+                    retriable=retriable,
+                    error=str(exc),
+                )
+                last_error = exc
+                if retriable:
+                    continue
+                self._record_anonymizer_failure(reason=type(exc).__name__)
+                break
+
+        raise AnonymizerUnavailableError("anonymizer request failed") from last_error
 
     async def _generate(
         self,

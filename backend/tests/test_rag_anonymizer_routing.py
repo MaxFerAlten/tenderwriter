@@ -158,6 +158,33 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.anonymized)
         engine._anonymize_prompt_variables.assert_not_awaited()
 
+    async def test_anonymizer_circuit_open_short_circuits_requests(self) -> None:
+        engine = self._build_engine()
+        engine._anonymizer_circuit_open_until = 100.0
+
+        with patch("app.rag.engine.time.monotonic", return_value=50.0), patch(
+            "app.rag.engine.settings.anonymizer_url",
+            "http://tw-anonymizer:8090",
+        ):
+            with self.assertRaises(AnonymizerUnavailableError):
+                await engine._anonymize_chunks(["chunk sensibile"])
+
+    def test_repeated_failures_open_anonymizer_circuit(self) -> None:
+        engine = self._build_engine()
+
+        with patch(
+            "app.rag.engine.settings.anonymizer_circuit_breaker_threshold",
+            2,
+        ), patch(
+            "app.rag.engine.settings.anonymizer_circuit_open_seconds",
+            30.0,
+        ), patch("app.rag.engine.time.monotonic", return_value=10.0):
+            engine._record_anonymizer_failure(reason="timeout")
+            engine._record_anonymizer_failure(reason="timeout")
+
+        self.assertEqual(engine._anonymizer_failure_count, 2)
+        self.assertEqual(engine._anonymizer_circuit_open_until, 40.0)
+
 
 if __name__ == "__main__":
     unittest.main()
