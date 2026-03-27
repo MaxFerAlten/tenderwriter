@@ -34,7 +34,7 @@ interface ObservedGraphState {
     latestEdge: string | null;
 }
 
-const EDGE_LINE_PATTERN = /^(\s*)([A-Z0-9]+)\s*-->(?:\|([^|]+)\|)?\s*([A-Z0-9]+)\s*$/;
+const EDGE_LINE_PATTERN = /^(\s*)([A-Z0-9]+)(?:\(\(.*?\)\)|\[.*?\]|\{.*?\})?\s*-->(?:\|([^|]+)\|)?\s*([A-Z0-9]+)(?:\(\(.*?\)\)|\[.*?\]|\{.*?\})?\s*$/;
 
 const CANONICAL_NODES: CanonicalNode[] = [
     { id: 'S0', label: 'Intake Opportunity', tone: 'normal' },
