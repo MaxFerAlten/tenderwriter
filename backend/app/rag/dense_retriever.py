@@ -55,10 +55,10 @@ class DenseRetriever:
             self._ensure_collection(collection_name)
 
     def _ensure_collection(self, name: str):
-        """Create a Qdrant collection if it doesn't exist."""
+        """Create a Qdrant collection if it doesn't exist, or validate dimension if it does."""
         full_name = f"{self.collection_prefix}{name}"
         collections = self.client.get_collections().collections
-        existing = [c.name for c in collections]
+        existing = {c.name: c for c in collections}
 
         if full_name not in existing:
             self.client.create_collection(
@@ -69,6 +69,24 @@ class DenseRetriever:
                 ),
             )
             logger.info("Created Qdrant collection", collection=full_name)
+        else:
+            # Validate that existing collection dimension matches current embedding model
+            info = self.client.get_collection(full_name)
+            existing_size = info.config.params.vectors.size
+            expected_size = self.embedder.dimension
+            if existing_size != expected_size:
+                logger.error(
+                    "Qdrant collection dimension mismatch! Searches will fail.",
+                    collection=full_name,
+                    existing_size=existing_size,
+                    expected_size=expected_size,
+                    embedding_model=settings.embedding_model,
+                )
+                raise RuntimeError(
+                    f"Qdrant collection '{full_name}' has dimension {existing_size} "
+                    f"but embedding model expects {expected_size}. "
+                    f"Delete the collection or change the embedding model."
+                )
 
     def index_chunks(
         self,

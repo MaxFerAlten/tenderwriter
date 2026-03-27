@@ -69,9 +69,7 @@ async def lifespan(app: FastAPI):
         logger.info("HybridRAG engine initialized")
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logger.error(f"Startup failed: {e}")
+        logger.exception("Startup failed", error=str(e))
         raise e
 
     yield

@@ -35,6 +35,35 @@ from app.services.operational_workflow import ensure_contribution_for_section, s
 router = APIRouter()
 
 
+# ── Helpers ──
+
+
+def _normalize_section_content(content: dict | str | None) -> dict:
+    """Normalize section content to TipTap JSON format.
+
+    The DB column is JSONB and downstream code (OnlyOffice integration,
+    _section_content_to_text) expects a TipTap dict with {"type": "doc", ...}.
+    If a raw string is passed, wrap it in TipTap paragraph format.
+    """
+    if content is None:
+        return {}
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str) and content.strip():
+        return {
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": para}],
+                }
+                for para in content.split("\n\n")
+                if para.strip()
+            ] or [{"type": "paragraph", "content": [{"type": "text", "text": ""}]}],
+        }
+    return {}
+
+
 # ── Schemas ──
 
 
@@ -512,6 +541,8 @@ async def update_section(
     previous_assigned_to = section.assigned_to
     changed_fields = list(data.model_dump(exclude_unset=True).keys())
     for key, value in data.model_dump(exclude_unset=True).items():
+        if key == "content":
+            value = _normalize_section_content(value)
         setattr(section, key, value)
 
     await db.flush()
@@ -594,7 +625,7 @@ async def add_section(
     section = ProposalSection(
         proposal_id=proposal_id,
         title=data.title,
-        content=data.content,
+        content=_normalize_section_content(data.content),
         order=data.order,
         status=SectionStatus.TODO,
     )
