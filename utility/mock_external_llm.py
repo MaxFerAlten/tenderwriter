@@ -1,9 +1,11 @@
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-HOST = "0.0.0.0"
-PORT = 18080
+HOST = os.getenv("MOCK_EXTERNAL_LLM_HOST", "0.0.0.0")
+PORT = int(os.getenv("MOCK_EXTERNAL_LLM_PORT", "18080"))
+MODEL = os.getenv("MOCK_EXTERNAL_LLM_MODEL", "mock-external-llm")
 LAST_REQUEST: dict = {}
 
 
@@ -28,10 +30,52 @@ class MockLLMHandler(BaseHTTPRequestHandler):
         if self.path == "/last":
             self._send_json(LAST_REQUEST or {"status": "empty"})
             return
+        if self.path == "/v1/models":
+            self._send_json(
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": MODEL,
+                            "object": "model",
+                            "owned_by": "tenderwriter",
+                        }
+                    ],
+                }
+            )
+            return
         self._send_json({"detail": "not found"}, status=404)
 
+    @staticmethod
+    def _extract_prompt(payload: dict) -> str:
+        prompt = payload.get("prompt")
+        if isinstance(prompt, str) and prompt:
+            return prompt
+
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            parts: list[str] = []
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                role = message.get("role", "user")
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text = item.get("text")
+                            if isinstance(text, str):
+                                text_parts.append(text)
+                    content = "\n".join(text_parts)
+                if isinstance(content, str) and content:
+                    parts.append(f"[{role}] {content}")
+            return "\n".join(parts)
+
+        return ""
+
     def do_POST(self) -> None:
-        if self.path != "/completion":
+        if self.path not in {"/completion", "/v1/completions", "/v1/chat/completions"}:
             self._send_json({"detail": "not found"}, status=404)
             return
 
@@ -43,7 +87,7 @@ class MockLLMHandler(BaseHTTPRequestHandler):
             self._send_json({"detail": "invalid json"}, status=400)
             return
 
-        prompt = payload.get("prompt", "")
+        prompt = self._extract_prompt(payload)
         LAST_REQUEST.clear()
         LAST_REQUEST.update(
             {
@@ -57,6 +101,44 @@ class MockLLMHandler(BaseHTTPRequestHandler):
         print("\n=== MOCK EXTERNAL LLM PROMPT START ===", flush=True)
         print(prompt, flush=True)
         print("=== MOCK EXTERNAL LLM PROMPT END ===\n", flush=True)
+
+        if self.path == "/v1/chat/completions":
+            self._send_json(
+                {
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "model": MODEL,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "mock ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                }
+            )
+            return
+
+        if self.path == "/v1/completions":
+            self._send_json(
+                {
+                    "id": "cmpl-mock",
+                    "object": "text_completion",
+                    "model": MODEL,
+                    "choices": [{"index": 0, "text": "mock ok", "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                }
+            )
+            return
 
         self._send_json(
             {

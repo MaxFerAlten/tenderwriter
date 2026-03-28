@@ -375,6 +375,27 @@ services:
     volumes:
       - ./frontend/src:/app/src # Hot reload in development
 
+  # --- Mock External LLM (Python) ---
+  mock-external-llm:
+    image: python:3.12-slim
+    container_name: tw-mock-external-llm
+    restart: unless-stopped
+    working_dir: /workspace
+    command: [ "python", "/workspace/utility/mock_external_llm.py" ]
+    environment:
+      MOCK_EXTERNAL_LLM_HOST: 0.0.0.0
+      MOCK_EXTERNAL_LLM_PORT: 18080
+      MOCK_EXTERNAL_LLM_MODEL: ${MOCK_EXTERNAL_LLM_MODEL:-mock-external-llm}
+    ports:
+      - "${MOCK_EXTERNAL_LLM_PORT:-18080}:18080"
+    volumes:
+      - ./utility:/workspace/utility:ro
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/health').read()" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
   # --- Gateway (AI Router) ---
   gateway:
     build:
