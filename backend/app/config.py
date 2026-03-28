@@ -30,10 +30,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     
     # --- Auth ---
-    auth_provider: str = "legacy"  # "legacy" | "keycloak" (future)
+    auth_provider: str = "legacy"  # "legacy" | "keycloak" | "hybrid"
     admin_username: str = "admin@admin.com"
     admin_password: str = ""
     admin_enabled: bool = True
+
+    # --- Keycloak OIDC (used when auth_provider=keycloak|hybrid) ---
+    keycloak_url: str = "http://localhost:8180"       # Browser/public Keycloak base URL (issuer/logout)
+    keycloak_internal_url: str = "http://keycloak:8080"  # Internal Docker URL for JWKS validation
+    keycloak_realm: str = "tenderwriter"              # Keycloak realm name
+    keycloak_client_id: str = "tw-frontend"           # OIDC client ID for token audience / azp
 
     # --- PostgreSQL ---
     database_url: str = ""

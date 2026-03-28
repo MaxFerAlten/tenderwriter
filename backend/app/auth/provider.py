@@ -44,14 +44,21 @@ def _get_provider() -> AuthProvider:
 
         return LegacyJWTProvider()
 
-    # ── Future providers go here ──
-    # if provider_name == "keycloak":
-    #     from app.auth.keycloak import KeycloakOIDCProvider
-    #     return KeycloakOIDCProvider()
+    if provider_name == "keycloak":
+        from app.auth.keycloak import KeycloakOIDCProvider
+
+        logger.info("auth.provider_selected", provider="keycloak")
+        return KeycloakOIDCProvider()
+
+    if provider_name == "hybrid":
+        from app.auth.hybrid import HybridAuthProvider
+
+        logger.info("auth.provider_selected", provider="hybrid")
+        return HybridAuthProvider()
 
     raise ValueError(
         f"Unknown AUTH_PROVIDER: '{provider_name}'. "
-        f"Valid values: legacy"
+        f"Valid values: legacy, keycloak, hybrid"
     )
 
 

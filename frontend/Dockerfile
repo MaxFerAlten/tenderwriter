@@ -32,6 +32,22 @@ server {
         proxy_send_timeout 300;
     }
 
+    # Mattermost reverse proxy — allows auto-login via same-origin cookie
+    location /mm/ {
+        set \$mm http://mattermost:8065;
+        proxy_pass \$mm;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 600;
+        proxy_send_timeout 600;
+        client_max_body_size 50M;
+    }
+
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files \$uri =404;

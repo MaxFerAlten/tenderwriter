@@ -90,6 +90,8 @@ export const tenderApi = {
         request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/submit`, { method: 'POST', body: data }),
     closeClarification: (id: number, clarificationId: string, data: TenderClarificationUpdateRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/close`, { method: 'POST', body: data }),
+    fullchat: (id: number) =>
+        request<{ mm_url: string; mm_token: string; channel_name: string; mm_user_id: string; auth_mode: string }>(`/tenders/${id}/fullchat`, { method: 'POST' }),
     uploadDocument: async (id: number, file: File) => {
         const formData = new FormData();
         formData.append('file', file);

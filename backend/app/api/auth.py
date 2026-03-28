@@ -6,7 +6,7 @@ Simple JWT-based authentication with user registration and login.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -27,6 +27,10 @@ import asyncio
 from app.config import settings
 from app.db.database import get_db
 from app.models import User, OTPToken
+from app.services.mattermost import provision_mm_user_for_tw_user
+
+# Auth mode detection
+_AUTH_MODE = (settings.auth_provider or "legacy").strip().lower()
 
 logger = structlog.get_logger()
 
@@ -86,7 +90,10 @@ def create_access_token(data: dict) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        return False
 
 
 def hash_password(password: str) -> str:
@@ -204,7 +211,7 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 
 @router.post("/verify-otp", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depends(get_db)):
+async def verify_otp(request: Request, data: OTPVerify, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Verify the 2FA OTP and return JWT token."""
     invalid_otp_error = HTTPException(status_code=400, detail="Invalid OTP")
 
@@ -256,6 +263,14 @@ async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depen
     logger.info("User verified via OTP", user_id=user.id, email=mask_email(user.email))
     
     token = create_access_token({"sub": str(user.id), "email": user.email})
+
+    background_tasks.add_task(
+        provision_mm_user_for_tw_user,
+        user_email=user.email,
+        user_name=user.name,
+        tw_user_id=user.id,
+    )
+
     return TokenResponse(
         access_token=token,
         user=UserResponse.model_validate(user),
@@ -264,8 +279,19 @@ async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depen
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, data: UserLogin, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Authenticate and get an access token."""
+    if _AUTH_MODE == "keycloak":
+        logger.warning(
+            "auth.legacy_login_blocked",
+            email=mask_email(data.email),
+            auth_mode=_AUTH_MODE,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Password login is disabled while Keycloak auth is enabled. Use SSO.",
+        )
+
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -280,12 +306,30 @@ async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(ge
     if not user.is_verified:
         logger.warning(f"Login failed: Account not verified for {mask_email(data.email)}")
         raise HTTPException(status_code=403, detail="Account not verified (2FA required)")
-    
+
+    if user.hashed_password == "__keycloak_managed__":
+        logger.warning(
+            "auth.local_login_unavailable",
+            email=mask_email(data.email),
+            auth_mode=_AUTH_MODE,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="This account does not have a local password yet. Use SSO or set a local password first.",
+        )
+
     if not verify_password(data.password, user.hashed_password):
         logger.warning(f"Login failed: Password mismatch for {mask_email(data.email)}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
+
+    background_tasks.add_task(
+        provision_mm_user_for_tw_user,
+        user_email=user.email,
+        user_name=user.name,
+        tw_user_id=user.id,
+    )
 
     return TokenResponse(
         access_token=token,
@@ -341,3 +385,59 @@ async def update_profile(
     await db.refresh(user)
     logger.info("Profile updated", user_id=user.id, email=mask_email(user.email))
     return UserResponse.model_validate(user)
+
+
+# ── Auth config (public, no auth required) ──
+
+
+@router.get("/config")
+async def auth_config():
+    """Return auth configuration for the frontend.
+
+    Public endpoint — no authentication required.
+    Tells the frontend which auth mode is active so it can render
+    the correct login UI (form, SSO, or both).
+    """
+    config = {"auth_mode": _AUTH_MODE}
+    if _AUTH_MODE in {"keycloak", "hybrid"}:
+        config.update({
+            "keycloak_url": settings.keycloak_url,
+            "keycloak_realm": settings.keycloak_realm,
+            "keycloak_client_id": settings.keycloak_client_id,
+        })
+    return config
+
+
+# ── Logout ──
+
+
+@router.post("/logout")
+async def logout(current_user: UserResponse = Depends(get_current_user)):
+    """Server-side logout.
+
+    In legacy mode: no-op (client just removes localStorage token).
+    In keycloak mode: logs the event for audit. The frontend then
+    redirects to Keycloak end-session endpoint for federated logout.
+
+    In both cases the frontend clears its local state.
+    """
+    logger.info(
+        "auth.logout",
+        user_id=current_user.id,
+        email=mask_email(current_user.email),
+        auth_mode=_AUTH_MODE,
+    )
+
+    if _AUTH_MODE == "keycloak":
+        # Build Keycloak end-session URL for the frontend to redirect to
+        end_session_url = (
+            f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
+            f"/protocol/openid-connect/logout"
+            f"?client_id={settings.keycloak_client_id}"
+        )
+        return {
+            "message": "Logged out",
+            "redirect_url": end_session_url,
+        }
+
+    return {"message": "Logged out"}

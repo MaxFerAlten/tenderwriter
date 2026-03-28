@@ -306,10 +306,26 @@ services:
       OPS_AGENT_BASE_URL: ${OPS_AGENT_BASE_URL:-http://tw-ops-agent:8070}
       OPS_AGENT_TOKEN: ${OPS_AGENT_TOKEN}
       OPS_AGENT_TIMEOUT: ${OPS_AGENT_TIMEOUT:-5}
+      MM_INTERNAL_URL: http://mattermost:8065
+      MM_PUBLIC_URL: ${MM_SITE_URL:-http://localhost:8065}
+      MM_ADMIN_USER: ${MM_ADMIN_USER:-tw-admin}
+      MM_ADMIN_PASS: ${MM_ADMIN_PASS:-TW2026Secure!Pass}
+      # --- Auth Provider (set to "keycloak" to enable OIDC) ---
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-legacy}
+      KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:8180}
+      KEYCLOAK_INTERNAL_URL: ${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-tenderwriter}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-tw-frontend}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
 
   # --- OnlyOffice Document Server ---
   onlyoffice:
@@ -362,7 +378,8 @@ services:
     container_name: tw-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:3000"
     volumes:
@@ -406,6 +423,296 @@ services:
     ports:
       - "8090:8090"
 
+  # ===================================================================
+  # KEYCLOAK IAM (Identity & Access Management)
+  # ===================================================================
+
+  # --- Keycloak PostgreSQL (dedicated) ---
+  kc-postgres:
+    profiles: ["keycloak"]
+    image: postgres:16-alpine
+    container_name: tw-kc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${KC_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD:-DefaultKC2026Pass}
+      POSTGRES_DB: ${KC_DB_NAME:-keycloak}
+    volumes:
+      - kc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KC_DB_USER:-keycloak}"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # --- Keycloak ---
+  keycloak:
+    profiles: ["keycloak"]
+    image: quay.io/keycloak/keycloak:${KC_IMAGE_TAG:-26.1}
+    container_name: tw-keycloak
+    restart: unless-stopped
+    depends_on:
+      kc-postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://kc-postgres:5432/${KC_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KC_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-DefaultKC2026Pass}
+      KC_HOSTNAME: http://${KC_HOSTNAME:-localhost}:${KC_PORT:-8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: 8080
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "false"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-DefaultKCAdmin2026Pass}
+    command:
+      - start-dev
+      - --import-realm
+    ports:
+      - "${KC_PORT:-8180}:8080"
+    volumes:
+      - ./keycloak/tenderwriter-realm.json:/opt/keycloak/data/import/tenderwriter-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ===================================================================
+  # VIDEO CALL TRANSCRIPTION STACK (Mattermost + Jitsi + Jigasi + Vosk)
+  # ===================================================================
+
+  # --- Mattermost PostgreSQL (dedicated, not shared with TenderWriter) ---
+  mm-postgres:
+    profiles: ["videochat"]
+    image: postgres:16-alpine
+    container_name: tw-mm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MM_DBUSER:-mmuser}
+      POSTGRES_PASSWORD: ${MM_DBPASS:-DefaultMM2024Pass}
+      POSTGRES_DB: ${MM_DBNAME:-mattermost}
+    volumes:
+      - mm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MM_DBUSER:-mmuser}"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # --- Mattermost Enterprise Edition (Entry mode, free without license) ---
+  mattermost:
+    profiles: ["videochat"]
+    image: mattermost/mattermost-enterprise-edition:${MM_IMAGE_TAG:-10.11.8}
+    container_name: tw-mattermost
+    restart: unless-stopped
+    depends_on:
+      mm-postgres:
+        condition: service_healthy
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: "postgres://${MM_DBUSER:-mmuser}:${MM_DBPASS:-DefaultMM2024Pass}@mm-postgres:5432/${MM_DBNAME:-mattermost}?sslmode=disable&connect_timeout=10"
+      MM_SERVICESETTINGS_SITEURL: http://localhost:3000/mm
+      MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
+      MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
+      MM_BLEVESETTINGS_INDEXDIR: /mattermost/bleve-indexes
+      # --- OpenID Connect (Keycloak) ---
+      MM_OPENIDSETTINGS_ENABLE: "${MM_OIDC_ENABLE:-false}"
+      MM_OPENIDSETTINGS_DISCOVERYENDPOINT: "${MM_OIDC_DISCOVERY_ENDPOINT:-http://keycloak:8080/realms/tenderwriter/.well-known/openid-configuration}"
+      MM_OPENIDSETTINGS_ID: "${MM_OIDC_CLIENT_ID:-mattermost}"
+      MM_OPENIDSETTINGS_SECRET: "${MM_OIDC_CLIENT_SECRET:-CHANGE_ME_mattermost_client_secret}"
+      MM_OPENIDSETTINGS_BUTTONTEXT: "${MM_OIDC_BUTTON_TEXT:-Accedi con Keycloak}"
+      MM_OPENIDSETTINGS_BUTTONCOLOR: "${MM_OIDC_BUTTON_COLOR:-#0058CC}"
+    ports:
+      - "${MM_PORT:-8065}:8065"
+    volumes:
+      - mm_data:/mattermost/data
+      - mm_config:/mattermost/config
+      - mm_logs:/mattermost/logs
+      - mm_plugins:/mattermost/plugins
+      - mm_client_plugins:/mattermost/client/plugins
+      - mm_bleve_indexes:/mattermost/bleve-indexes
+
+  # --- Jitsi Prosody (XMPP Server) ---
+  jitsi-prosody:
+    profiles: ["videochat"]
+    image: jitsi/prosody:${JITSI_IMAGE_TAG:-stable-10741}
+    container_name: tw-jitsi-prosody
+    restart: unless-stopped
+    environment:
+      ENABLE_AUTH: ${JITSI_ENABLE_AUTH:-0}
+      ENABLE_GUESTS: ${JITSI_ENABLE_GUESTS:-1}
+      ENABLE_TRANSCRIPTIONS: ${JITSI_ENABLE_TRANSCRIPTIONS:-1}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-changeme-jicofo-component}
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-changeme-jicofo}
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-changeme-jvb}
+      JIGASI_XMPP_PASSWORD: ${JITSI_JIGASI_XMPP_PASSWORD:-changeme-jigasi}
+      JIGASI_TRANSCRIBER_PASSWORD: ${JITSI_JIGASI_TRANSCRIBER_PASSWORD:-changeme-transcriber}
+      PUBLIC_URL: ${JITSI_PUBLIC_URL:-http://localhost:8880}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_GUEST_DOMAIN: ${JITSI_XMPP_GUEST_DOMAIN:-guest.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
+      TZ: ${TZ:-Europe/Rome}
+    volumes:
+      - jitsi_prosody_cfg:/config
+
+  # --- Jitsi Jicofo (Conference Focus) ---
+  jitsi-jicofo:
+    profiles: ["videochat"]
+    image: jitsi/jicofo:${JITSI_IMAGE_TAG:-stable-10741}
+    container_name: tw-jitsi-jicofo
+    restart: unless-stopped
+    depends_on:
+      - jitsi-prosody
+    environment:
+      ENABLE_AUTH: ${JITSI_ENABLE_AUTH:-0}
+      ENABLE_GUESTS: ${JITSI_ENABLE_GUESTS:-1}
+      JICOFO_AUTH_USER: ${JITSI_JICOFO_AUTH_USER:-focus}
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-changeme-jicofo}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-changeme-jicofo-component}
+      JVB_BREWERY_MUC: ${JITSI_JVB_BREWERY_MUC:-jvbbrewery}
+      PUBLIC_URL: ${JITSI_PUBLIC_URL:-http://localhost:8880}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_SERVER: jitsi-prosody
+      TZ: ${TZ:-Europe/Rome}
+    volumes:
+      - jitsi_jicofo_cfg:/config
+
+  # --- Jitsi JVB (Video Bridge) ---
+  jitsi-jvb:
+    profiles: ["videochat"]
+    image: jitsi/jvb:${JITSI_IMAGE_TAG:-stable-10741}
+    container_name: tw-jitsi-jvb
+    restart: unless-stopped
+    depends_on:
+      - jitsi-prosody
+    environment:
+      JVB_ADVERTISE_IPS: ${JITSI_JVB_ADVERTISE_IPS:-}
+      JVB_AUTH_USER: ${JITSI_JVB_AUTH_USER:-jvb}
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-changeme-jvb}
+      JVB_BREWERY_MUC: ${JITSI_JVB_BREWERY_MUC:-jvbbrewery}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      PUBLIC_URL: ${JITSI_PUBLIC_URL:-http://localhost:8880}
+      TZ: ${TZ:-Europe/Rome}
+    ports:
+      - "10000:10000/udp"
+    volumes:
+      - jitsi_jvb_cfg:/config
+
+  # --- Jitsi Web (Frontend) ---
+  jitsi-web:
+    profiles: ["videochat"]
+    image: jitsi/web:${JITSI_IMAGE_TAG:-stable-10741}
+    container_name: tw-jitsi-web
+    restart: unless-stopped
+    depends_on:
+      - jitsi-prosody
+    environment:
+      ENABLE_GUESTS: ${JITSI_ENABLE_GUESTS:-1}
+      ENABLE_TRANSCRIPTIONS: ${JITSI_ENABLE_TRANSCRIPTIONS:-1}
+      PUBLIC_URL: ${JITSI_PUBLIC_URL:-http://localhost:8880}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_GUEST_DOMAIN: ${JITSI_XMPP_GUEST_DOMAIN:-guest.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_SERVER: jitsi-prosody
+      TZ: ${TZ:-Europe/Rome}
+    ports:
+      - "${JITSI_WEB_PORT:-8880}:80"
+      - "${JITSI_WEB_SSL_PORT:-8843}:443"
+    volumes:
+      - jitsi_web_cfg:/config
+
+  # --- Vosk Speech-to-Text Server (Italian Model) ---
+  vosk:
+    profiles: ["videochat"]
+    build:
+      context: ./vosk-it
+      dockerfile: Dockerfile
+    image: tw-vosk-it:latest
+    container_name: tw-vosk
+    restart: unless-stopped
+    ports:
+      - "2700:2700"
+
+  # --- Jigasi (transcriber mode -> Vosk STT) ---
+  jitsi-jigasi:
+    profiles: ["videochat"]
+    image: jitsi/jigasi:${JITSI_IMAGE_TAG:-stable-10741}
+    container_name: tw-jitsi-jigasi
+    restart: unless-stopped
+    depends_on:
+      - vosk
+      - jitsi-prosody
+    environment:
+      ENABLE_AUTH: ${JITSI_ENABLE_AUTH:-0}
+      ENABLE_TRANSCRIPTIONS: ${JITSI_ENABLE_TRANSCRIPTIONS:-1}
+      JIGASI_MODE: transcriber
+      JIGASI_BREWERY_MUC: ${JITSI_JIGASI_BREWERY_MUC:-jigasibrewery}
+      JIGASI_TRANSCRIBER_ADVERTISE_URL: "true"
+      JIGASI_TRANSCRIBER_ENABLE_SAVING: "true"
+      JIGASI_TRANSCRIBER_PASSWORD: ${JITSI_JIGASI_TRANSCRIBER_PASSWORD:-changeme-transcriber}
+      JIGASI_TRANSCRIBER_SEND_TXT: "true"
+      JIGASI_TRANSCRIBER_USER: ${JITSI_JIGASI_TRANSCRIBER_USER:-transcriber}
+      JIGASI_TRANSCRIBER_VOSK_URL: ${JITSI_TRANSCRIBER_VOSK_URL:-ws://vosk:2700}
+      JIGASI_XMPP_USER: ${JITSI_JIGASI_XMPP_USER:-jigasi}
+      JIGASI_XMPP_PASSWORD: ${JITSI_JIGASI_XMPP_PASSWORD:-changeme-jigasi}
+      PUBLIC_URL: ${JITSI_PUBLIC_URL:-http://localhost:8880}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_HIDDEN_DOMAIN: ${JITSI_XMPP_HIDDEN_DOMAIN:-hidden.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
+      XMPP_SERVER: jitsi-prosody
+      TZ: ${TZ:-Europe/Rome}
+    volumes:
+      - jitsi_jigasi_cfg:/config
+      - jitsi_transcripts:/tmp/transcripts
+
+  # --- Transcript Forwarder (Jigasi -> Mattermost Webhook) ---
+  transcript-forwarder:
+    profiles: ["videochat"]
+    image: python:3.12-slim
+    container_name: tw-transcript-forwarder
+    restart: unless-stopped
+    depends_on:
+      mattermost:
+        condition: service_started
+      jitsi-jigasi:
+        condition: service_started
+    environment:
+      MM_WEBHOOK_URL: ${MM_TRANSCRIPT_WEBHOOK_URL:-}
+      POLL_INTERVAL_SECONDS: ${MM_TRANSCRIPT_POLL_INTERVAL_SECONDS:-5}
+      TRANSCRIPT_STABLE_SECONDS: ${MM_TRANSCRIPT_STABLE_SECONDS:-20}
+      TRANSCRIPT_WATCH_DIR: /tmp/transcripts
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./utility:/app:ro
+      - jitsi_transcripts:/tmp/transcripts
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ -z "$$MM_WEBHOOK_URL" ]; then
+          echo "MM_WEBHOOK_URL is not configured; transcript forwarding is idle."
+          exec tail -f /dev/null
+        fi
+        exec python /app/transcript_forwarder.py
+
 volumes:
   postgres_data:
   qdrant_data:
@@ -419,8 +726,21 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
-
-
-
-
+  # --- Keycloak volumes ---
+  kc_postgres_data:
+  # --- Mattermost volumes ---
+  mm_postgres_data:
+  mm_data:
+  mm_config:
+  mm_logs:
+  mm_plugins:
+  mm_client_plugins:
+  mm_bleve_indexes:
+  # --- Jitsi volumes ---
+  jitsi_prosody_cfg:
+  jitsi_jicofo_cfg:
+  jitsi_jvb_cfg:
+  jitsi_web_cfg:
+  jitsi_jigasi_cfg:
+  jitsi_transcripts:
 
