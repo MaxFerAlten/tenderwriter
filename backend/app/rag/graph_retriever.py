@@ -244,7 +244,7 @@ class GraphRetriever:
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, query=query, top_k=top_k)
+            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
             records = await cursor.data()
 
             for record in records:
@@ -311,7 +311,7 @@ class GraphRetriever:
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, query=query, top_k=top_k)
+            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
             records = await cursor.data()
 
             for record in records:

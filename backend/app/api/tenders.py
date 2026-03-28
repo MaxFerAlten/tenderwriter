@@ -462,6 +462,7 @@ async def import_tender_document(
         tmp_path = tmp.name
 
     rag_engine = request.app.state.rag_engine
+    await rag_engine.ensure_initialized()
     
     from app.ingestion.pipeline import IngestionPipeline
     pipeline = IngestionPipeline(rag_engine)
@@ -1028,7 +1029,6 @@ async def close_tender_clarification(
         occurred_at=occurred_at,
     )
     return TenderLifecycleActionResponse(status="accepted", event_type="clarification_closed", tender_id=tender.id, payload={**payload, "clarification": clarification})
-
 
 
 

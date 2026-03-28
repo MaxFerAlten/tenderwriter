@@ -78,74 +78,75 @@ services:
     networks:
       - default
 
+  # --- OpenCode stack temporarily disabled ---
   # --- llama.cpp Server for OpenCode (Agentic Coder) ---
-  llama-opencode:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: tw-llama-opencode
-    restart: unless-stopped
-    ports:
-      - "8081:8080"
-    volumes:
-      - ./models:/models
-      - llama_opencode_cache:/root/.cache/llama.cpp
-    entrypoint: [ "/app/llama-server" ]
-    command: [ "-m", "/models/Qwen2.5-Coder-3B-Instruct-Q8_0.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "16" ]
-    networks:
-      - default
+  # llama-opencode:
+  #   image: ghcr.io/ggml-org/llama.cpp:server
+  #   container_name: tw-llama-opencode
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8081:8080"
+  #   volumes:
+  #     - ./models:/models
+  #     - llama_opencode_cache:/root/.cache/llama.cpp
+  #   entrypoint: [ "/app/llama-server" ]
+  #   command: [ "-m", "/models/Qwen2.5-Coder-3B-Instruct-Q8_0.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "16" ]
+  #   networks:
+  #     - default
 
   # --- OpenCode Web (AI Coding Agent) ---
-  opencode:
-    image: ghcr.io/anomalyco/opencode:latest
-    container_name: tw-opencode
-    restart: unless-stopped
-    stdin_open: true
-    tty: true
-    ports:
-      - "4096:4096"
-    volumes:
-      - ./backend:/workspace/backend:ro
-      - ./frontend:/workspace/frontend:ro
-      - opencode_config:/home/opencode/.config/opencode
-      - opencode_data:/home/opencode/.local/share/opencode
-    environment:
-      - OPENCODE_BASE_URL=http://tw-gateway:8081/v1
-      - OPENCODE_MODEL=llama-cpp/qwen2.5-32b-instruct
-      - OPENCODE_SERVER_PORT=4096
-      - OPENCODE_SERVER_HOST=0.0.0.0
-      # Per usare modelli cloud (Anthropic/OpenAI), imposta:
-      # - ANTHROPIC_API_KEY=your-key
-      # - OPENAI_API_KEY=your-key
-    command: [ "web", "--hostname", "0.0.0.0", "--port", "4096" ]
-    depends_on:
-      llama-opencode:
-        condition: service_started
-    networks:
-      - default
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  # opencode:
+  #   image: ghcr.io/anomalyco/opencode:latest
+  #   container_name: tw-opencode
+  #   restart: unless-stopped
+  #   stdin_open: true
+  #   tty: true
+  #   ports:
+  #     - "4096:4096"
+  #   volumes:
+  #     - ./backend:/workspace/backend:ro
+  #     - ./frontend:/workspace/frontend:ro
+  #     - opencode_config:/home/opencode/.config/opencode
+  #     - opencode_data:/home/opencode/.local/share/opencode
+  #   environment:
+  #     - OPENCODE_BASE_URL=http://tw-gateway:8081/v1
+  #     - OPENCODE_MODEL=llama-cpp/qwen2.5-32b-instruct
+  #     - OPENCODE_SERVER_PORT=4096
+  #     - OPENCODE_SERVER_HOST=0.0.0.0
+  #     # Per usare modelli cloud (Anthropic/OpenAI), imposta:
+  #     # - ANTHROPIC_API_KEY=your-key
+  #     # - OPENAI_API_KEY=your-key
+  #   command: [ "web", "--hostname", "0.0.0.0", "--port", "4096" ]
+  #   depends_on:
+  #     llama-opencode:
+  #       condition: service_started
+  #   networks:
+  #     - default
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
 
   # --- OpenCode CLI (Terminal Mode) ---
-  opencode-cli:
-    image: ghcr.io/anomalyco/opencode:latest
-    container_name: tw-opencode-cli
-    restart: unless-stopped
-    stdin_open: true
-    tty: true
-    volumes:
-      - ./backend:/workspace/backend:ro
-      - ./frontend:/workspace/frontend:ro
-      - opencode_config:/home/opencode/.config/opencode
-      - opencode_data:/home/opencode/.local/share/opencode
-    environment:
-      - OPENCODE_BASE_URL=http://tw-gateway:8081/v1
-      - OPENCODE_MODEL=llama-cpp/qwen2.5-32b-instruct
-    depends_on:
-      llama-opencode:
-        condition: service_started
-    networks:
-      - default
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  # opencode-cli:
+  #   image: ghcr.io/anomalyco/opencode:latest
+  #   container_name: tw-opencode-cli
+  #   restart: unless-stopped
+  #   stdin_open: true
+  #   tty: true
+  #   volumes:
+  #     - ./backend:/workspace/backend:ro
+  #     - ./frontend:/workspace/frontend:ro
+  #     - opencode_config:/home/opencode/.config/opencode
+  #     - opencode_data:/home/opencode/.local/share/opencode
+  #   environment:
+  #     - OPENCODE_BASE_URL=http://tw-gateway:8081/v1
+  #     - OPENCODE_MODEL=llama-cpp/qwen2.5-32b-instruct
+  #   depends_on:
+  #     llama-opencode:
+  #       condition: service_started
+  #   networks:
+  #     - default
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
 
   # --- MinIO (Object Storage) ---
   minio:
@@ -396,8 +397,6 @@ services:
     depends_on:
       llama-tender:
         condition: service_started
-      llama-opencode:
-        condition: service_started
     ports:
       - "8085:8080"
       - "8086:8081"
@@ -433,6 +432,3 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
-
-
-

@@ -44,11 +44,11 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("/api/anonymizer/stats", paths)
         self.assertIn("/api/anonymizer/test", paths)
 
-    def test_lifespan_awaits_rag_initialization(self) -> None:
+    def test_lifespan_schedules_rag_initialization_in_background(self) -> None:
         source = inspect.getsource(lifespan)
 
+        self.assertIn("app.state.rag_engine_initialization_task = asyncio.create_task", source)
         self.assertIn("await app.state.rag_engine.initialize()", source)
-        self.assertNotIn("asyncio.create_task(app.state.rag_engine.initialize())", source)
 
 
 if __name__ == "__main__":

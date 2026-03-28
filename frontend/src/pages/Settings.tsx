@@ -312,6 +312,12 @@ const Settings: FC = () => {
         );
     };
 
+    const toggleTargetAnonymizer = (t: GatewayTarget) => {
+        setGatewayTargets((prev) =>
+            prev.map((x) => (x.id === t.id ? { ...x, use_anonymizer: !x.use_anonymizer } : x))
+        );
+    };
+
     const removeTarget = (id: number) => {
         setGatewayTargets((prev) => prev.filter((x) => x.id !== id));
     };
@@ -531,13 +537,20 @@ const Settings: FC = () => {
                 }
             }
 
-            // Update: in both but with changed enabled
+            // Update: in both but with changed persisted flags
             for (const t of current) {
                 if (t.id > 0 && savedIds.has(t.id)) {
                     const original = saved.find((s) => s.id === t.id);
+                    const updatePayload: Partial<Omit<GatewayTarget, 'id'>> = {};
                     if (original && original.enabled !== t.enabled) {
+                        updatePayload.enabled = t.enabled;
+                    }
+                    if (original && original.use_anonymizer !== t.use_anonymizer) {
+                        updatePayload.use_anonymizer = t.use_anonymizer;
+                    }
+                    if (Object.keys(updatePayload).length > 0) {
                         try {
-                            await gatewayApi.updateTarget(t.id, { enabled: t.enabled });
+                            await gatewayApi.updateTarget(t.id, updatePayload);
                         } catch (err) {
                             errors.push(`Errore aggiornamento target ${t.base_url}`);
                         }
@@ -1324,8 +1337,17 @@ const Settings: FC = () => {
                                                     )}
                                                 </div>
                                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.base_url}</div>
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>prio {t.priority} · timeout {t.timeout_ms}ms · kind {t.target_kind}</div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                    prio {t.priority} · timeout {t.timeout_ms}ms · kind {t.target_kind} · anonymizer {t.use_anonymizer ? 'on' : 'off'}
+                                                </div>
                                             </div>
+                                            <button
+                                                className="btn btn-ghost btn-sm"
+                                                onClick={() => toggleTargetAnonymizer(t)}
+                                                title={t.use_anonymizer ? 'Disabilita anonymizer per questo target' : 'Abilita anonymizer per questo target'}
+                                            >
+                                                <Shield size={16} color={t.use_anonymizer ? '#10b981' : 'var(--text-muted)'} />
+                                            </button>
                                             <button className="btn btn-ghost btn-sm" onClick={() => toggleEnable(t)} title="Abilita/Disabilita">
                                                 {t.enabled ? <ToggleRight size={18} color="#10b981" /> : <ToggleLeft size={18} color="#ef4444" />}
                                             </button>

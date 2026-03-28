@@ -773,6 +773,7 @@ async def onlyoffice_callback(
                 if extracted_text.strip():
                     try:
                         rag_engine = request.app.state.rag_engine
+                        await rag_engine.ensure_initialized()
                         from app.ingestion.pipeline import IngestionPipeline
                         pipeline = IngestionPipeline(rag_engine)
                         
@@ -806,6 +807,7 @@ async def onlyoffice_callback(
                 if extracted_text.strip():
                     try:
                         rag_engine = request.app.state.rag_engine
+                        await rag_engine.ensure_initialized()
                         from app.ingestion.pipeline import IngestionPipeline
                         pipeline = IngestionPipeline(rag_engine)
                         
@@ -902,4 +904,3 @@ async def force_save(
     except Exception as e:
         logger.error("Force save failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Force save failed: {str(e)}")
-

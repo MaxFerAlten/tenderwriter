@@ -7,6 +7,7 @@ fuses results, re-ranks them, and generates responses using a local LLM.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -117,56 +118,95 @@ class HybridRAGEngine:
         self._last_anonymizer_error_reason: str | None = None
         self._last_privacy_debug_trace: dict[str, Any] | None = None
         self._initialized = False
+        self._init_lock = asyncio.Lock()
+        self._initialization_task: asyncio.Task[None] | None = None
+
+    def start_initialization(self) -> asyncio.Task[None]:
+        """Kick off initialization in the background if needed."""
+        if self._initialized:
+            return self._initialization_task  # type: ignore[return-value]
+
+        if self._initialization_task and not self._initialization_task.done():
+            return self._initialization_task
+
+        loop = asyncio.get_running_loop()
+        self._initialization_task = loop.create_task(self.initialize())
+        return self._initialization_task
+
+    async def ensure_initialized(self) -> None:
+        """Wait for the engine to become ready, initializing on demand."""
+        if self._initialized:
+            return
+
+        if self._initialization_task and not self._initialization_task.done():
+            await asyncio.shield(self._initialization_task)
+            return
+
+        await self.initialize()
 
     async def initialize(self):
         """Initialize all RAG components."""
-        logger.info("Initializing HybridRAG Engine...", 
-                    qdrant_host=settings.qdrant_host, 
+        if self._initialized:
+            return
+
+        async with self._init_lock:
+            if self._initialized:
+                return
+
+            self._initialization_task = asyncio.current_task()
+            try:
+                logger.info(
+                    "Initializing HybridRAG Engine...",
+                    qdrant_host=settings.qdrant_host,
                     qdrant_port=settings.qdrant_port,
-                    neo4j_uri=settings.neo4j_uri)
+                    neo4j_uri=settings.neo4j_uri,
+                )
 
-        # Embedder
-        self.embedder = get_embedder()
+                # Embedder
+                self.embedder = get_embedder()
 
-        # Chunker
-        self.chunker = SemanticChunker(
-            embedder=self.embedder,
-            min_chunk_size=settings.chunk_min_size,
-            max_chunk_size=settings.chunk_max_size,
-        )
+                # Chunker
+                self.chunker = SemanticChunker(
+                    embedder=self.embedder,
+                    min_chunk_size=settings.chunk_min_size,
+                    max_chunk_size=settings.chunk_max_size,
+                )
 
-        # Dense retriever (Qdrant)
-        self.dense_retriever = DenseRetriever(self.embedder)
-        try:
-            await self.dense_retriever.initialize()
-        except Exception as e:
-            logger.warning("Dense retriever init failed (Qdrant may be unavailable)", error=str(e))
+                # Dense retriever (Qdrant)
+                self.dense_retriever = DenseRetriever(self.embedder)
+                try:
+                    await self.dense_retriever.initialize()
+                except Exception as e:
+                    logger.warning("Dense retriever init failed (Qdrant may be unavailable)", error=str(e))
 
-        # Sparse retriever (BM25)
-        self.sparse_retriever = SparseRetriever()
+                # Sparse retriever (BM25)
+                self.sparse_retriever = SparseRetriever()
 
-        # Graph retriever (Neo4j)
-        self.graph_retriever = GraphRetriever()
-        try:
-            await self.graph_retriever.initialize()
-        except Exception as e:
-            logger.warning("Graph retriever init failed (Neo4j may be unavailable)", error=str(e))
+                # Graph retriever (Neo4j)
+                self.graph_retriever = GraphRetriever()
+                try:
+                    await self.graph_retriever.initialize()
+                except Exception as e:
+                    logger.warning("Graph retriever init failed (Neo4j may be unavailable)", error=str(e))
 
-        # Fusion
-        self.fusion = RankFusion()
+                # Fusion
+                self.fusion = RankFusion()
 
-        # Re-ranker
-        self.reranker = Reranker()
+                # Re-ranker
+                self.reranker = Reranker()
 
-        # Generator (Llama Server)
-        self.generator = Generator(
-            base_url=settings.llama_server_url,
-            model=settings.llama_model,
-            timeout=settings.llama_timeout
-        )
+                # Generator (Llama Server)
+                self.generator = Generator(
+                    base_url=settings.llama_server_url,
+                    model=settings.llama_model,
+                    timeout=settings.llama_timeout
+                )
 
-        self._initialized = True
-        logger.info("HybridRAG Engine initialized successfully")
+                self._initialized = True
+                logger.info("HybridRAG Engine initialized successfully")
+            except Exception:
+                self._initialization_task = None
+                raise
 
     async def query(self, rag_query: RAGQuery) -> RAGResponse:
         """
@@ -178,8 +218,7 @@ class HybridRAGEngine:
         Returns:
             RAGResponse with the generated answer and source references.
         """
-        if not self._initialized:
-            raise RuntimeError("HybridRAG Engine not initialized. Call initialize() first.")
+        await self.ensure_initialized()
 
         logger.info(
             "RAG query started",
@@ -386,6 +425,8 @@ class HybridRAGEngine:
 
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
+        await self.ensure_initialized()
+
         # Run retrieval pipeline (same as query, but stream the generation)
         # For brevity, we reuse the query method's retrieval logic
         rag_query_copy = RAGQuery(
@@ -847,6 +888,8 @@ class HybridRAGEngine:
         metadata: ChunkMetadata | None = None,
     ) -> list[TextChunk]:
         """Chunk a document and prepare it for indexing."""
+        if not self._initialized or not self.chunker:
+            raise RuntimeError("HybridRAG Engine not initialized yet.")
         return self.chunker.chunk_text(text, metadata)
 
     def index_chunks(
@@ -855,6 +898,12 @@ class HybridRAGEngine:
         collection: str = "documents",
     ) -> list[str]:
         """Index chunks into the dense retriever (Qdrant)."""
+        if (
+            not self._initialized
+            or not self.dense_retriever
+            or not self.sparse_retriever
+        ):
+            raise RuntimeError("HybridRAG Engine not initialized yet.")
         texts = [c.text for c in chunks]
         metadatas = [c.metadata.__dict__ for c in chunks]
 

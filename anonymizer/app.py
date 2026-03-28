@@ -74,7 +74,6 @@ def _is_allowed_target_url(target_url: str) -> bool:
 
     return not any(
         [
-            address.is_private,
             address.is_loopback,
             address.is_link_local,
             address.is_multicast,

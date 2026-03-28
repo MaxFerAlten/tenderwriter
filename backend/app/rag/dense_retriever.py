@@ -7,6 +7,7 @@ stored in Qdrant collections.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -47,12 +48,13 @@ class DenseRetriever:
             host=settings.qdrant_host,
             port=settings.qdrant_port,
             api_key=settings.qdrant_api_key or None,
+            timeout=60.0,
         )
         logger.info("Connected to Qdrant", host=settings.qdrant_host, port=settings.qdrant_port)
 
         # Create default collections if they don't exist
         for collection_name in ["documents", "content_blocks"]:
-            self._ensure_collection(collection_name)
+            await asyncio.to_thread(self._ensure_collection, collection_name)
 
     def _ensure_collection(self, name: str):
         """Create a Qdrant collection if it doesn't exist."""

@@ -2,7 +2,8 @@
 TenderWriter — FastAPI Application Entry Point
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -65,8 +66,8 @@ async def lifespan(app: FastAPI):
         from app.rag.engine import HybridRAGEngine
 
         app.state.rag_engine = HybridRAGEngine()
-        await app.state.rag_engine.initialize()
-        logger.info("HybridRAG engine initialized")
+        app.state.rag_engine_initialization_task = None
+        logger.info("HybridRAG engine ready for lazy initialization")
 
     except Exception as e:
         import traceback
@@ -78,6 +79,11 @@ async def lifespan(app: FastAPI):
 
     try:
         logger.info("Shutting down TenderWriter")
+        init_task = getattr(app.state, "rag_engine_initialization_task", None)
+        if init_task and not init_task.done():
+            init_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await init_task
         if hasattr(app.state, "rag_engine"):
             await app.state.rag_engine.shutdown()
         from app.db.redis import close_redis
@@ -138,4 +144,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
