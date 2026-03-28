@@ -189,6 +189,13 @@ a:hover {
   display: none;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-default);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.4));
+}
+
 .nav-item {
   display: flex;
   align-items: center;

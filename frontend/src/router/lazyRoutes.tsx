@@ -21,6 +21,7 @@ const routeLoaders = {
     '/monitor': loadPage(() => import('../pages/SystemMonitor')),
     '/developments': loadPage(() => import('../pages/Developments')),
     '/permissions': loadPage(() => import('../pages/TenderPermissions')),
+    '/tender-access': loadPage(() => import('../pages/TenderPermissions')),
     '/login': loadPage(() => import('../pages/Login')),
     '/register': loadPage(() => import('../pages/Register')),
     '/observability-kpi/:tenderId/operational-workspace': loadPage(() => import('../pages/OperationalWorkspacePage')),
@@ -60,6 +61,10 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
 
     if (/^\/tenders\/[^/]+\/chat$/i.test(path)) {
         return '/tenders/:id/chat';
+    }
+
+    if (path === '/tender-access') {
+        return '/tender-access';
     }
 
     return (path in routeLoaders ? path : null) as keyof typeof routeLoaders | null;
@@ -107,7 +112,7 @@ export const ComponentsPage = lazyPage('/components');
 export const SettingsPage = lazyPage('/settings');
 export const SystemMonitorPage = lazyPage('/monitor');
 export const DevelopmentsPage = lazyPage('/developments');
-export const TenderPermissionsPage = lazyPage('/permissions');
+export const TenderPermissionsPage = lazyPage('/tender-access');
 export const LoginPage = lazyPage('/login');
 export const RegisterPage = lazyPage('/register');
 export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/operational-workspace');
