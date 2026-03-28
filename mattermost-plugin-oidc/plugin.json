@@ -1,0 +1,67 @@
+{
+    "id": "com.tenderwriter.oidc",
+    "name": "TenderWriter OIDC",
+    "description": "OpenID Connect authentication for Mattermost Team Edition via Keycloak",
+    "homepage_url": "https://github.com/tenderwriter",
+    "version": "1.0.0",
+    "min_server_version": "9.0.0",
+    "server": {
+        "executables": {
+            "linux-amd64": "server/dist/plugin-linux-amd64"
+        }
+    },
+    "settings_schema": {
+        "header": "TenderWriter OIDC — Keycloak SSO for Team Edition. Settings can also be overridden via environment variables (TW_OIDC_*).",
+        "settings": [
+            {
+                "key": "Enable",
+                "display_name": "Enable OIDC Authentication",
+                "type": "bool",
+                "default": false,
+                "help_text": "Enable OpenID Connect authentication via Keycloak. Override: TW_OIDC_ENABLE=true"
+            },
+            {
+                "key": "DiscoveryEndpoint",
+                "display_name": "OIDC Discovery Endpoint",
+                "type": "text",
+                "default": "http://keycloak:8080/realms/tenderwriter/.well-known/openid-configuration",
+                "help_text": "Keycloak well-known endpoint (internal Docker URL). Override: TW_OIDC_DISCOVERY_ENDPOINT"
+            },
+            {
+                "key": "ClientID",
+                "display_name": "Client ID",
+                "type": "text",
+                "default": "mattermost",
+                "help_text": "Keycloak client ID for Mattermost. Override: TW_OIDC_CLIENT_ID"
+            },
+            {
+                "key": "ClientSecret",
+                "display_name": "Client Secret",
+                "type": "text",
+                "default": "",
+                "help_text": "Keycloak client secret. Override: TW_OIDC_CLIENT_SECRET"
+            },
+            {
+                "key": "ButtonText",
+                "display_name": "Login Button Text",
+                "type": "text",
+                "default": "Accedi con Keycloak",
+                "help_text": "Text shown on the SSO login link. Override: TW_OIDC_BUTTON_TEXT"
+            },
+            {
+                "key": "PublicBaseURL",
+                "display_name": "Public Keycloak Base URL",
+                "type": "text",
+                "default": "http://localhost:8180",
+                "help_text": "Browser-facing Keycloak base URL used for redirects and issuer matching. Override: TW_OIDC_PUBLIC_BASE_URL"
+            },
+            {
+                "key": "InternalBaseURL",
+                "display_name": "Internal Keycloak Base URL",
+                "type": "text",
+                "default": "http://keycloak:8080",
+                "help_text": "Container-internal Keycloak base URL used for token and JWKS backchannel calls. Override: TW_OIDC_INTERNAL_BASE_URL"
+            }
+        ]
+    }
+}

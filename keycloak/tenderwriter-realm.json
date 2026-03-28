@@ -162,10 +162,11 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "secret": "CHANGE_ME_mattermost_client_secret",
-      "redirectUris": [
-        "http://localhost:3000/mm/signup/openid/complete"
-      ],
+        "secret": "CHANGE_ME_mattermost_client_secret",
+        "redirectUris": [
+          "http://localhost:3000/mm/signup/openid/complete",
+          "http://localhost:3000/mm/plugins/com.tenderwriter.oidc/callback"
+        ],
       "webOrigins": [
         "http://localhost:3000"
       ],

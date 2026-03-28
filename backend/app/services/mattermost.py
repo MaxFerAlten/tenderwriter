@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from urllib.parse import quote
+
 import httpx
 import structlog
 from dataclasses import dataclass
@@ -24,6 +26,7 @@ logger = structlog.get_logger()
 
 MM_INTERNAL_URL = os.environ.get("MM_INTERNAL_URL", "http://mattermost:8065")
 MM_SUBPATH = os.environ.get("MM_SUBPATH", "/mm")
+MM_EDITION = os.environ.get("MM_EDITION", "enterprise")  # "enterprise" or "team"
 MM_ADMIN_TOKEN: str | None = None  # lazy-initialized
 
 
@@ -101,6 +104,77 @@ async def is_mm_oidc_ready() -> bool:
         return False
 
     return str(config.get("EnableSignUpWithOpenId", "")).strip().lower() == "true"
+
+
+async def is_mm_plugin_oidc_ready() -> bool:
+    """Return whether the TW OIDC plugin is active on Mattermost Team Edition.
+
+    Queries the plugin's /health endpoint. When it responds with
+    {"enabled": true, "initialized": true}, the plugin is ready.
+    """
+    try:
+        async with httpx.AsyncClient(base_url=MM_INTERNAL_URL, timeout=5) as client:
+            resp = await client.get(f"{MM_SUBPATH}/plugins/com.tenderwriter.oidc/health")
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            return data.get("enabled") is True and data.get("initialized") is True
+    except Exception as exc:
+        logger.debug("mattermost.plugin_oidc_probe_failed", error=str(exc))
+        return False
+
+
+async def get_mm_sso_mode() -> str:
+    """Determine which SSO mode to use for Mattermost.
+
+    Returns:
+        "native_oidc"  — Enterprise Edition with native OpenID Connect
+        "plugin_oidc"  — Team Edition with TW OIDC plugin
+        "legacy"       — No SSO, use PAT-based browser sessions
+    """
+    from app.config import settings
+    auth_provider = (settings.auth_provider or "").strip().lower()
+
+    if auth_provider != "keycloak":
+        return "legacy"
+
+    if MM_EDITION == "enterprise" and await is_mm_oidc_ready():
+        return "native_oidc"
+
+    if MM_EDITION == "team" and await is_mm_plugin_oidc_ready():
+        return "plugin_oidc"
+
+    return "legacy"
+
+
+async def get_mm_sso_mode_for_auth_source(auth_source: str | None) -> str:
+    """Determine the Mattermost SSO mode for the current TenderWriter session.
+
+    In hybrid auth mode, only Keycloak-backed TenderWriter sessions should use
+    Mattermost SSO. Legacy TenderWriter sessions must keep using the fallback
+    browser-session flow so that both login methods can coexist.
+    """
+    from app.config import settings
+
+    auth_provider = (settings.auth_provider or "").strip().lower()
+    normalized_source = (auth_source or "").strip().lower()
+
+    if auth_provider == "legacy":
+        return "legacy"
+
+    if auth_provider == "keycloak":
+        normalized_source = "keycloak"
+
+    if normalized_source != "keycloak":
+        return "legacy"
+
+    if MM_EDITION == "enterprise" and await is_mm_oidc_ready():
+        return "native_oidc"
+
+    if MM_EDITION == "team" and await is_mm_plugin_oidc_ready():
+        return "plugin_oidc"
+
+    return "legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +433,7 @@ async def create_sso_chat_session(
     user_email: str,
     user_name: str,
     tw_user_id: int,
+    sso_mode: str = "native_oidc",
 ) -> FullChatSession:
     """Create everything needed for SSO-based Full Chat (no PAT generated).
 
@@ -371,6 +446,9 @@ async def create_sso_chat_session(
     3. Add user to channel
     4. Return deep-link URL (no token)
     """
+    if sso_mode not in {"native_oidc", "plugin_oidc"}:
+        raise ValueError(f"Unsupported Mattermost SSO mode: {sso_mode}")
+
     mm_user_id, mm_username = await ensure_mm_user(user_email, user_name, tw_user_id)
     channel_id = await ensure_tender_channel(tender_id, tender_title)
     await add_user_to_channel(channel_id, mm_user_id)
@@ -381,7 +459,14 @@ async def create_sso_chat_session(
     team_name = resp.json()["name"]
 
     channel_name = f"tender-{tender_id}-{_slugify(tender_title, 40)}"
-    mm_url = f"/mm/{team_name}/channels/{channel_name}"
+    channel_path = f"/mm/{team_name}/channels/{channel_name}"
+    mm_url = channel_path
+
+    if sso_mode == "plugin_oidc":
+        mm_url = (
+            "/mm/plugins/com.tenderwriter.oidc/login"
+            f"?redirect_to={quote(channel_path, safe='')}"
+        )
 
     return FullChatSession(
         mm_url=mm_url,

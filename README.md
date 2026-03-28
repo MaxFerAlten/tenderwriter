@@ -86,7 +86,10 @@ AUTH_PROVIDER=hybrid
 VITE_AUTH_MODE=hybrid
 KEYCLOAK_URL=http://localhost:8180
 KEYCLOAK_INTERNAL_URL=http://keycloak:8080
-MM_OIDC_ENABLE=true
+MM_EDITION=team
+MM_OIDC_ENABLE=false
+TW_OIDC_ENABLE=true
+MM_LOGIN_REDIRECT_MODE=plugin
 ```
 
 Significato operativo:
@@ -99,6 +102,52 @@ Con `hybrid`, la pagina `/login` mostra:
 
 - bottone `Accedi con SSO`
 - form email/password classico
+
+### Switching Mattermost: Enterprise vs Team/Community
+
+Il progetto supporta due modalità Mattermost, selezionabili solo via configurazione:
+
+- `MM_EDITION=team`: usa Mattermost Team/Community con plugin `com.tenderwriter.oidc` ed è il default
+- `MM_EDITION=enterprise`: usa Mattermost Enterprise/Entry con OIDC nativo
+
+Configurazione di default per Team/Community:
+
+```env
+MM_EDITION=team
+MM_OIDC_ENABLE=false
+TW_OIDC_ENABLE=true
+MM_LOGIN_REDIRECT_MODE=plugin
+```
+
+Configurazione alternativa per Enterprise/Entry:
+
+```env
+MM_EDITION=enterprise
+MM_OIDC_ENABLE=true
+TW_OIDC_ENABLE=false
+MM_LOGIN_REDIRECT_MODE=off
+```
+
+Note operative:
+
+- il realm Keycloak importato include già entrambe le callback Mattermost:
+  - `http://localhost:3000/mm/signup/openid/complete`
+  - `http://localhost:3000/mm/plugins/com.tenderwriter.oidc/callback`
+- in modalità `team`, l’accesso diretto a `http://localhost:3000/mm/login` può essere reindirizzato al plugin solo se `MM_LOGIN_REDIRECT_MODE=plugin`
+- in modalità `hybrid`, solo le sessioni TenderWriter autenticate via Keycloak usano l’SSO Mattermost; i login tradizionali continuano a usare il fallback legacy
+
+Switch rapido da terminale:
+
+```powershell
+# passa a Team/Community + plugin
+.\utility\switch-mattermost-mode.ps1 team
+
+# passa a Enterprise/Entry + OIDC nativo
+.\utility\switch-mattermost-mode.ps1 enterprise
+
+# aggiorna solo .env senza riavviare i container
+.\utility\switch-mattermost-mode.ps1 team -NoRestart
+```
 
 ### Credenziali di sviluppo
 

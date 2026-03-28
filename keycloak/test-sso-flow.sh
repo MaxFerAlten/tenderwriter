@@ -21,6 +21,8 @@ KC_REALM="${KC_REALM:-tenderwriter}"
 MM_URL="${MM_URL:-http://localhost:3000/mm}"
 TW_URL="${TW_URL:-http://localhost:3000}"
 TW_API_URL="${TW_API_URL:-http://localhost:8000}"
+MM_EDITION="${MM_EDITION:-team}"
+MM_LOGIN_REDIRECT_MODE="${MM_LOGIN_REDIRECT_MODE:-plugin}"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -113,6 +115,26 @@ if [ -n "$ADMIN_TOKEN" ]; then
         "${KC_URL}/admin/realms/${KC_REALM}/clients?clientId=mattermost" 2>/dev/null)
     if echo "$MM_CLIENT" | grep -q '"mattermost"'; then
         pass "Client 'mattermost' exists in realm"
+
+        MM_CLIENT_UUID=$(echo "$MM_CLIENT" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+        if [ -n "$MM_CLIENT_UUID" ]; then
+            MM_CLIENT_DETAIL=$(curl -sf -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                "${KC_URL}/admin/realms/${KC_REALM}/clients/${MM_CLIENT_UUID}" 2>/dev/null)
+
+            if echo "$MM_CLIENT_DETAIL" | grep -q 'http://localhost:3000/mm/signup/openid/complete'; then
+                pass "Mattermost native OIDC callback is registered in Keycloak"
+            else
+                fail "Mattermost native OIDC callback missing in Keycloak client"
+            fi
+
+            if echo "$MM_CLIENT_DETAIL" | grep -q 'http://localhost:3000/mm/plugins/com.tenderwriter.oidc/callback'; then
+                pass "Mattermost plugin OIDC callback is registered in Keycloak"
+            else
+                fail "Mattermost plugin OIDC callback missing in Keycloak client"
+            fi
+        else
+            warn "Could not determine mattermost client UUID"
+        fi
     else
         fail "Client 'mattermost' NOT found in realm"
     fi
@@ -130,14 +152,36 @@ else
     warn "Mattermost may not be running at ${MM_URL} (got: ${MM_HEALTH})"
 fi
 
-# --- 6. Mattermost OIDC config ---
-MM_CONFIG=$(curl -sf "${MM_URL}/api/v4/config/client?format=old" 2>/dev/null || echo "{}")
-if echo "$MM_CONFIG" | grep -q '"EnableSignUpWithOpenId":"true"'; then
-    pass "Mattermost OIDC is ENABLED"
-elif echo "$MM_CONFIG" | grep -q '"EnableSignUpWithOpenId":"false"'; then
-    warn "Mattermost OIDC is DISABLED (set MM_OIDC_ENABLE=true)"
+# --- 6. Mattermost auth mode ---
+echo ""
+echo "--- Mattermost Auth Mode ---"
+if [ "$MM_EDITION" = "enterprise" ]; then
+    MM_CONFIG=$(curl -sf "${MM_URL}/api/v4/config/client?format=old" 2>/dev/null || echo "{}")
+    if echo "$MM_CONFIG" | grep -q '"EnableSignUpWithOpenId":"true"'; then
+        pass "Mattermost native OIDC is ENABLED"
+    elif echo "$MM_CONFIG" | grep -q '"EnableSignUpWithOpenId":"false"'; then
+        warn "Mattermost native OIDC is DISABLED (set MM_OIDC_ENABLE=true)"
+    else
+        warn "Could not determine Mattermost native OIDC status"
+    fi
 else
-    warn "Could not determine Mattermost OIDC status"
+    PLUGIN_HEALTH=$(curl -sf "${MM_URL}/plugins/com.tenderwriter.oidc/health" 2>/dev/null || echo "{}")
+    if echo "$PLUGIN_HEALTH" | grep -q '"initialized":true'; then
+        pass "Mattermost Team plugin OIDC is active"
+    else
+        fail "Mattermost Team plugin OIDC health check failed"
+    fi
+
+    if [ "$MM_LOGIN_REDIRECT_MODE" = "plugin" ]; then
+        LOGIN_HEADERS=$(curl -sI "${MM_URL}/login" 2>/dev/null || true)
+        if echo "$LOGIN_HEADERS" | grep -qi 'Location: .*plugins/com.tenderwriter.oidc/login'; then
+            pass "Mattermost /login redirects to the OIDC plugin"
+        else
+            fail "Mattermost /login is not redirecting to the OIDC plugin"
+        fi
+    else
+        warn "MM_LOGIN_REDIRECT_MODE is '${MM_LOGIN_REDIRECT_MODE}' (set to 'plugin' for direct SSO entry)"
+    fi
 fi
 
 # --- 7. TenderWriter health ---
@@ -161,11 +205,18 @@ fi
 echo "============================================"
 echo ""
 echo "Next steps:"
-echo "  1. Set MM_OIDC_ENABLE=true in .env"
-echo "  2. Set AUTH_PROVIDER=keycloak and VITE_AUTH_MODE=keycloak in .env"
-echo "  3. Create a test user in Keycloak admin: ${KC_URL}"
-echo "  4. Try login at ${TW_URL}/login (SSO button)"
-echo "  5. Try Mattermost login at ${MM_URL} (Keycloak button)"
+if [ "$MM_EDITION" = "enterprise" ]; then
+    echo "  1. Set MM_EDITION=enterprise and MM_OIDC_ENABLE=true in .env"
+    echo "  2. Set AUTH_PROVIDER=keycloak or hybrid, and align VITE_AUTH_MODE"
+    echo "  3. Try TenderWriter login at ${TW_URL}/login"
+    echo "  4. Try Mattermost login at ${MM_URL}"
+else
+    echo "  1. Set MM_EDITION=team, TW_OIDC_ENABLE=true and MM_LOGIN_REDIRECT_MODE=plugin"
+    echo "  2. Set AUTH_PROVIDER=keycloak or hybrid, and align VITE_AUTH_MODE"
+    echo "  3. Try TenderWriter login at ${TW_URL}/login"
+    echo "  4. Try Mattermost direct login at ${MM_URL}/login"
+fi
+echo "  5. Create or reuse a test user in Keycloak admin: ${KC_URL}"
 echo ""
 
 exit $FAILURES

@@ -310,6 +310,7 @@ services:
       MM_PUBLIC_URL: ${MM_SITE_URL:-http://localhost:8065}
       MM_ADMIN_USER: ${MM_ADMIN_USER:-tw-admin}
       MM_ADMIN_PASS: ${MM_ADMIN_PASS:-TW2026Secure!Pass}
+      MM_EDITION: ${MM_EDITION:-team}
       # --- Auth Provider (set to "keycloak" to enable OIDC) ---
       AUTH_PROVIDER: ${AUTH_PROVIDER:-legacy}
       KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:8180}
@@ -382,6 +383,8 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    environment:
+      MM_LOGIN_REDIRECT_MODE: ${MM_LOGIN_REDIRECT_MODE:-off}
     volumes:
       - ./frontend/src:/app/src # Hot reload in development
 
@@ -504,29 +507,57 @@ services:
       timeout: 10s
       retries: 5
 
-  # --- Mattermost Enterprise Edition (Entry mode, free without license) ---
+  # --- Mattermost OIDC Plugin Builder (Team Edition only) ---
+  # Builds the TW OIDC plugin and copies it to the plugins volume.
+  # Only needed when MM_EDITION=team; harmless when enterprise.
+  mm-plugin-oidc:
+    profiles: ["videochat"]
+    build:
+      context: ./mattermost-plugin-oidc
+    container_name: tw-mm-plugin-oidc
+    volumes:
+      - mm_plugins:/mnt/plugins
+    restart: "no"
+
+  # --- Mattermost (switchable: team or enterprise) ---
+  # MM_EDITION=team       → Team Edition (open source, OIDC via plugin, default)
+  # MM_EDITION=enterprise → Enterprise Edition (Entry mode, free, native OIDC)
   mattermost:
     profiles: ["videochat"]
-    image: mattermost/mattermost-enterprise-edition:${MM_IMAGE_TAG:-10.11.8}
+    image: mattermost/mattermost-${MM_EDITION:-team}-edition:${MM_IMAGE_TAG:-10.11.8}
     container_name: tw-mattermost
     restart: unless-stopped
     depends_on:
       mm-postgres:
         condition: service_healthy
+      mm-plugin-oidc:
+        condition: service_completed_successfully
     environment:
       MM_SQLSETTINGS_DRIVERNAME: postgres
       MM_SQLSETTINGS_DATASOURCE: "postgres://${MM_DBUSER:-mmuser}:${MM_DBPASS:-DefaultMM2024Pass}@mm-postgres:5432/${MM_DBNAME:-mattermost}?sslmode=disable&connect_timeout=10"
       MM_SERVICESETTINGS_SITEURL: http://localhost:3000/mm
+      MM_PLUGINSETTINGS_ENABLE: "true"
+      MM_PLUGINSETTINGS_REQUIREPLUGINSIGNATURE: "false"
+      MM_PLUGINSETTINGS_PLUGINSTATES: >-
+        {"com.mattermost.calls":{"Enable":true},"com.mattermost.nps":{"Enable":true},"jitsi":{"Enable":true},"mattermost-ai":{"Enable":true},"com.tenderwriter.oidc":{"Enable":${TW_OIDC_ENABLE:-false}}}
       MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
       MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
       MM_BLEVESETTINGS_INDEXDIR: /mattermost/bleve-indexes
-      # --- OpenID Connect (Keycloak) ---
+      # --- Native OpenID Connect (Enterprise Edition only) ---
       MM_OPENIDSETTINGS_ENABLE: "${MM_OIDC_ENABLE:-false}"
       MM_OPENIDSETTINGS_DISCOVERYENDPOINT: "${MM_OIDC_DISCOVERY_ENDPOINT:-http://keycloak:8080/realms/tenderwriter/.well-known/openid-configuration}"
       MM_OPENIDSETTINGS_ID: "${MM_OIDC_CLIENT_ID:-mattermost}"
       MM_OPENIDSETTINGS_SECRET: "${MM_OIDC_CLIENT_SECRET:-CHANGE_ME_mattermost_client_secret}"
       MM_OPENIDSETTINGS_BUTTONTEXT: "${MM_OIDC_BUTTON_TEXT:-Accedi con Keycloak}"
       MM_OPENIDSETTINGS_BUTTONCOLOR: "${MM_OIDC_BUTTON_COLOR:-#0058CC}"
+      # --- TW OIDC Plugin (Team Edition only) ---
+      TW_OIDC_ENABLE: "${TW_OIDC_ENABLE:-false}"
+      TW_OIDC_DISCOVERY_ENDPOINT: "${MM_OIDC_DISCOVERY_ENDPOINT:-http://keycloak:8080/realms/tenderwriter/.well-known/openid-configuration}"
+      TW_OIDC_CLIENT_ID: "${MM_OIDC_CLIENT_ID:-mattermost}"
+      TW_OIDC_CLIENT_SECRET: "${MM_OIDC_CLIENT_SECRET:-CHANGE_ME_mattermost_client_secret}"
+      TW_OIDC_BUTTON_TEXT: "${MM_OIDC_BUTTON_TEXT:-Accedi con Keycloak}"
+      TW_OIDC_PUBLIC_BASE_URL: "${KEYCLOAK_URL:-http://localhost:8180}"
+      TW_OIDC_INTERNAL_BASE_URL: "${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}"
     ports:
       - "${MM_PORT:-8065}:8065"
     volumes:

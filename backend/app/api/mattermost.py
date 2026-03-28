@@ -3,9 +3,10 @@
 Provides the endpoint for opening a "Full Chat" session in Mattermost,
 automatically creating the user, channel, and session token.
 
-Supports two modes:
-- legacy: creates PAT for cookie-based auto-login
-- keycloak: provisions channel/membership only, relies on SSO for auth
+Runtime modes:
+- legacy: creates a real Mattermost browser session via backend fallback
+- native_oidc: Enterprise/Entry uses Mattermost built-in OpenID Connect
+- plugin_oidc: Team Edition uses the TenderWriter OIDC plugin
 """
 
 from __future__ import annotations
@@ -19,7 +20,11 @@ from app.config import settings
 from app.db.database import get_db
 from app.models import Tender
 from app.api.auth import get_current_user, UserResponse
-from app.services.mattermost import create_fullchat_session, create_sso_chat_session, is_mm_oidc_ready
+from app.services.mattermost import (
+    create_fullchat_session,
+    create_sso_chat_session,
+    get_mm_sso_mode_for_auth_source,
+)
 
 import structlog
 
@@ -57,10 +62,10 @@ async def open_fullchat(
     if not tender:
         raise HTTPException(status_code=404, detail="Tender not found")
 
-    use_sso = (
-        (settings.auth_provider or "").strip().lower() == "keycloak"
-        and await is_mm_oidc_ready()
+    mm_sso_mode = await get_mm_sso_mode_for_auth_source(
+        getattr(current_user, "auth_source", None)
     )
+    use_sso = mm_sso_mode in {"native_oidc", "plugin_oidc"}
 
     try:
         if use_sso:
@@ -70,13 +75,20 @@ async def open_fullchat(
                 user_email=current_user.email,
                 user_name=current_user.name,
                 tw_user_id=current_user.id,
+                sso_mode=mm_sso_mode,
             )
         else:
-            if (settings.auth_provider or "").strip().lower() == "keycloak":
+            if (settings.auth_provider or "").strip().lower() in {"keycloak", "hybrid"}:
                 logger.warning(
                     "mattermost.fullchat_fallback_legacy",
                     tender_id=tender_id,
-                    reason="mattermost_oidc_not_ready",
+                    reason=(
+                        "current_session_not_keycloak"
+                        if getattr(current_user, "auth_source", None) != "keycloak"
+                        else "mattermost_sso_not_ready"
+                    ),
+                    auth_source=getattr(current_user, "auth_source", None),
+                    mm_sso_mode=mm_sso_mode,
                 )
             session = await create_fullchat_session(
                 tender_id=tender.id,

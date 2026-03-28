@@ -202,4 +202,6 @@ class KeycloakOIDCProvider:
                          and not any(r in all_roles for r in ("tw_admin",))),
         )
 
-        return AuthenticatedUser.model_validate(user)
+        return AuthenticatedUser.model_validate(user).model_copy(
+            update={"auth_source": "keycloak"}
+        )

@@ -69,4 +69,6 @@ class LegacyJWTProvider:
                 detail="Account not verified",
             )
 
-        return AuthenticatedUser.model_validate(user)
+        return AuthenticatedUser.model_validate(user).model_copy(
+            update={"auth_source": "legacy"}
+        )
