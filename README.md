@@ -187,7 +187,6 @@ Nota:
 - In modalità `hybrid`, puoi usare sia il login tradizionale locale sia gli utenti Keycloak sopra.
 - In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
 - Il realm `tenderwriter` importato da file non include utenti di default: se ricrei i volumi Keycloak devi ricreare anche queste utenze.
-- In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
 
 ### Configurazione Email (Mailpit)
 Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit). Non è necessaria alcuna configurazione SMTP reale per lo sviluppo. Per vedere i codici OTP:
