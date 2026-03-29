@@ -466,6 +466,16 @@ export const proposalApi = {
             method: 'PUT',
             body: data,
         }),
+    addSection: (proposalId: number, data: { title: string; content?: Record<string, unknown>; order?: number }) =>
+        request<Section>(`/proposals/${proposalId}/sections`, {
+            method: 'POST',
+            body: data,
+        }),
+    bulkCreateSections: (proposalId: number, sections: string[]) =>
+        request<Section[]>(`/proposals/${proposalId}/sections/bulk`, {
+            method: 'POST',
+            body: { sections },
+        }),
     markDraftReady: (proposalId: number, data: ProposalDraftReadyRequest = {}) =>
         request<ProposalLifecycleActionResponse>(`/proposals/${proposalId}/draft-ready`, { method: 'POST', body: data }),
     updateSubmissionStatus: (proposalId: number, data: ProposalSubmissionStatusRequest) =>

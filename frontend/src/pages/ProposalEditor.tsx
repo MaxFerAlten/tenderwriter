@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Sparkles,
     Send,
@@ -10,8 +10,10 @@ import {
     Loader2,
     X,
     Maximize2,
+    Plus,
+    Trash2,
 } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
     proposalApi,
     ragApi,
@@ -21,6 +23,17 @@ import {
 } from '../api/client';
 import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
 import { ONLYOFFICE_URL } from '../config/runtime';
+
+const DEFAULT_SECTIONS = [
+    'Executive Summary',
+    'Company Overview',
+    'Technical Approach',
+    'Team & Key Personnel',
+    'Past Performance & References',
+    'Project Timeline',
+    'Pricing & Budget',
+    'Compliance Matrix',
+];
 
 export default function ProposalEditor() {
     const location = useLocation();
@@ -39,10 +52,22 @@ export default function ProposalEditor() {
     // Editor state
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [isDirty, setIsDirty] = useState(false);
 
     // Modal state
     const [showAddSectionModal, setShowAddSectionModal] = useState(false);
     const [newSectionTitle, setNewSectionTitle] = useState('');
+
+    // Section setup modal (first-time landing)
+    const [showSectionSetup, setShowSectionSetup] = useState(false);
+    const [setupSections, setSetupSections] = useState<string[]>([]);
+    const [setupNewTitle, setSetupNewTitle] = useState('');
+    const [creatingSections, setCreatingSections] = useState(false);
+
+    // Unsaved changes modal
+    const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+    const pendingNavigationRef = useRef<(() => void) | null>(null);
+    const isDirtyRef = useRef(false);
 
     // AI state
     const [aiQuery, setAiQuery] = useState('');
@@ -54,29 +79,131 @@ export default function ProposalEditor() {
     // General
     const [error, setError] = useState<string | null>(null);
 
-    // Add section handler
+    const navigate = useNavigate();
+
+    // Keep ref in sync for event handlers
+    useEffect(() => {
+        isDirtyRef.current = isDirty;
+    }, [isDirty]);
+
+    // Browser tab close / refresh guard
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (isDirtyRef.current) {
+                e.preventDefault();
+            }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, []);
+
+    // Intercept browser back/forward when dirty
+    useEffect(() => {
+        const handlePopState = () => {
+            if (isDirtyRef.current) {
+                // Push state back to prevent navigation
+                window.history.pushState(null, '', window.location.href);
+                pendingNavigationRef.current = () => navigate(-1);
+                setShowUnsavedModal(true);
+            }
+        };
+        // Push an extra history entry so we can intercept back
+        window.history.pushState(null, '', window.location.href);
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, [navigate]);
+
+    // Guard for in-app navigation (sidebar clicks, etc.)
+    const guardedNavigate = useCallback((action: () => void) => {
+        if (isDirtyRef.current) {
+            pendingNavigationRef.current = action;
+            setShowUnsavedModal(true);
+        } else {
+            action();
+        }
+    }, []);
+
+    const handleUnsavedSave = async () => {
+        await handleSave();
+        setShowUnsavedModal(false);
+        setIsDirty(false);
+        isDirtyRef.current = false;
+        if (pendingNavigationRef.current) {
+            pendingNavigationRef.current();
+        }
+        pendingNavigationRef.current = null;
+    };
+
+    const handleUnsavedDiscard = () => {
+        setShowUnsavedModal(false);
+        setIsDirty(false);
+        isDirtyRef.current = false;
+        if (pendingNavigationRef.current) {
+            pendingNavigationRef.current();
+        }
+        pendingNavigationRef.current = null;
+    };
+
+    const handleUnsavedCancel = () => {
+        setShowUnsavedModal(false);
+        pendingNavigationRef.current = null;
+    };
+
+    // ── OnlyOffice dirty state callback ──
+    const handleDocumentStateChange = useCallback((dirty: boolean) => {
+        setIsDirty(dirty);
+    }, []);
+
+    // ── Add section handler (sidebar) ──
     const handleAddSection = async () => {
         if (!newSectionTitle || !proposal) return;
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`/api/proposals/${proposal.id}/sections`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ title: newSectionTitle, content: {}, order: proposal.sections.length })
+            const newSection = await proposalApi.addSection(proposal.id, {
+                title: newSectionTitle,
+                content: {},
+                order: proposal.sections.length,
             });
-            if (res.ok) {
-                const newSection = await res.json();
-                setProposal({ ...proposal, sections: [...proposal.sections, newSection] });
-                setActiveSection(proposal.sections.length);
-                setShowAddSectionModal(false);
-                setNewSectionTitle('');
-            }
+            setProposal({ ...proposal, sections: [...proposal.sections, newSection] });
+            setActiveSection(proposal.sections.length);
+            setShowAddSectionModal(false);
+            setNewSectionTitle('');
         } catch (err) {
             console.error('Failed to add section:', err);
         }
     };
 
-    // Load proposals list
+    // ── Section setup modal handlers ──
+    const handleAddSetupSection = () => {
+        if (!setupNewTitle.trim()) return;
+        setSetupSections([...setupSections, setupNewTitle.trim()]);
+        setSetupNewTitle('');
+    };
+
+    const handleRemoveSetupSection = (idx: number) => {
+        setSetupSections(setupSections.filter((_, i) => i !== idx));
+    };
+
+    const handleUseDefaults = () => {
+        setSetupSections([...DEFAULT_SECTIONS]);
+    };
+
+    const handleCreateSections = async () => {
+        if (!proposal || setupSections.length === 0) return;
+        try {
+            setCreatingSections(true);
+            const created = await proposalApi.bulkCreateSections(proposal.id, setupSections);
+            setProposal({ ...proposal, sections: created });
+            setActiveSection(0);
+            setShowSectionSetup(false);
+            setSetupSections([]);
+        } catch (err) {
+            console.error('Failed to create sections:', err);
+        } finally {
+            setCreatingSections(false);
+        }
+    };
+
+    // ── Load proposals list ──
     useEffect(() => {
         (async () => {
             try {
@@ -98,7 +225,7 @@ export default function ProposalEditor() {
         })();
     }, []);
 
-    // Load proposal detail
+    // ── Load proposal detail ──
     const loadProposal = useCallback(async (id: number) => {
         try {
             setLoadingDetail(true);
@@ -106,6 +233,11 @@ export default function ProposalEditor() {
             const data = await proposalApi.get(id);
             setProposal(data);
             setActiveSection(0);
+            // If proposal has no sections, show setup modal
+            if (data.sections.length === 0) {
+                setSetupSections([]);
+                setShowSectionSetup(true);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load proposal');
         } finally {
@@ -151,6 +283,7 @@ export default function ProposalEditor() {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
             setSaved(true);
+            setIsDirty(false);
             setTimeout(() => setSaved(false), 3000);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to save');
@@ -216,25 +349,25 @@ export default function ProposalEditor() {
         try {
             const token = localStorage.getItem('token');
             const section = proposal.sections[activeSection];
-            
+
             // Update section content in database
             await fetch(`/api/proposals/${proposal.id}/sections/${section.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ title: section.title, content: aiResult.answer, order: section.order })
             });
-            
+
             // Update local state
             const updatedSections = [...proposal.sections];
             updatedSections[activeSection] = { ...section, content: aiResult.answer as any };
             setProposal({ ...proposal, sections: updatedSections });
-            
+
             // Trigger OnlyOffice force save
             await fetch(`/api/onlyoffice/forcesave/proposal/${proposal.id}/${section.id}`, {
                 method: 'POST',
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
-            
+
             setAiResult(null);
         } catch (err) {
             console.error('Failed to insert AI content:', err);
@@ -284,7 +417,10 @@ export default function ProposalEditor() {
                             className="form-select"
                             style={{ maxWidth: 400, fontSize: '0.85rem' }}
                             value={selectedProposalId || ''}
-                            onChange={(e) => setSelectedProposalId(Number(e.target.value))}
+                            onChange={(e) => {
+                                const newId = Number(e.target.value);
+                                guardedNavigate(() => setSelectedProposalId(newId));
+                            }}
                         >
                             {proposals.map((p) => (
                                 <option key={p.id} value={p.id}>
@@ -338,7 +474,7 @@ export default function ProposalEditor() {
                             <div
                                 key={section.id}
                                 className={`section-list-item ${idx === activeSection ? 'active' : ''}`}
-                                onClick={() => setActiveSection(idx)}
+                                onClick={() => guardedNavigate(() => setActiveSection(idx))}
                             >
                                 <span className={`section-status-dot ${section.status.replace('_', '-')}`} />
                                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -361,7 +497,7 @@ export default function ProposalEditor() {
                                 fontSize: '0.8rem'
                             }}
                         >
-                            + Aggiungi Sezione
+                            + Add Section
                         </button>
 
                         {/* Add Section Modal */}
@@ -384,11 +520,11 @@ export default function ProposalEditor() {
                                     maxWidth: '400px'
                                 }}>
                                     <h3 style={{ color: 'var(--text-primary)', marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>
-                                        Nuova Sezione
+                                        New Section
                                     </h3>
                                     <input
                                         type="text"
-                                        placeholder="Titolo della sezione"
+                                        placeholder="Section title"
                                         value={newSectionTitle}
                                         onChange={e => setNewSectionTitle(e.target.value)}
                                         onKeyDown={e => e.key === 'Enter' && newSectionTitle && handleAddSection()}
@@ -416,7 +552,7 @@ export default function ProposalEditor() {
                                                 cursor: 'pointer'
                                             }}
                                         >
-                                            Annulla
+                                            Cancel
                                         </button>
                                         <button
                                             onClick={handleAddSection}
@@ -431,7 +567,7 @@ export default function ProposalEditor() {
                                                 opacity: newSectionTitle ? 1 : 0.5
                                             }}
                                         >
-                                            Aggiungi
+                                            Add
                                         </button>
                                     </div>
                                 </div>
@@ -504,7 +640,24 @@ export default function ProposalEditor() {
                                     title={currentSection.title}
                                     onlyofficeApiUrl={ONLYOFFICE_URL}
                                     minHeight="520px"
+                                    onDocumentStateChange={handleDocumentStateChange}
                                 />
+                            </div>
+                        )}
+
+                        {/* Empty state when no sections exist */}
+                        {proposal.sections.length === 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 0', color: 'var(--text-muted)' }}>
+                                <FileText size={48} />
+                                <h3 style={{ marginTop: '1rem' }}>No sections yet</h3>
+                                <p>Set up the sections for this proposal to get started.</p>
+                                <button
+                                    className="btn btn-primary"
+                                    style={{ marginTop: '1rem' }}
+                                    onClick={() => { setSetupSections([]); setShowSectionSetup(true); }}
+                                >
+                                    Set Up Sections
+                                </button>
                             </div>
                         )}
                     </div>
@@ -661,7 +814,262 @@ export default function ProposalEditor() {
                                 title={currentSection.title}
                                 onlyofficeApiUrl={ONLYOFFICE_URL}
                                 minHeight="720px"
+                                onDocumentStateChange={handleDocumentStateChange}
                             />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Section Setup Modal (first-time landing) ── */}
+            {showSectionSetup && (
+                <div style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.75)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1100
+                }}>
+                    <div style={{
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-default)',
+                        borderRadius: 'var(--radius-lg)',
+                        padding: '2rem',
+                        width: '100%',
+                        maxWidth: '540px',
+                        maxHeight: '80vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                    }}>
+                        <h2 style={{ color: 'var(--text-primary)', marginBottom: '0.25rem', fontSize: '1.25rem', fontWeight: 600 }}>
+                            Set Up Proposal Sections
+                        </h2>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                            List the sections you want to create for this proposal, or use the default template.
+                        </p>
+
+                        {/* Section list */}
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1rem', minHeight: 0 }}>
+                            {setupSections.length === 0 ? (
+                                <div style={{
+                                    padding: '2rem',
+                                    textAlign: 'center',
+                                    color: 'var(--text-muted)',
+                                    fontSize: '0.85rem',
+                                    border: '1px dashed var(--border-default)',
+                                    borderRadius: 'var(--radius-md)',
+                                }}>
+                                    No sections added yet. Add sections manually or use the defaults.
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    {setupSections.map((title, idx) => (
+                                        <div key={idx} style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.75rem',
+                                            padding: '0.5rem 0.75rem',
+                                            background: 'var(--bg-glass)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            border: '1px solid var(--border-default)',
+                                        }}>
+                                            <span style={{
+                                                width: 22,
+                                                height: 22,
+                                                borderRadius: '50%',
+                                                background: 'var(--accent-blue)',
+                                                color: 'white',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontSize: '0.7rem',
+                                                fontWeight: 600,
+                                                flexShrink: 0,
+                                            }}>
+                                                {idx + 1}
+                                            </span>
+                                            <span style={{ flex: 1, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                {title}
+                                            </span>
+                                            <button
+                                                onClick={() => handleRemoveSetupSection(idx)}
+                                                style={{
+                                                    background: 'none',
+                                                    border: 'none',
+                                                    color: 'var(--text-muted)',
+                                                    cursor: 'pointer',
+                                                    padding: '0.25rem',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                }}
+                                                title="Remove section"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Add section input */}
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                            <input
+                                type="text"
+                                placeholder="Enter section title..."
+                                value={setupNewTitle}
+                                onChange={e => setSetupNewTitle(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && setupNewTitle.trim() && handleAddSetupSection()}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.6rem 0.75rem',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-default)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'var(--text-primary)',
+                                    fontSize: '0.85rem',
+                                }}
+                                autoFocus
+                            />
+                            <button
+                                onClick={handleAddSetupSection}
+                                disabled={!setupNewTitle.trim()}
+                                style={{
+                                    padding: '0.6rem 0.75rem',
+                                    background: setupNewTitle.trim() ? 'var(--accent-blue)' : 'var(--bg-input)',
+                                    border: 'none',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'white',
+                                    cursor: setupNewTitle.trim() ? 'pointer' : 'not-allowed',
+                                    opacity: setupNewTitle.trim() ? 1 : 0.5,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.35rem',
+                                    fontSize: '0.85rem',
+                                }}
+                            >
+                                <Plus size={14} />
+                                Add Section
+                            </button>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between' }}>
+                            <button
+                                onClick={handleUseDefaults}
+                                style={{
+                                    padding: '0.6rem 1rem',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-default)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                }}
+                            >
+                                Use Default Sections
+                            </button>
+                            <button
+                                onClick={handleCreateSections}
+                                disabled={setupSections.length === 0 || creatingSections}
+                                style={{
+                                    padding: '0.6rem 1.25rem',
+                                    background: setupSections.length > 0 ? 'var(--accent-blue)' : 'var(--bg-input)',
+                                    border: 'none',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'white',
+                                    cursor: setupSections.length > 0 && !creatingSections ? 'pointer' : 'not-allowed',
+                                    opacity: setupSections.length > 0 ? 1 : 0.5,
+                                    fontSize: '0.85rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                }}
+                            >
+                                {creatingSections ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+                                Create Sections
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Unsaved Changes Modal ── */}
+            {showUnsavedModal && (
+                <div style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1200
+                }}>
+                    <div style={{
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-default)',
+                        borderRadius: 'var(--radius-lg)',
+                        padding: '1.5rem',
+                        width: '100%',
+                        maxWidth: '420px',
+                    }}>
+                        <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.5rem', fontSize: '1.1rem', fontWeight: 600 }}>
+                            Unsaved Changes
+                        </h3>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                            You have unsaved changes in the current section. What would you like to do?
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={handleUnsavedCancel}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    background: 'var(--bg-input)',
+                                    border: '1px solid var(--border-default)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleUnsavedDiscard}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                }}
+                            >
+                                Discard
+                            </button>
+                            <button
+                                onClick={handleUnsavedSave}
+                                disabled={saving}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    background: 'var(--accent-blue)',
+                                    border: 'none',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.35rem',
+                                }}
+                            >
+                                {saving ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+                                Save
+                            </button>
                         </div>
                     </div>
                 </div>

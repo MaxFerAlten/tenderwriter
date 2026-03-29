@@ -246,41 +246,6 @@ async def create_proposal(
     await db.flush()
     await db.refresh(proposal)
 
-
-    # Create default sections
-    default_sections = [
-        "Executive Summary",
-        "Company Overview",
-        "Technical Approach",
-        "Team & Key Personnel",
-        "Past Performance & References",
-        "Project Timeline",
-        "Pricing & Budget",
-        "Compliance Matrix",
-    ]
-
-    created_sections: list[ProposalSection] = []
-    for idx, title in enumerate(default_sections):
-        section = ProposalSection(
-            proposal_id=proposal.id,
-            title=title,
-            content={},
-            order=idx,
-            status=SectionStatus.TODO,
-        )
-        db.add(section)
-        created_sections.append(section)
-
-    await db.flush()
-
-    for section in created_sections:
-        await ensure_contribution_for_section(
-            db,
-            tender_id=proposal.tender_id,
-            section=section,
-            actor_id=current_user.id,
-        )
-
     await ensure_official_chat_room(
         db,
         tender_id=data.tender_id,
@@ -300,7 +265,7 @@ async def create_proposal(
         event_type="proposal_created",
         event_payload=build_proposal_created_event_payload(
             proposal=proposal,
-            section_count=len(default_sections),
+            section_count=0,
         ),
     )
 
@@ -312,7 +277,7 @@ async def create_proposal(
         version=proposal.version,
         notes=proposal.notes,
         created_at=proposal.created_at,
-        section_count=len(default_sections),
+        section_count=0,
     )
 
 
@@ -663,6 +628,77 @@ async def add_section(
         updated_at=section.updated_at,
     )
 
+
+class BulkSectionCreate(BaseModel):
+    sections: list[str]
+
+
+@router.post(
+    "/{proposal_id}/sections/bulk",
+    response_model=list[SectionResponse],
+    status_code=201,
+)
+async def bulk_create_sections(
+    proposal_id: int,
+    data: BulkSectionCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create multiple sections at once for a proposal."""
+    result = await db.execute(select(Proposal).where(Proposal.id == proposal_id))
+    proposal = result.scalar_one_or_none()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    await _check_tender_access_for_proposal(proposal.tender_id, current_user, db)
+
+    created_sections: list[ProposalSection] = []
+    for idx, title in enumerate(data.sections):
+        section = ProposalSection(
+            proposal_id=proposal_id,
+            title=title,
+            content={},
+            order=idx,
+            status=SectionStatus.TODO,
+        )
+        db.add(section)
+        created_sections.append(section)
+
+    await db.flush()
+
+    for section in created_sections:
+        await ensure_contribution_for_section(
+            db,
+            tender_id=proposal.tender_id,
+            section=section,
+            actor_id=current_user.id,
+        )
+
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=proposal.tender_id,
+        actor_id=current_user.id,
+        event_type="proposal_section_updated",
+        event_payload={
+            "proposal_id": proposal_id,
+            "change_type": "bulk_sections_created",
+            "section_count": len(created_sections),
+        },
+    )
+
+    return [
+        SectionResponse(
+            id=s.id,
+            title=s.title,
+            content=s.content or {},
+            order=s.order or 0,
+            status=s.status.value,
+            assigned_to=s.assigned_to,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in created_sections
+    ]
 
 
 class ProposalDraftReadyRequest(BaseModel):
