@@ -297,9 +297,18 @@ Da implementare con output JSON rigido:
 Il motore KPI non usa il DB di TenderWriter come sorgente analitica primaria in runtime.
 
 ### Scelta adottata
-- servizio KPI con DB proprio;
-- stessa istanza PostgreSQL ammessa in fase iniziale, ma con schema e credenziali dedicate;
+- servizio KPI con persistenza PostgreSQL dedicata a livello logico;
+- schema dedicato `kpi_engine` sulla stessa istanza PostgreSQL del progetto;
+- nessun volume locale runtime per lo store analitico;
+- migrazioni Alembic eseguite su startup del servizio;
 - progettazione compatibile con futura separazione fisica completa.
+
+### Stato finale operativo
+- modalita di esercizio: `PostgreSQL-only`;
+- schema version attesa: `20260329_0004` o successiva compatibile;
+- payload strutturati persistiti come `jsonb`;
+- campi temporali persistiti come `timestamp with time zone`;
+- migrazione legacy SQLite disponibile solo per recupero straordinario, non per il normale startup.
 
 ### Tabelle minime
 - `kpi_tenders`

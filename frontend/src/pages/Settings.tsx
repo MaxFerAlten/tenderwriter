@@ -349,6 +349,10 @@ const Settings: FC = () => {
             metadata_json: {},
         };
         setGatewayTargets((prev) => [...prev, newTarget].sort((a, b) => a.priority - b.priority));
+        setSaveResult({
+            tone: 'warning',
+            message: 'Target aggiunto in bozza locale. Premi "Salva Impostazioni" per salvarlo davvero nel database.',
+        });
         setGwForm((f) => ({
             ...f,
             base_url: '',
@@ -1385,6 +1389,10 @@ const Settings: FC = () => {
                                     <button className="btn btn-ghost btn-sm" onClick={loadGatewayTargets} disabled={gwLoading}>
                                         <RefreshCw size={14} /> Aggiorna
                                     </button>
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                    I target aggiunti qui compaiono subito nella lista, ma diventano persistenti solo dopo
+                                    aver premuto <strong>Salva Impostazioni</strong>.
                                 </div>
                                 {gwError && <div style={{ color: '#ef4444', fontSize: '0.85rem' }}>{gwError}</div>}
                                 <div style={{ display: 'grid', gap: '0.5rem' }}>

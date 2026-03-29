@@ -15,7 +15,12 @@ Nel modello dati operazionale ([operational_observability.py](file:///d:/tender/
 - **S8 (Gate Compliance)** è servito dell'entità [ComplianceGate](file:///d:/tender/tenderwriter/backend/app/models/operational_observability.py#147-165).
 
 ### Il Meccanismo Distaccato di Ragionamento
-La separazione tra `PostgreSQL` (gestionale) e `SQLite` (il Reason Engine) tracciando gli snapshot rispetta la volontà di avere un **Datalake passivo** in cui i punteggi finali del piano di gara possano essere validati e salvati separatamente in versione immutable (il concetto espresso nel modello "Layer 1 - 4"). 
+Dal `2026-03-29` il motore KPI non usa piu SQLite in runtime. La separazione resta logica, non piu tecnologica:
+- `tw-backend` continua a usare il proprio modello transazionale;
+- `tw-kpi-reason-engine` persiste in PostgreSQL ma dentro uno schema dedicato `kpi_engine`;
+- snapshot, eventi, findings e transizioni restano isolati dal dominio transazionale pur vivendo sulla stessa piattaforma dati.
+
+Questa scelta mantiene l'idea di **Datalake passivo** prevista dal disegno originario, ma con un assetto piu operabile in produzione: backup centralizzati, migrazioni versionate, tipi `jsonb`/`timestamptz`, nessun volume locale da preservare per il runtime ordinario.
 
 Nel file [schemas.py](file:///d:/tender/tenderwriter/kpi-reason-engine/app/schemas.py) troviamo la base pronta per raccogliere la semantica prescritta:
 - L'enumeratore `HealthClass` contiene esattamente `green`, `amber` e `red`.
@@ -40,9 +45,15 @@ La specifica indica di generare due indici cardinali:
 
 ### C. Motore Markoviano Matematico (Matrici di Probabilità)
 La documentazione descrive una matrice `Markov-Chain` concreta dove la transizione di probabilità es. S4 -> S5 = 0.75 dipende dalla salute del nodo (es. se A4 > 7).
-**Stato Attuale:** Come la retrospettiva sottolinea, *"il forecast è euristico: le probabilità sono aggiustate tramite regole, non stimate dal comportamento storico reale"*. L'infrastruttura di SQLite sta correttamente salvando oggi i log in `kpi_phase_transitions` e fungerà da dataset di *Training*. Bisognerà estrarre i trend aggregati passati (Training) dai log per alimentare un modello Data Science reale (il Layer 3 & 4 menzionato nel manuale), rimuovendo la dipendenza dalle attuali stime "pre-impostate a mano".
+**Stato Attuale:** Come la retrospettiva sottolinea, *"il forecast è euristico: le probabilità sono aggiustate tramite regole, non stimate dal comportamento storico reale"*. L'infrastruttura attuale salva correttamente i log in `kpi_phase_transitions` nello schema PostgreSQL `kpi_engine` e puo fungere da dataset di *training*. Bisognerà estrarre i trend aggregati passati dai log per alimentare un modello Data Science reale (il Layer 3 & 4 menzionato nel manuale), rimuovendo la dipendenza dalle attuali stime "pre-impostate a mano".
 
 ---
 
 ## Conclusioni
 L'aderenza tecnica sui layer **1 (Tracciamento)** e **2 (Classificazione)** è praticamente totale. L'adeguamento formale e algoritmico sui layer **3 (Markov)** e sull'integrazione semantica dei prompt originali **LLM** è lo step mancante che chiuderà la forbice tra MVP di primo livello e Visione architetturale finale.
+
+## Addendum Operativo 2026-03-29
+- Gap chiuso sul fronte storage runtime: il motore KPI e ora `PostgreSQL-only`.
+- Gap chiuso sul fronte operability: niente volume locale `/app/data`, backup centralizzato lato PostgreSQL e migrazioni versionate.
+- Gap chiuso sul fronte tipo dati: JSON e timestamp principali sono nativi PostgreSQL (`jsonb`, `timestamptz`).
+- Restano aperti i gap algoritmici e semantici descritti sopra, non quelli infrastrutturali.

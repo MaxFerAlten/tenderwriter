@@ -39,7 +39,16 @@ router = APIRouter()
 
 limiter = Limiter(key_func=get_remote_address)
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2", "pbkdf2_sha256"],
+    default="argon2",
+    deprecated=["pbkdf2_sha256"],
+    argon2__time_cost=3,
+    argon2__memory_cost=65536,       # 64 MB
+    argon2__parallelism=2,
+    argon2__hash_len=32,
+    argon2__salt_len=16,
+)
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
@@ -132,8 +141,13 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def needs_rehash(hashed: str) -> bool:
+    """Check if a password hash should be upgraded to the current default algorithm."""
+    return pwd_context.needs_update(hashed)
+
+
 def hash_password(password: str) -> str:
-    """Hash a password for storage."""
+    """Hash a password for storage (uses Argon2id as default)."""
     return pwd_context.hash(password)
 
 def generate_otp() -> str:
@@ -400,6 +414,17 @@ async def login(request: Request, data: UserLogin, background_tasks: BackgroundT
         logger.warning(f"Login failed: Password mismatch for {mask_email(data.email)}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Transparent rehash: upgrade legacy hashes (pbkdf2/bcrypt) to Argon2id
+    if needs_rehash(user.hashed_password):
+        new_hash = hash_password(data.password)
+        user.hashed_password = new_hash
+        await db.commit()
+        logger.info(
+            "auth.password_rehashed",
+            email=mask_email(data.email),
+            reason="deprecated_algorithm",
+        )
+
     token = create_access_token({"sub": str(user.id), "email": user.email})
 
     background_tasks.add_task(
@@ -604,3 +629,45 @@ async def logout(current_user: UserResponse = Depends(get_current_user)):
         }
 
     return {"message": "Logged out"}
+
+
+@router.get("/password-hash-stats")
+async def password_hash_stats(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return password hashing algorithm distribution (admin only)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from sqlalchemy import text, func as sqlfunc
+
+    query = text("""
+        SELECT
+            CASE
+                WHEN hashed_password LIKE '$argon2%' THEN 'argon2'
+                WHEN hashed_password LIKE '$pbkdf2%' THEN 'pbkdf2'
+                WHEN hashed_password LIKE '$2b$%'    THEN 'bcrypt'
+                WHEN hashed_password = '__keycloak_managed__' THEN 'keycloak'
+                ELSE 'unknown'
+            END AS algorithm,
+            COUNT(*) AS user_count
+        FROM users
+        GROUP BY algorithm
+        ORDER BY user_count DESC
+    """)
+    result = await db.execute(query)
+    rows = result.all()
+
+    total = sum(r.user_count for r in rows)
+    return {
+        "total_users": total,
+        "algorithms": [
+            {
+                "algorithm": r.algorithm,
+                "count": r.user_count,
+                "percentage": round(r.user_count * 100.0 / max(total, 1), 1),
+            }
+            for r in rows
+        ],
+    }

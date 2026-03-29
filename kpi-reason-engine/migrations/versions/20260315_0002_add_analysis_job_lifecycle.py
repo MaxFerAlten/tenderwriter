@@ -16,12 +16,18 @@ branch_labels = None
 depends_on = None
 
 
+def _schema_name() -> str | None:
+    normalized = str(op.get_context().config.get_main_option('kpi.schema') or '').strip()
+    return normalized or None
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    columns = {column['name'] for column in inspector.get_columns('kpi_analysis_jobs')}
+    schema_name = _schema_name()
+    columns = {column['name'] for column in inspector.get_columns('kpi_analysis_jobs', schema=schema_name)}
 
-    with op.batch_alter_table('kpi_analysis_jobs') as batch_op:
+    with op.batch_alter_table('kpi_analysis_jobs', schema=schema_name) as batch_op:
         if 'started_at' not in columns:
             batch_op.add_column(sa.Column('started_at', sa.Text(), nullable=True))
         if 'completed_at' not in columns:
@@ -37,9 +43,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    columns = {column['name'] for column in inspector.get_columns('kpi_analysis_jobs')}
+    schema_name = _schema_name()
+    columns = {column['name'] for column in inspector.get_columns('kpi_analysis_jobs', schema=schema_name)}
 
-    with op.batch_alter_table('kpi_analysis_jobs') as batch_op:
+    with op.batch_alter_table('kpi_analysis_jobs', schema=schema_name) as batch_op:
         if 'result_snapshot_id' in columns:
             batch_op.drop_column('result_snapshot_id')
         if 'error_message' in columns:

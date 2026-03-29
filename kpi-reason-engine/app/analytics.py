@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.config import settings
+import app.config as app_config
 from app.contract import (
     AMBER_E_THRESHOLD,
     AMBER_Q_THRESHOLD,
@@ -1393,8 +1393,8 @@ def _derive_phase(
     return "S2"
 
 def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, section_count: int, scored_kpis: list[KpiScore]) -> dict[str, Any]:
-    semantic_official_enabled = settings.semantic_official_rollout_enabled
-    shadow_rollout_enabled = settings.semantic_shadow_rollout_enabled
+    semantic_official_enabled = app_config.settings.semantic_official_rollout_enabled
+    shadow_rollout_enabled = app_config.settings.semantic_shadow_rollout_enabled
     semantic_kpis = [score.kpi_code for score in scored_kpis if score.semantic is not None]
     semantic_fallback_kpis = [
         score.kpi_code
@@ -1423,9 +1423,9 @@ def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, 
         "markov_reliable_phase_scope": list(MARKOV_RELIABLE_PHASE_SCOPE),
         "semantic_priority": list(SEMANTIC_PRIORITY),
         "canonical_source_types": ["observed", "inferred", "reconstructed", "unknown"],
-        "rollout_policy": settings.normalized_rollout_policy,
+        "rollout_policy": app_config.settings.normalized_rollout_policy,
         "qualitative_engine_kind": qualitative_engine_kind,
-        "qualitative_engine_mode": settings.qualitative_engine_mode,
+        "qualitative_engine_mode": app_config.settings.qualitative_engine_mode,
         "semantic_official_enabled": semantic_official_enabled,
         "semantic_engine_kind": SEMANTIC_ENGINE_KIND if semantic_official_enabled else None,
         "semantic_execution_mode": SEMANTIC_EXECUTION_MODE if semantic_official_enabled else None,
@@ -1434,8 +1434,8 @@ def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, 
         "semantic_fallback_kpis": semantic_fallback_kpis,
         "semantic_fallback_policy_version": SEMANTIC_FALLBACK_POLICY_VERSION if semantic_official_enabled else None,
         "shadow_rollout_enabled": shadow_rollout_enabled,
-        "markov_rollout_enabled": settings.markov_rollout_enabled,
-        "calibrated_forecast_enabled": settings.markov_rollout_enabled,
+        "markov_rollout_enabled": app_config.settings.markov_rollout_enabled,
+        "calibrated_forecast_enabled": app_config.settings.markov_rollout_enabled,
         "shadow_mode_enabled": shadow_rollout_enabled,
         "shadow_engine_kind": SHADOW_ENGINE_KIND if shadow_rollout_enabled else None,
         "shadow_execution_mode": SHADOW_EXECUTION_MODE if shadow_rollout_enabled else None,
@@ -1497,7 +1497,6 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         or _count_events(events, "contribution_assignment_confirmed") > 0
         or bool(lifecycle.get("contribution_wave"))
     )
-    draft_ready = _count_events(events, "draft_integrated_ready") > 0 or bool(lifecycle.get("draft_ready"))
     outcome = _latest_outcome(events) or lifecycle_outcome
 
     requirement_count = len(requirements)
@@ -1515,6 +1514,20 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
     )
     active_sections = sum(1 for section in sections if _normalized(section.get("status")) in _ACTIVE_SECTION_STATUSES)
     completed_sections = sum(1 for section in sections if _normalized(section.get("status")) in _COMPLETED_SECTION_STATUSES)
+    inferred_draft_ready = (
+        document_ingested
+        and requirements_extracted
+        and requirement_count > 0
+        and addressed_requirements >= requirement_count
+        and len(sections) > 0
+        and completed_sections == len(sections)
+        and proposal_updates > 0
+    )
+    draft_ready = (
+        _count_events(events, "draft_integrated_ready") > 0
+        or bool(lifecycle.get("draft_ready"))
+        or inferred_draft_ready
+    )
     execution_started = (
         _count_events(events, "contribution_received") > 0
         or _count_events(events, "coordination_risk_raised") > 0
@@ -1598,7 +1611,7 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
     a3 = proxy_a3
     a4 = proxy_a4
 
-    if settings.semantic_official_rollout_enabled:
+    if app_config.settings.semantic_official_rollout_enabled:
         a1 = _with_semantic(
             proxy_a1,
             build_a1_semantic(
@@ -1656,7 +1669,7 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
                 proxy_score=proxy_a4.value,
             ),
         )
-    elif settings.semantic_shadow_rollout_enabled:
+    elif app_config.settings.semantic_shadow_rollout_enabled:
         a1 = _with_shadow(
             proxy_a1,
             build_a1_shadow(
@@ -1683,7 +1696,7 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         )
 
     q = _score_q([a1, a2, a3, a4])
-    if settings.semantic_official_rollout_enabled:
+    if app_config.settings.semantic_official_rollout_enabled:
         q = _with_qualitative_summary_contract(q)
 
     operational = _compute_operational_snapshot(events, now, state=operational_state)
@@ -1712,11 +1725,11 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
 
     semantic_note = (
         "Official semantic scoring is active for A1..A4; Q and tender health now use the semantic layer with proxy scores retained for comparison."
-        if settings.semantic_official_rollout_enabled
+        if app_config.settings.semantic_official_rollout_enabled
         else (
             "Semantic shadow mode is active for A1 and A4; official Q and tender health still use proxy scores."
-            if settings.semantic_shadow_rollout_enabled
-            else f"Semantic official scoring is disabled by rollout policy {settings.normalized_rollout_policy}; official Q and tender health use proxy scores only."
+            if app_config.settings.semantic_shadow_rollout_enabled
+            else f"Semantic official scoring is disabled by rollout policy {app_config.settings.normalized_rollout_policy}; official Q and tender health use proxy scores only."
         )
     )
     notes = [
@@ -1733,9 +1746,9 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         summary = "Tender mirror is available, but the tender document has not been ingested yet."
     elif requirement_count == 0:
         summary = "Tender document ingestion exists, but extracted requirements are still missing or empty."
-    elif settings.semantic_official_rollout_enabled and any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
+    elif app_config.settings.semantic_official_rollout_enabled and any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
         summary = "Analytical snapshot is available with official semantic A1..A4/Q plus B1..B4/E from observed workflow telemetry."
-    elif settings.semantic_official_rollout_enabled:
+    elif app_config.settings.semantic_official_rollout_enabled:
         summary = "Analytical snapshot is available with official semantic A1..A4/Q and base tender telemetry."
     elif any(score.value is not None for score in [operational.b1, operational.b2, operational.b3, operational.b4]):
         summary = "Analytical snapshot is available for A1..A4, Q and B1..B4/E using persisted requirements, proposal progress and observed workflow telemetry."

@@ -1,15 +1,18 @@
-"""SQLite-backed persistence for tw-kpi-reason-engine."""
+"""Relational persistence for tw-kpi-reason-engine."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from collections import defaultdict
-import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine.url import make_url
 
 from app.analytics import AnalysisSnapshot
 from app.transition_diagnostics import TransitionSnapshot
@@ -25,6 +28,7 @@ _REQUIRED_TABLES = {
     'kpi_findings',
     'kpi_phase_transitions',
 }
+_DATA_TABLES = tuple(sorted(_REQUIRED_TABLES - {'alembic_version'}))
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -38,22 +42,154 @@ def _to_json_list(value: Any) -> str:
     return json.dumps(value if value is not None else [], ensure_ascii=False, sort_keys=True)
 
 
+def _from_json_value(value: Any, *, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _to_iso_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    return value
+
+
+def _normalize_schema_name(schema_name: str | None) -> str | None:
+    normalized = str(schema_name or '').strip()
+    return normalized or None
+
+
+class _SqlAlchemyResultAdapter:
+    def __init__(self, result: Any) -> None:
+        self._result = result
+        self._mapping_result: Any | None = None
+
+    def _mappings(self) -> Any:
+        if self._mapping_result is None:
+            self._mapping_result = self._result.mappings()
+        return self._mapping_result
+
+    @property
+    def rowcount(self) -> int:
+        return int(getattr(self._result, 'rowcount', -1) or -1)
+
+    @property
+    def lastrowid(self) -> Any:
+        return getattr(self._result, 'lastrowid', None)
+
+    def fetchone(self) -> Any:
+        return self._mappings().fetchone()
+
+    def fetchall(self) -> list[Any]:
+        return list(self._mappings().fetchall())
+
+
+class _SqlAlchemyConnectionAdapter:
+    def __init__(self, database_url: str, *, schema_name: str | None = None) -> None:
+        self.database_url = database_url
+        self.schema_name = _normalize_schema_name(schema_name)
+        self.backend_name = make_url(database_url).get_backend_name()
+        self._engine: Engine | None = None
+        self._connection: Connection | None = None
+
+    def open(self) -> None:
+        engine_kwargs: dict[str, Any] = {'future': True, 'pool_pre_ping': True}
+        if self.backend_name == 'sqlite':
+            sqlite_path = self.database_url.removeprefix('sqlite:///')
+            if sqlite_path:
+                Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
+            engine_kwargs['connect_args'] = {'check_same_thread': False}
+
+        self._engine = create_engine(self.database_url, **engine_kwargs)
+        self._connection = self._engine.connect()
+
+        if self.backend_name == 'sqlite':
+            self.execute('PRAGMA journal_mode=WAL;')
+            self.execute('PRAGMA foreign_keys=ON;')
+            self.execute('PRAGMA synchronous=NORMAL;')
+            self.commit()
+        elif self.schema_name:
+            self._connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{self.schema_name}"'))
+            self._connection.execute(text(f'SET search_path TO "{self.schema_name}", public'))
+            self.commit()
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+
+    def commit(self) -> None:
+        self._require_connection().commit()
+
+    def execute(self, query: str, params: Any = None) -> _SqlAlchemyResultAdapter:
+        statement, bound_params = self._compile(query, params)
+        result = self._require_connection().execute(statement, bound_params)
+        return _SqlAlchemyResultAdapter(result)
+
+    def inspector(self) -> Any:
+        engine = self._require_engine()
+        return inspect(engine)
+
+    def _compile(self, query: str, params: Any) -> tuple[Any, dict[str, Any]]:
+        if params is None:
+            return text(query), {}
+        if isinstance(params, dict):
+            return text(query), params
+
+        sequence = list(params if isinstance(params, (list, tuple)) else [params])
+        placeholder_count = query.count('?')
+        if placeholder_count != len(sequence):
+            raise RuntimeError(
+                f'Expected {placeholder_count} SQL placeholders but received {len(sequence)} bound values.'
+            )
+        parts = query.split('?')
+        rewritten = parts[0]
+        bound_params: dict[str, Any] = {}
+        for index, part in enumerate(parts[1:]):
+            key = f'p{index}'
+            rewritten += f':{key}{part}'
+            bound_params[key] = sequence[index]
+        return text(rewritten), bound_params
+
+    def _require_connection(self) -> Connection:
+        if self._connection is None:
+            raise RuntimeError('Relational store connection is not open.')
+        return self._connection
+
+    def _require_engine(self) -> Engine:
+        if self._engine is None:
+            raise RuntimeError('Relational store engine is not open.')
+        return self._engine
+
+
 class SqliteStore:
     """Persistent repository layer for the KPI service."""
 
-    def __init__(self, database_path: str) -> None:
-        self.database_path = Path(database_path)
+    def __init__(
+        self,
+        database_path: str | None = None,
+        *,
+        database_url: str | None = None,
+        schema_name: str | None = None,
+    ) -> None:
+        self.database_path = Path(database_path) if database_path else None
+        self.database_url = (database_url or '').strip() or self._sqlite_url_from_path(database_path)
+        self.schema_name = _normalize_schema_name(schema_name)
         self._lock = threading.RLock()
-        self._connection: sqlite3.Connection | None = None
+        self._connection: _SqlAlchemyConnectionAdapter | None = None
 
     def open(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.database_path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
+        self._connection = _SqlAlchemyConnectionAdapter(
+            self.database_url,
+            schema_name=self.schema_name,
+        )
         with self._lock:
-            self._connection.execute('PRAGMA journal_mode=WAL;')
-            self._connection.execute('PRAGMA foreign_keys=ON;')
-            self._connection.execute('PRAGMA synchronous=NORMAL;')
+            self._connection.open()
             self._validate_schema()
 
     def close(self) -> None:
@@ -62,6 +198,14 @@ class SqliteStore:
         with self._lock:
             self._connection.close()
             self._connection = None
+
+    @staticmethod
+    def _sqlite_url_from_path(database_path: str | None) -> str:
+        if not database_path:
+            raise RuntimeError('A database_path is required when database_url is not configured.')
+        path = Path(database_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{path.as_posix()}"
 
     def clear_all(self) -> None:
         with self._lock:
@@ -138,7 +282,7 @@ class SqliteStore:
             connection = self._require_connection()
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO kpi_domain_events (
+                INSERT INTO kpi_domain_events (
                     external_tender_id,
                     event_type,
                     occurred_at,
@@ -149,6 +293,7 @@ class SqliteStore:
                     envelope_hash,
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(external_tender_id, event_type, occurred_at, source, envelope_hash) DO NOTHING
                 """,
                 (
                     external_tender_id,
@@ -196,7 +341,7 @@ class SqliteStore:
         now = _utcnow_iso()
         with self._lock:
             connection = self._require_connection()
-            cursor = connection.execute(
+            connection.execute(
                 """
                 INSERT INTO kpi_analysis_jobs (
                     external_tender_id,
@@ -223,7 +368,21 @@ class SqliteStore:
                 ),
             )
             connection.commit()
-            job_id = int(cursor.lastrowid)
+            job_row = connection.execute(
+                """
+                SELECT id
+                FROM kpi_analysis_jobs
+                WHERE external_tender_id = ?
+                  AND job_type = ?
+                  AND created_at = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (external_tender_id, payload['job_type'], now),
+            ).fetchone()
+            if job_row is None:
+                raise RuntimeError('Failed to resolve persisted analysis job id.')
+            job_id = int(job_row['id'])
         record = self.get_analysis_job(job_id)
         if record is None:
             raise RuntimeError('Failed to persist analysis job.')
@@ -367,7 +526,7 @@ class SqliteStore:
             snapshot_hash = hashlib.sha256(_to_json(snapshot_payload).encode('utf-8')).hexdigest()
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO kpi_snapshots (
+                INSERT INTO kpi_snapshots (
                     external_tender_id,
                     snapshot_hash,
                     analytical_phase,
@@ -380,6 +539,7 @@ class SqliteStore:
                     generated_at,
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(external_tender_id, snapshot_hash) DO NOTHING
                 """,
                 (
                     external_tender_id,
@@ -440,15 +600,15 @@ class SqliteStore:
             'external_tender_id': row['external_tender_id'],
             'title': row['title'],
             'customer_name': row['customer_name'],
-            'due_at': row['due_at'],
+            'due_at': _to_iso_value(row['due_at']),
             'current_status': row['current_status'],
-            'departments': json.loads(row['departments_json'] or '[]'),
-            'requirement_contexts': json.loads(row['requirement_contexts_json'] or '[]'),
-            'section_contexts': json.loads(row['section_contexts_json'] or '[]'),
-            'metadata': json.loads(row['metadata_json'] or '{}'),
+            'departments': _from_json_value(row['departments_json'], default=[]),
+            'requirement_contexts': _from_json_value(row['requirement_contexts_json'], default=[]),
+            'section_contexts': _from_json_value(row['section_contexts_json'], default=[]),
+            'metadata': _from_json_value(row['metadata_json'], default={}),
             'health': row['health'] or 'unknown',
             'analytical_phase': row['analytical_phase'],
-            'last_synced_at': row['last_synced_at'],
+            'last_synced_at': _to_iso_value(row['last_synced_at']),
         }
 
     def get_latest_snapshot_record(self, external_tender_id: str) -> dict[str, Any] | None:
@@ -480,13 +640,13 @@ class SqliteStore:
             ).fetchall()
         return {
             'id': int(row['id']),
-            'generated_at': row['generated_at'],
+            'generated_at': _to_iso_value(row['generated_at']),
             'analytical_phase': row['analytical_phase'],
             'health': row['health'],
             'summary': row['summary'],
-            'kpis': json.loads(row['kpis_json'] or '[]'),
-            'notes': json.loads(row['notes_json'] or '[]'),
-            'analysis_metadata': json.loads(row['analysis_metadata_json'] or '{}'),
+            'kpis': _from_json_value(row['kpis_json'], default=[]),
+            'notes': _from_json_value(row['notes_json'], default=[]),
+            'analysis_metadata': _from_json_value(row['analysis_metadata_json'], default={}),
             'model_version_code': row['model_version_code'],
             'findings': [item['content'] for item in findings],
         }
@@ -507,11 +667,11 @@ class SqliteStore:
         return [
             {
                 'event_type': row['event_type'],
-                'occurred_at': row['occurred_at'],
+                'occurred_at': _to_iso_value(row['occurred_at']),
                 'actor_id': row['actor_id'],
                 'source': row['source'],
                 'schema_version': row['schema_version'],
-                'payload': json.loads(row['payload_json'] or '{}'),
+                'payload': _from_json_value(row['payload_json'], default={}),
             }
             for row in rows
         ]
@@ -533,7 +693,7 @@ class SqliteStore:
             {
                 'from_state': row['from_state'],
                 'to_state': row['to_state'],
-                'occurred_at': row['occurred_at'],
+                'occurred_at': _to_iso_value(row['occurred_at']),
                 'cause': row['cause'],
                 'confidence': row['confidence'],
                 'source_event_type': row['source_event_type'],
@@ -558,11 +718,11 @@ class SqliteStore:
             ).fetchall()
         items: list[dict[str, Any]] = []
         for row in rows:
-            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            metadata = _from_json_value(row['analysis_metadata_json'], default={})
             items.append(
                 {
                     'snapshot_id': int(row['id']),
-                    'generated_at': row['generated_at'],
+                    'generated_at': _to_iso_value(row['generated_at']),
                     'analytical_phase': row['analytical_phase'],
                     'health': row['health'] or 'unknown',
                     'summary': row['summary'],
@@ -588,13 +748,13 @@ class SqliteStore:
             ).fetchall()
         items: list[dict[str, Any]] = []
         for row in rows:
-            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            metadata = _from_json_value(row['analysis_metadata_json'], default={})
             source_type = 'reconstructed' if bool(metadata.get('reconstructed', False)) else 'observed'
             items.append(
                 {
                     'external_tender_id': row['external_tender_id'],
                     'snapshot_id': int(row['id']),
-                    'generated_at': row['generated_at'],
+                    'generated_at': _to_iso_value(row['generated_at']),
                     'analytical_phase': row['analytical_phase'],
                     'reconstructed': bool(metadata.get('reconstructed', False)),
                     'source_type': source_type,
@@ -720,7 +880,7 @@ class SqliteStore:
         latest_snapshot_generated_at = snapshot_rows[0]['generated_at'] if snapshot_rows else None
 
         for row in snapshot_rows:
-            metadata = json.loads(row['analysis_metadata_json'] or '{}')
+            metadata = _from_json_value(row['analysis_metadata_json'], default={})
             if metadata.get('reconstructed'):
                 reconstructed_total += 1
             if metadata.get('shadow_mode_enabled'):
@@ -744,7 +904,7 @@ class SqliteStore:
             if source_job_type:
                 source_job_types[str(source_job_type)] += 1
 
-            kpis = json.loads(row['kpis_json'] or '[]')
+            kpis = _from_json_value(row['kpis_json'], default=[])
             if any(
                 isinstance(score, dict)
                 and isinstance(score.get('semantic'), dict)
@@ -758,8 +918,8 @@ class SqliteStore:
             model_versions[str(row['version_type'])].append(
                 {
                     'version_code': row['version_code'],
-                    'created_at': row['created_at'],
-                    'descriptor': json.loads(row['descriptor_json'] or '{}'),
+                    'created_at': _to_iso_value(row['created_at']),
+                    'descriptor': _from_json_value(row['descriptor_json'], default={}),
                 }
             )
 
@@ -786,7 +946,7 @@ class SqliteStore:
             },
             'snapshots': {
                 'persisted_total': int(snapshot_row['count'] or 0),
-                'latest_generated_at': latest_snapshot_generated_at,
+                'latest_generated_at': _to_iso_value(latest_snapshot_generated_at),
                 'reconstructed_total': reconstructed_total,
                 'shadow_mode_total': shadow_mode_total,
                 'semantic_official_total': semantic_official_total,
@@ -809,6 +969,17 @@ class SqliteStore:
             row = connection.execute('SELECT version_num FROM alembic_version LIMIT 1').fetchone()
         return None if row is None else row['version_num']
 
+    def table_row_count(self, table_name: str) -> int:
+        if table_name not in _REQUIRED_TABLES:
+            raise RuntimeError(f'Unsupported KPI table count request: {table_name}')
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(f'SELECT COUNT(*) AS count FROM {table_name}').fetchone()
+        return int(row['count'] or 0)
+
+    def has_persisted_data(self) -> bool:
+        return any(self.table_row_count(table_name) > 0 for table_name in _DATA_TABLES)
+
     def list_model_versions(self) -> list[dict[str, Any]]:
         with self._lock:
             connection = self._require_connection()
@@ -823,8 +994,8 @@ class SqliteStore:
             {
                 'version_type': row['version_type'],
                 'version_code': row['version_code'],
-                'descriptor': json.loads(row['descriptor_json'] or '{}'),
-                'created_at': row['created_at'],
+                'descriptor': _from_json_value(row['descriptor_json'], default={}),
+                'created_at': _to_iso_value(row['created_at']),
             }
             for row in rows
         ]
@@ -1004,7 +1175,7 @@ class SqliteStore:
         for row in snapshot_rows:
             snapshot_map[str(row['external_tender_id'])] = {
                 'summary': row['summary'],
-                'kpis': json.loads(row['kpis_json'] or '[]'),
+                'kpis': _from_json_value(row['kpis_json'], default=[]),
             }
 
         phase_counts = {}
@@ -1094,7 +1265,7 @@ class SqliteStore:
             'notes': notes,
         }
 
-    def _ensure_model_versions(self, connection: sqlite3.Connection, analysis_metadata: dict[str, Any]) -> int | None:
+    def _ensure_model_versions(self, connection: _SqlAlchemyConnectionAdapter, analysis_metadata: dict[str, Any]) -> int | None:
         version_specs = [
             ('formula_bundle', analysis_metadata.get('formula_bundle_version')),
             ('model_bundle', analysis_metadata.get('model_bundle_version')),
@@ -1111,12 +1282,13 @@ class SqliteStore:
             }
             connection.execute(
                 """
-                INSERT OR IGNORE INTO kpi_model_versions (
+                INSERT INTO kpi_model_versions (
                     version_type,
                     version_code,
                     descriptor_json,
                     created_at
                 ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(version_type, version_code) DO NOTHING
                 """,
                 (version_type, version_code, _to_json(descriptor), _utcnow_iso()),
             )
@@ -1136,7 +1308,7 @@ class SqliteStore:
 
     def _insert_snapshot_findings(
         self,
-        connection: sqlite3.Connection,
+        connection: _SqlAlchemyConnectionAdapter,
         snapshot_id: int,
         analysis: AnalysisSnapshot,
         created_at: str,
@@ -1265,7 +1437,7 @@ class SqliteStore:
 
     def _insert_phase_transitions(
         self,
-        connection: sqlite3.Connection,
+        connection: _SqlAlchemyConnectionAdapter,
         external_tender_id: str,
         snapshot_id: int,
         transition_snapshot: TransitionSnapshot,
@@ -1285,7 +1457,7 @@ class SqliteStore:
             transition_hash = hashlib.sha256(_to_json(fingerprint).encode('utf-8')).hexdigest()
             connection.execute(
                 """
-                INSERT OR IGNORE INTO kpi_phase_transitions (
+                INSERT INTO kpi_phase_transitions (
                     external_tender_id,
                     snapshot_id,
                     from_state,
@@ -1298,6 +1470,7 @@ class SqliteStore:
                     transition_hash,
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(external_tender_id, transition_hash) DO NOTHING
                 """,
                 (
                     external_tender_id,
@@ -1314,7 +1487,7 @@ class SqliteStore:
                 ),
             )
 
-    def _deserialize_analysis_job(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+    def _deserialize_analysis_job(self, row: Any | None) -> dict[str, Any] | None:
         if row is None:
             return None
         return {
@@ -1325,24 +1498,24 @@ class SqliteStore:
             'requested_by': row['requested_by'],
             'priority': row['priority'],
             'reason': row['reason'],
-            'metadata': json.loads(row['metadata_json'] or '{}'),
-            'created_at': row['created_at'],
-            'started_at': row['started_at'],
-            'completed_at': row['completed_at'],
-            'updated_at': row['updated_at'],
-            'latest_snapshot_generated_at': row['latest_snapshot_generated_at'],
+            'metadata': _from_json_value(row['metadata_json'], default={}),
+            'created_at': _to_iso_value(row['created_at']),
+            'started_at': _to_iso_value(row['started_at']),
+            'completed_at': _to_iso_value(row['completed_at']),
+            'updated_at': _to_iso_value(row['updated_at']),
+            'latest_snapshot_generated_at': _to_iso_value(row['latest_snapshot_generated_at']),
             'error_message': row['error_message'],
         }
 
-    def _require_connection(self) -> sqlite3.Connection:
+    def _require_connection(self) -> _SqlAlchemyConnectionAdapter:
         if self._connection is None:
-            raise RuntimeError('SQLite store is not open.')
+            raise RuntimeError('Relational store is not open.')
         return self._connection
 
     def _validate_schema(self) -> None:
         connection = self._require_connection()
-        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        existing = {row['name'] for row in rows}
+        inspector = connection.inspector()
+        existing = set(inspector.get_table_names(schema=connection.schema_name))
         missing = sorted(_REQUIRED_TABLES - existing)
         if missing:
             raise RuntimeError(f"Missing KPI persistence tables: {', '.join(missing)}")

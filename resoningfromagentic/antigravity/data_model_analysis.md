@@ -5,9 +5,20 @@ Alla luce della retrospettiva manageriale ([tw-kpi-reason-engine-retrospettiva-m
 Il sistema sfrutta un'architettura a **doppio dominio data-driven**: 
 
 1. **Backend Principale (PostgreSQL)**: Sorgente della verità per lo stato operativo e documentale. Registra minuziosamente "cosa succede e chi lo fa".
-2. **KPI Reason Engine (SQLite)**: Sorgente della verità analitica. Elabora gli eventi e genera snapshot temporali e calcoli probabilistici sulla salute del tender.
+2. **KPI Reason Engine (PostgreSQL, schema `kpi_engine`)**: Sorgente della verità analitica. Elabora gli eventi e genera snapshot temporali e calcoli probabilistici sulla salute del tender.
 
 Diseguito un'analisi dettagliata di queste due anime dell'architettura.
+
+## Addendum Operativo 2026-03-29
+
+Le sezioni sotto sono state riallineate al runtime attuale:
+
+- il KPI Reason Engine e ora `PostgreSQL-only`
+- lo schema analitico dedicato e `kpi_engine`
+- i payload strutturati usano `jsonb`
+- i campi temporali usano `timestamp with time zone`
+- il volume locale `/app/data` non fa piu parte del runtime ordinario
+- eventuali riferimenti al precedente assetto SQLite vanno letti come contesto storico, non come stato corrente
 
 ---
 
@@ -36,7 +47,7 @@ Per inviare queste informazioni, il backend usa il pattern Outbox. Tabella `kpi_
 
 ## 2. Modello Dati Analitico (KPI Reason Engine)
 
-Il KPI Reason Engine possiede un database separato (SQLite, gestito in [store.py](file:///d:/tender/tenderwriter/kpi-reason-engine/app/store.py)) ottimizzato per le letture analitiche in modalità Event-Sourcing (non distruttiva). Usa una logica "append-only" e di storicizzazione (snapshot).
+Il KPI Reason Engine possiede uno store analitico separato a livello logico, oggi implementato in PostgreSQL con schema dedicato `kpi_engine` e gestito in [store.py](file:///d:/tender/tenderwriter/kpi-reason-engine/app/store.py). Mantiene una logica "append-only" e di storicizzazione (snapshot), ma con operabilita centralizzata, migrazioni versionate e backup coerenti con il resto della piattaforma.
 
 ### A. Event Bus Integrato e Mirroring
 - **`kpi_tenders`**: Tabella specchio del tender sul backend. Funge da hub di aggregazione per l'ID Tender esterno (es. `external_tender_id`). Mantiene uno stato locale della *salute matematica* e della *fase analitica* correnti.
@@ -63,32 +74,21 @@ Il modello dati introdotto è estremamente robusto e coerente con la documentazi
 2. **Base Solida (Future-Proof)**: Le astrazioni nel _KPI Reason Engine_ gettano la spugna rispetto alla sovrascrittura in place (no `UPDATE row`). Grazie all'uso esclusivo di log immutati per [transitions](file:///d:/tender/tenderwriter/kpi-reason-engine/app/store.py#518-543) e [snapshots](file:///d:/tender/tenderwriter/kpi-reason-engine/app/store.py#615-623) con annessi riferimenti alla versione del modello, il team può passare nel prossimo sprint dalla fase puramente "Rule-based/Eurisitica" alla "Predittiva/Markoviana" su storico reale, come accennato dalla guida manageriale, in quanto la catena dei dati è predisposta da zero come vera Time-Series strutturata.
 
 
-La scelta di utilizzare SQLite per il KPI Reason Engine, mantenendo invece PostgreSQL per il Backend Principale, è una decisione architetturale molto precisa che riflette perfettamente il pattern dei microservizi e la natura intrinseca del ragionamento sui dati.
+Lo storico del progetto e nato con una giustificazione forte per SQLite, ma quello scenario e stato superato. Oggi la scelta architetturale consolidata e questa:
 
-Ecco i motivi principali architetturali e operativi dietro a questa scelta:
+1. Isolamento del dominio analitico senza isolamento filesystem
+Il KPI Reason Engine resta un servizio autonomo e disaccoppiato dal backend principale, ma lo fa tramite schema PostgreSQL dedicato invece che tramite file locale. Questo mantiene il boundary logico senza trascinarsi problemi operativi di backup, replica e gestione volume.
 
-1. Isolamento Totale del Dominio (Microservices Pattern)
-Il KPI Reason Engine è stato disegnato come un sistema totalmente autonomo e disaccoppiato dal backend principale. Usare SQLite significa che il container/servizio del motore porta con sé letteralmente il proprio database all'interno del file system (un semplice file .db). Non ha bisogno di condividere un'istanza PostgreSQL, non serve gestire credenziali di rete, permessi, o preoccuparsi che una query analitica pesante rallenti il database del TenderWriter principale.
+2. Event sourcing e append-only restano invariati
+Il fatto che il motore lavori in append-only non dipende da SQLite. Anche su PostgreSQL il servizio continua a leggere eventi, inserire nuovi snapshot e storicizzare transizioni senza basarsi su update distruttivi come meccanismo principale.
 
-2. Modello Dati ad "Aggiunta Continua" (Append-Only / Event Sourcing)
-PostgreSQL brilla in scenari OLTP (Online Transaction Processing) dove ci sono transazioni concorrenti altamente complesse e scritture parallele sulla stessa riga (es. due utenti salvano un documento insieme). Il KPI Engine, al contrario, lavora in Event Sourcing:
+3. Tipi nativi piu adatti all'operativita
+Le strutture che in origine erano salvate come blob testuali sono state promosse a `jsonb`, mentre i timestamp analitici sono ora `timestamp with time zone`. Questo migliora auditabilita, queryability e coerenza temporale senza perdere flessibilita.
 
-Legge eventi dal passato.
-Inserisce nuove righe (nuovi eventi in kpi_domain_events o nuovi snapshot in kpi_snapshots).
-Non fa mai aggiornamenti (UPDATE) distruttivi. In 
+4. Backup e recovery centralizzati
+Con PostgreSQL lo storage analitico entra nel perimetro operativo standard della piattaforma: dump di schema, restore controllato, migrazioni Alembic e niente dipendenza da `/app/data`.
 
-store.py
- abbiamo infatti notato l'impostazione PRAGMA journal_mode=WAL;, che rende SQLite eccellente per gestire letture concorrenti e veloci scritture sequenziali, esattamente il carico di questo motore analitico.
-3. Modello Dati "Piatto" (JSON Blobs)
-Se guardiamo lo schema 
+5. Legacy SQLite relegato a recovery straordinario
+Il vecchio formato SQLite non e piu parte del runtime ordinario. Resta solo come sorgente importabile in caso di recupero storico, con migrazione e validazione esplicite e disattivate di default.
 
-store.py
- del KPI Engine, notiamo che quasi tutte le tabelle memorizzano intere strutture dati come stringhe JSON (payload_json, kpis_json, metadata_json, notes_json). Il Reason Engine non ha quasi mai bisogno di fare JOIN relazionali complessi su 10 tabelle diverse per estrarre la salute di un tender; legge semplicemente il JSON dello snapshot. In altre parole, non utilizza il 90% delle funzionalità relazionali avanzate che rendono grande PostgreSQL (come indici GIN per JSONB avanzati, array nativi, check constraints complessi).
-
-4. Velocità di Iterazione (Siamo in Sprint 1)
-Come citato nella Retrospettiva Manageriale, il motore attuale (euristico) dovrà evolversi in un motore predittivo markoviano puro sui dati storici. Durante fasi di forte sperimentazione data-science/IA, gestire migrazioni di schema su PostgreSQL è tedioso. Con SQLite, i data scientist e gli sviluppatori possono letteralmente scaricarsi il file .db di produzione sul portatile, lanciare script Python locali in un Jupyter Notebook per testare nuovi prompt o logiche markoviane, senza alcun effort infrastrutturale.
-
-5. Architettura a Coda di Elaborazione
-Il sistema acquisisce richieste per ricalcoli asincroni (kpi_analysis_jobs). Molto probabilmente un worker (o una manciata di thread locali) pesca il job in coda e lancia l'LLM o il motore euristico. Finché il volume (il numero di tender elaborati al secondo) rientra in scenari B2B normali (anche migliaia di tender), un database embedded in-memory/file come SQLite processa i dati più in fretta della latenza di rete necessaria per parlare con un server PostgreSQL remoto.
-
-In sintesi: PostgreSQL (backend) fa il "lavoro sporco" transazionale su cui lavorano decine di utenti nello stesso momento. SQLite (motore KPI) fa la funzione di Datalake/Brain locale per catturare eventi, storicizzarli passivamente e ricalcolare gli snapshot senza dipendere da nessun'altra componente dell'infrastruttura. È una mossa eccellente per contenere i costi e azzerare il debito infrastrutturale in questa fase.
+In sintesi: PostgreSQL continua a fare il "lavoro sporco" transazionale del backend, ma ora ospita anche il repository analitico del KPI engine in uno schema dedicato `kpi_engine`. Il disaccoppiamento architetturale resta, mentre il debito operativo del volume locale e stato rimosso.

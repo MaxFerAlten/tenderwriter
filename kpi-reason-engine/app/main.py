@@ -67,6 +67,7 @@ from app.schemas import (
     TransitionsResponse,
 )
 from app.store import SqliteStore
+from app.store_migration import migrate_legacy_sqlite_to_store, validate_legacy_sqlite_counts
 from app.transition_diagnostics import TransitionSnapshot, build_transition_snapshot
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO), format="%(message)s")
@@ -83,9 +84,33 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations(settings.database_path)
-    store = SqliteStore(settings.database_path)
+    run_migrations(
+        database_url=settings.resolved_database_url,
+        database_path=settings.database_path,
+        schema_name=settings.normalized_database_schema,
+    )
+    store = SqliteStore(
+        settings.database_path,
+        database_url=settings.resolved_database_url,
+        schema_name=settings.normalized_database_schema,
+    )
     store.open()
+    migration_report = None
+    validation_report = None
+    if settings.auto_migrate_legacy_on_startup and settings.legacy_sqlite_source_path:
+        migration_report = migrate_legacy_sqlite_to_store(settings.legacy_sqlite_source_path, store)
+        logger.info(
+            "store.legacy_migration",
+            source_path=settings.legacy_sqlite_source_path,
+            report=migration_report,
+        )
+        if settings.validate_legacy_migration:
+            validation_report = validate_legacy_sqlite_counts(settings.legacy_sqlite_source_path, store)
+            logger.info(
+                "store.legacy_validation",
+                source_path=settings.legacy_sqlite_source_path,
+                report=validation_report,
+            )
     worker = AnalysisJobWorker(
         store,
         run_analysis=lambda job: _run_job(store, job),
@@ -104,7 +129,12 @@ async def lifespan(app: FastAPI):
         service=settings.app_name,
         version=settings.app_version,
         base_url=settings.public_base_url,
+        database_url=settings.resolved_database_url,
         database_path=settings.database_path,
+        database_schema=settings.normalized_database_schema,
+        legacy_source_path=settings.legacy_sqlite_source_path,
+        migration_report=migration_report,
+        validation_report=validation_report,
     )
     try:
         yield

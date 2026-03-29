@@ -1,5 +1,7 @@
 """Runtime configuration for tw-kpi-reason-engine."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_ROLLOUT_POLICIES = {"legacy", "shadow_only", "markov_only", "full"}
@@ -16,7 +18,12 @@ class Settings(BaseSettings):
     log_level: str = "info"
     service_token: str = "changeme-kpi-service-token"
     public_base_url: str = "http://tw-kpi-reason-engine:8010"
-    database_path: str = "/app/data/kpi_reason_engine.db"
+    database_url: str = ""
+    database_path: str = "/tmp/kpi_reason_engine.db"
+    database_schema: str = "kpi_engine"
+    legacy_database_path: str = ""
+    auto_migrate_legacy_on_startup: bool = False
+    validate_legacy_migration: bool = False
     analysis_job_poll_interval_seconds: float = 0.25
     rollout_policy: str = "full"
     shadow_mode_enabled: bool = True
@@ -41,6 +48,34 @@ class Settings(BaseSettings):
         if normalized in _VALID_ROLLOUT_POLICIES:
             return normalized
         return "full"
+
+    @property
+    def resolved_database_url(self) -> str:
+        normalized = str(self.database_url or "").strip()
+        if normalized:
+            return normalized
+        path = Path(self.database_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{path.as_posix()}"
+
+    @property
+    def normalized_database_schema(self) -> str | None:
+        if self.resolved_database_url.startswith("sqlite"):
+            return None
+        normalized = str(self.database_schema or "").strip()
+        return normalized or "kpi_engine"
+
+    @property
+    def legacy_sqlite_source_path(self) -> str | None:
+        normalized = str(self.legacy_database_path or "").strip()
+        if not normalized:
+            return None
+        if self.resolved_database_url.startswith("sqlite"):
+            current = Path(self.database_path).resolve()
+            candidate = Path(normalized).resolve()
+            if candidate == current:
+                return None
+        return normalized
 
     @property
     def semantic_shadow_rollout_enabled(self) -> bool:

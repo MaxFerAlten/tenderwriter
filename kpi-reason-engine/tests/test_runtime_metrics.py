@@ -1,7 +1,9 @@
 """Runtime metrics tests for the KPI reason engine."""
 
+import importlib
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -10,15 +12,36 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 _TEST_DIR = tempfile.mkdtemp(prefix="kpi-reason-engine-metrics-")
-os.environ.setdefault("KPI_REASON_ENGINE_SERVICE_TOKEN", "test-kpi-token")
-os.environ.setdefault("KPI_REASON_ENGINE_DATABASE_PATH", os.path.join(_TEST_DIR, "kpi_reason_engine.db"))
+os.environ["KPI_REASON_ENGINE_SERVICE_TOKEN"] = "test-kpi-token"
+os.environ["KPI_REASON_ENGINE_DATABASE_URL"] = ""
+os.environ["KPI_REASON_ENGINE_DATABASE_PATH"] = os.path.join(_TEST_DIR, "kpi_reason_engine.db")
+os.environ["KPI_REASON_ENGINE_AUTO_MIGRATE_LEGACY_ON_STARTUP"] = "false"
+os.environ["KPI_REASON_ENGINE_VALIDATE_LEGACY_MIGRATION"] = "false"
 
-from app.main import app
+
+def _load_app():
+    os.environ["KPI_REASON_ENGINE_SERVICE_TOKEN"] = "test-kpi-token"
+    os.environ["KPI_REASON_ENGINE_DATABASE_URL"] = ""
+    os.environ["KPI_REASON_ENGINE_DATABASE_PATH"] = os.path.join(_TEST_DIR, "kpi_reason_engine.db")
+    os.environ["KPI_REASON_ENGINE_AUTO_MIGRATE_LEGACY_ON_STARTUP"] = "false"
+    os.environ["KPI_REASON_ENGINE_VALIDATE_LEGACY_MIGRATION"] = "false"
+
+    for module_name in list(sys.modules):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    import app.config as app_config
+    import app.main as app_main
+
+    app_config = importlib.reload(app_config)
+    app_main = importlib.reload(app_main)
+    return app_main.app
 
 
 class RuntimeMetricsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        app = _load_app()
         cls._client_cm = TestClient(app)
         cls.client = cls._client_cm.__enter__()
 
@@ -100,7 +123,7 @@ class RuntimeMetricsTests(unittest.TestCase):
         self.assertGreaterEqual(payload['analysis_jobs']['runtime']['by_status'].get('succeeded', 0), 1)
         self.assertGreaterEqual(payload['persistence']['persisted_snapshots'], 1)
         self.assertGreaterEqual(payload['snapshots']['semantic_official_total'], 1)
-        self.assertEqual(payload['version_governance']['schema_version'], '20260315_0003')
+        self.assertEqual(payload['version_governance']['schema_version'], '20260329_0004')
         self.assertIn('snapshot-output-v1', payload['version_governance']['snapshot_output_schema_versions'])
 
     def test_readiness_endpoint_reports_ready_runtime_state(self) -> None:
@@ -121,7 +144,7 @@ class RuntimeMetricsTests(unittest.TestCase):
             'analysis_jobs': {'by_status': {'failed': 2, 'queued': 0}, 'by_type_and_status': [], 'latest_updated_at': None},
             'persistence': {'mirrored_tenders': 0, 'persisted_domain_events': 0, 'persisted_document_contexts': 0, 'persisted_snapshots': 0, 'persisted_findings': 0, 'persisted_phase_transitions': 0},
             'snapshots': {'persisted_total': 0, 'latest_generated_at': None, 'reconstructed_total': 0, 'shadow_mode_total': 0, 'semantic_official_total': 0, 'semantic_fallback_total': 0},
-            'version_governance': {'schema_version': '20260315_0003', 'snapshot_output_schema_versions': {}, 'contract_versions': {}, 'semantic_bundle_versions': {}, 'shadow_bundle_versions': {}, 'source_job_types': {}, 'model_versions': {}},
+            'version_governance': {'schema_version': '20260329_0004', 'snapshot_output_schema_versions': {}, 'contract_versions': {}, 'semantic_bundle_versions': {}, 'shadow_bundle_versions': {}, 'source_job_types': {}, 'model_versions': {}},
         }
         with patch.object(self.client.app.state.store, 'get_runtime_metrics', return_value=runtime_payload):
             response = self.client.get('/ready')

@@ -39,6 +39,18 @@ In una formula semplice:
 - aderenza funzionale all'uso admin: alta
 - aderenza metodologica al PDF: media
 
+## Addendum 2026-03-29
+
+La retrospettiva sotto resta valida sul piano metodologico, ma una parte infrastrutturale e stata superata.
+
+Aggiornamento da tenere presente mentre la leggi:
+
+- lo storage runtime del motore KPI non e piu SQLite
+- il servizio gira ora in modalita `PostgreSQL-only`
+- lo schema analitico dedicato e `kpi_engine`
+- il vecchio volume `/app/data` e stato rimosso dal runtime
+- la migrazione legacy SQLite resta disponibile solo per recovery straordinario
+
 ## Cosa e stato recepito davvero
 
 ### 1. Parti recepite in modo coerente e solido
@@ -82,7 +94,7 @@ Le divergenze principali rispetto al PDF e ai documenti di spec sono queste:
 - `Q` usa pesi diversi dal final spec: in codice `A2=0.20` e `A3=0.25`, mentre nello spec finale `A2=0.15` e `A3=0.30`
 - alcuni stati del PDF non sono davvero derivati in modo nativo dal motore, in particolare `S1` e `S10`
 - il forecast esiste, ma non e memorizzato come storico dedicato separato
-- la persistenza del motore e su SQLite, non su un repository analitico piu vicino al disegno enterprise iniziale
+- al momento della prima retro la persistenza del motore era su SQLite; oggi il runtime e stato migrato a PostgreSQL con schema `kpi_engine`
 - la documentazione runtime del servizio e rimasta indietro rispetto alla realta implementata
 
 Il punto piu importante da non nascondere e questo:

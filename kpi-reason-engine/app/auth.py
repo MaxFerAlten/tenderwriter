@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request, status
 
-from app.config import settings
+import app.config as app_config
 
 
 def require_internal_service(request: Request) -> None:
     """Allow only trusted internal callers on protected service routes."""
 
-    expected_token = (settings.service_token or "").strip()
+    expected_token = (app_config.settings.service_token or "").strip()
     if not expected_token:
         return
 

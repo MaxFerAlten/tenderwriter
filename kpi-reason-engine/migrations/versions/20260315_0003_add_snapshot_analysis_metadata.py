@@ -16,21 +16,35 @@ branch_labels = None
 depends_on = None
 
 
+def _schema_name() -> str | None:
+    normalized = str(op.get_context().config.get_main_option('kpi.schema') or '').strip()
+    return normalized or None
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    columns = {column['name'] for column in inspector.get_columns('kpi_snapshots')}
+    schema_name = _schema_name()
+    columns = {column['name'] for column in inspector.get_columns('kpi_snapshots', schema=schema_name)}
 
-    with op.batch_alter_table('kpi_snapshots') as batch_op:
+    with op.batch_alter_table('kpi_snapshots', schema=schema_name) as batch_op:
         if 'analysis_metadata_json' not in columns:
-            batch_op.add_column(sa.Column('analysis_metadata_json', sa.Text(), nullable=False, server_default='{}'))
+            batch_op.add_column(
+                sa.Column(
+                    'analysis_metadata_json',
+                    sa.Text(),
+                    nullable=False,
+                    server_default='{}',
+                )
+            )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    columns = {column['name'] for column in inspector.get_columns('kpi_snapshots')}
+    schema_name = _schema_name()
+    columns = {column['name'] for column in inspector.get_columns('kpi_snapshots', schema=schema_name)}
 
-    with op.batch_alter_table('kpi_snapshots') as batch_op:
+    with op.batch_alter_table('kpi_snapshots', schema=schema_name) as batch_op:
         if 'analysis_metadata_json' in columns:
             batch_op.drop_column('analysis_metadata_json')

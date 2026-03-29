@@ -1,7 +1,9 @@
 """Endpoint tests for the KPI reason engine authenticated ingestion flow."""
 
+import importlib
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -10,10 +12,29 @@ from fastapi.testclient import TestClient
 
 _TEST_DIR = tempfile.mkdtemp(prefix="kpi-reason-engine-tests-")
 os.environ["KPI_REASON_ENGINE_SERVICE_TOKEN"] = "test-kpi-token"
+os.environ["KPI_REASON_ENGINE_DATABASE_URL"] = ""
 os.environ["KPI_REASON_ENGINE_DATABASE_PATH"] = os.path.join(_TEST_DIR, "kpi_reason_engine.db")
+os.environ["KPI_REASON_ENGINE_AUTO_MIGRATE_LEGACY_ON_STARTUP"] = "false"
+os.environ["KPI_REASON_ENGINE_VALIDATE_LEGACY_MIGRATION"] = "false"
 
-from app.config import settings
-from app.main import app
+
+def _load_app():
+    os.environ["KPI_REASON_ENGINE_SERVICE_TOKEN"] = "test-kpi-token"
+    os.environ["KPI_REASON_ENGINE_DATABASE_URL"] = ""
+    os.environ["KPI_REASON_ENGINE_DATABASE_PATH"] = os.path.join(_TEST_DIR, "kpi_reason_engine.db")
+    os.environ["KPI_REASON_ENGINE_AUTO_MIGRATE_LEGACY_ON_STARTUP"] = "false"
+    os.environ["KPI_REASON_ENGINE_VALIDATE_LEGACY_MIGRATION"] = "false"
+
+    for module_name in list(sys.modules):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    import app.config as app_config
+    import app.main as app_main
+
+    app_config = importlib.reload(app_config)
+    app_main = importlib.reload(app_main)
+    return app_config.settings, app_main.app
 
 
 class KpiReasonEngineApiTests(unittest.TestCase):
@@ -21,6 +42,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        cls.settings, app = _load_app()
         cls._client_cm = TestClient(app)
         cls.client = cls._client_cm.__enter__()
 
@@ -53,7 +75,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(payload["forecast_output_schema_version"], "forecast-output-v1")
 
     def test_store_schema_version_matches_current_migration(self) -> None:
-        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260315_0003")
+        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260329_0004")
 
 
     def test_protected_routes_require_service_credentials(self) -> None:
@@ -557,9 +579,9 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(intelligence_response.json()["watchlist"], [])
 
     def test_snapshot_omits_shadow_payload_when_shadow_rollout_is_disabled(self) -> None:
-        original_policy = settings.rollout_policy
+        original_policy = self.settings.rollout_policy
         try:
-            settings.rollout_policy = "markov_only"
+            self.settings.rollout_policy = "markov_only"
             self.client.post(
                 "/v1/tenders",
                 headers=self._auth_headers(),
@@ -623,7 +645,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
                 headers=self._auth_headers(),
             )
         finally:
-            settings.rollout_policy = original_policy
+            self.settings.rollout_policy = original_policy
 
         self.assertEqual(snapshot_response.status_code, 200)
         snapshot = snapshot_response.json()
@@ -642,9 +664,9 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertTrue(snapshot["analysis_metadata"]["markov_rollout_enabled"])
 
     def test_forecast_endpoint_reports_rollout_disabled_when_markov_is_off(self) -> None:
-        original_policy = settings.rollout_policy
+        original_policy = self.settings.rollout_policy
         try:
-            settings.rollout_policy = "shadow_only"
+            self.settings.rollout_policy = "shadow_only"
             self.client.post(
                 "/v1/tenders",
                 headers=self._auth_headers(),
@@ -695,7 +717,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
                 headers=self._auth_headers(),
             )
         finally:
-            settings.rollout_policy = original_policy
+            self.settings.rollout_policy = original_policy
 
         self.assertEqual(forecast_response.status_code, 200)
         forecast = forecast_response.json()
@@ -713,6 +735,7 @@ if __name__ == "__main__":
 class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls.settings, app = _load_app()
         cls._client_cm = TestClient(app)
         cls.client = cls._client_cm.__enter__()
 
@@ -1750,6 +1773,76 @@ class KpiReasonEngineOperationalAnalyticsTests(unittest.TestCase):
 
         snapshot_response = self.client.get(
             "/v1/tenders/TEN-LC-S7/snapshot",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        self.assertEqual(snapshot_response.json()["analytical_phase"], "S7")
+
+    def test_snapshot_infers_draft_ready_phase_from_completed_sections_and_coverage(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-INF-S7",
+                "title": "Implicit Draft Ready",
+                "customer_name": "Northwind",
+                "due_at": "2030-04-30T10:00:00Z",
+                "current_status": "in_progress",
+                "departments": ["sales"],
+                "requirement_contexts": [
+                    {
+                        "external_requirement_id": "REQ-1",
+                        "summary": "Provide ISO 27001 evidence",
+                        "priority": "high",
+                        "compliance_status": "fully_addressed",
+                        "mapped_section_id": "SEC-1",
+                    }
+                ],
+                "section_contexts": [
+                    {
+                        "external_section_id": "SEC-1",
+                        "title": "Security",
+                        "owner_department": "sales",
+                        "status": "approved",
+                    }
+                ],
+                "metadata": {"lifecycle": {"decision": {"decision": "go"}}},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-INF-S7/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "tender_document_ingested",
+                "occurred_at": "2026-03-15T08:00:00Z",
+                "source": "tw-backend",
+                "payload": {"document_id": "DOC-1"},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-INF-S7/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "requirements_extracted",
+                "occurred_at": "2026-03-15T08:05:00Z",
+                "source": "tw-backend",
+                "payload": {"requirement_count": 1},
+            },
+        )
+        self.client.post(
+            "/v1/tenders/TEN-INF-S7/events",
+            headers=self._auth_headers(),
+            json={
+                "event_type": "proposal_section_updated",
+                "occurred_at": "2026-03-15T08:10:00Z",
+                "source": "tw-backend",
+                "payload": {"external_section_id": "SEC-1"},
+            },
+        )
+
+        snapshot_response = self.client.get(
+            "/v1/tenders/TEN-INF-S7/snapshot",
             headers=self._auth_headers(),
         )
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.config import settings
+import app.config as app_config
 from app.contract import (
     FORECAST_DECISION_BUNDLE_VERSION,
     FORECAST_OUTPUT_SCHEMA_VERSION,
@@ -157,11 +157,11 @@ def _scenario_action(name: str) -> str:
 
 def _rollout_metadata() -> dict[str, Any]:
     return {
-        'rollout_policy': settings.normalized_rollout_policy,
-        'shadow_rollout_enabled': settings.semantic_shadow_rollout_enabled,
-        'markov_rollout_enabled': settings.markov_rollout_enabled,
-        'calibrated_forecast_enabled': settings.markov_rollout_enabled,
-        'shadow_mode_enabled': settings.semantic_shadow_rollout_enabled,
+        'rollout_policy': app_config.settings.normalized_rollout_policy,
+        'shadow_rollout_enabled': app_config.settings.semantic_shadow_rollout_enabled,
+        'markov_rollout_enabled': app_config.settings.markov_rollout_enabled,
+        'calibrated_forecast_enabled': app_config.settings.markov_rollout_enabled,
+        'shadow_mode_enabled': app_config.settings.semantic_shadow_rollout_enabled,
         'forecast_output_schema_version': FORECAST_OUTPUT_SCHEMA_VERSION,
     }
 
@@ -676,7 +676,7 @@ def _terminal_snapshot(phase: str) -> ForecastSnapshot:
             'markov_model_active': False,
             'markov_model_version': MARKOV_MODEL_VERSION,
             'markov_bundle_kind': MARKOV_BUNDLE_KIND,
-            'markov_full_journey_enabled': settings.markov_rollout_enabled,
+        'markov_full_journey_enabled': app_config.settings.markov_rollout_enabled,
             'markov_backtest_version': MARKOV_BACKTEST_VERSION,
             'forecast_decision_bundle_version': FORECAST_DECISION_BUNDLE_VERSION,
             'forecast_primary_action_code': action.code,
@@ -718,7 +718,7 @@ def _not_ready_snapshot() -> ForecastSnapshot:
             'markov_model_active': False,
             'markov_model_version': MARKOV_MODEL_VERSION,
             'markov_bundle_kind': MARKOV_BUNDLE_KIND,
-            'markov_full_journey_enabled': settings.markov_rollout_enabled,
+        'markov_full_journey_enabled': app_config.settings.markov_rollout_enabled,
             'markov_backtest_version': MARKOV_BACKTEST_VERSION,
             'forecast_decision_bundle_version': FORECAST_DECISION_BUNDLE_VERSION,
             'forecast_primary_action_code': action.code,
@@ -1101,7 +1101,7 @@ def build_forecast_snapshot(
     markov_bundle = _build_markov_bundle(list(markov_history_points or []))
     fallback_reason: str | None = None
 
-    if settings.markov_rollout_enabled and phase in MARKOV_STATE_SCOPE:
+    if app_config.settings.markov_rollout_enabled and phase in MARKOV_STATE_SCOPE:
         markov_forecast = _build_markov_forecast(
             tender=tender,
             snapshot_record=snapshot_record,
@@ -1122,7 +1122,7 @@ def build_forecast_snapshot(
             fallback_reason = 'current_state_support_insufficient'
         else:
             fallback_reason = 'markov_row_unavailable'
-    elif not settings.markov_rollout_enabled:
+    elif not app_config.settings.markov_rollout_enabled:
         fallback_reason = 'markov_rollout_disabled'
     else:
         fallback_reason = 'phase_out_of_scope'
