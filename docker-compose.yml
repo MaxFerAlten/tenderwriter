@@ -523,6 +523,39 @@ services:
       retries: 10
       start_period: 30s
 
+  # --- Keycloak realm bootstrap users --- 
+  keycloak-bootstrap:
+    profiles: [ "keycloak" ]
+    image: python:3.12-slim
+    container_name: tw-keycloak-bootstrap
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KEYCLOAK_BOOTSTRAP_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-tenderwriter}
+      KC_ADMIN_USER: ${KC_ADMIN_USER:-admin}
+      KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-DefaultKCAdmin2026Pass}
+      KC_BOOTSTRAP_RETRIES: ${KC_BOOTSTRAP_RETRIES:-60}
+      KC_BOOTSTRAP_DELAY_SECONDS: ${KC_BOOTSTRAP_DELAY_SECONDS:-2}
+      KC_TW_ADMIN_USERNAME: ${KC_TW_ADMIN_USERNAME:-admin@admin.com}
+      KC_TW_ADMIN_EMAIL: ${KC_TW_ADMIN_EMAIL:-admin@admin.com}
+      KC_TW_ADMIN_PASSWORD: ${KC_TW_ADMIN_PASSWORD:-TestPass123!}
+      KC_TW_ADMIN_FIRST_NAME: ${KC_TW_ADMIN_FIRST_NAME:-System}
+      KC_TW_ADMIN_LAST_NAME: ${KC_TW_ADMIN_LAST_NAME:-Admin}
+      KC_TW_EDITOR_USERNAME: ${KC_TW_EDITOR_USERNAME:-registrazioni.hyperknow@gmail.com}
+      KC_TW_EDITOR_EMAIL: ${KC_TW_EDITOR_EMAIL:-registrazioni.hyperknow@gmail.com}
+      KC_TW_EDITOR_PASSWORD: ${KC_TW_EDITOR_PASSWORD:-TestPass123!}
+      KC_TW_EDITOR_FIRST_NAME: ${KC_TW_EDITOR_FIRST_NAME:-Massimo}
+      KC_TW_EDITOR_LAST_NAME: ${KC_TW_EDITOR_LAST_NAME:-Ferrara}
+    volumes:
+      - ./keycloak:/bootstrap:ro
+    command: [ "python", "/bootstrap/bootstrap_users.py" ]
+
   # ===================================================================
   # VIDEO CALL TRANSCRIPTION STACK (Mattermost + Jitsi + Jigasi + Vosk)
   # ===================================================================
@@ -605,6 +638,31 @@ services:
       - mm_plugins:/mattermost/plugins
       - mm_client_plugins:/mattermost/client/plugins
       - mm_bleve_indexes:/mattermost/bleve-indexes
+
+  # --- Mattermost bootstrap (admin user + default team) ---
+  mattermost-bootstrap:
+    profiles: [ "videochat" ]
+    image: docker:28-cli
+    container_name: tw-mattermost-bootstrap
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      mattermost:
+        condition: service_healthy
+    environment:
+      MM_CONTAINER_NAME: tw-mattermost
+      MM_ADMIN_USER: ${MM_ADMIN_USER:-tw-admin}
+      MM_ADMIN_EMAIL: ${MM_ADMIN_EMAIL:-tw-admin@tenderwriter.local}
+      MM_ADMIN_PASS: ${MM_ADMIN_PASS:-TW2026Secure!Pass}
+      MM_TEAM_NAME: ${MM_TEAM_NAME:-tenderwriter}
+      MM_TEAM_DISPLAY_NAME: ${MM_TEAM_DISPLAY_NAME:-TenderWriter}
+      MM_BOOTSTRAP_RETRIES: ${MM_BOOTSTRAP_RETRIES:-60}
+      MM_BOOTSTRAP_DELAY_SECONDS: ${MM_BOOTSTRAP_DELAY_SECONDS:-2}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./mattermost:/bootstrap:ro
+    command: [ "/bin/sh", "/bootstrap/bootstrap-mattermost.sh" ]
 
   # --- Jitsi Prosody (XMPP Server) ---
   jitsi-prosody:

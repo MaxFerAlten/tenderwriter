@@ -19,7 +19,8 @@ Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i compo
 - **Utenti Keycloak → TenderWriter**: nel setup di sviluppo attualmente allineato al realm `tenderwriter` sono usati:
   - `admin@admin.com` / `TestPass123!` → ruolo Keycloak `tw_admin` → ruolo TenderWriter `admin`
   - `registrazioni.hyperknow@gmail.com` / `TestPass123!` → ruolo Keycloak di default → ruolo TenderWriter `editor`
-- **Nota Realm Keycloak**: il file di import del realm `tenderwriter` non crea utenti automaticamente; le utenze sopra vanno presenti/create come da procedura di bootstrap.
+- **Bootstrap automatico Keycloak**: con `docker compose --profile keycloak up -d`, il servizio one-shot `tw-keycloak-bootstrap` crea/aggiorna automaticamente queste utenze nel realm `tenderwriter`.
+- **Nota Realm Keycloak**: il file di import del realm `tenderwriter` non crea utenti da solo; il bootstrap utenti viene eseguito subito dopo l'avvio di Keycloak.
 - **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
 - **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
 - **Session Management**: Sistema di autenticazione basato su JWT legacy, OIDC Keycloak e React Context con bootstrap runtime.
@@ -73,6 +74,34 @@ Per avviare anche il profilo SSO con Keycloak:
 ```bash
 docker compose --profile keycloak up -d
 ```
+
+Importante:
+
+- il profilo `keycloak` avvia Keycloak e il bootstrap utenti SSO, ma non avvia Mattermost
+- Mattermost, `mm-postgres`, `mm-plugin-oidc`, Jitsi, Jigasi, Vosk e `transcript-forwarder` fanno parte del profilo `videochat`
+- per avere insieme TenderWriter + SSO + stack video devi usare `docker compose --profile keycloak --profile videochat up -d`
+
+### Reset totale + bootstrap Keycloak
+
+Se vuoi ripartire da zero anche per il profilo SSO e ricreare realm, database Keycloak e utenti bootstrap:
+
+```bash
+# 1. Ferma tutto e rimuovi anche i volumi
+docker compose down -v
+
+# 2. Rialza lo stack con il profilo Keycloak
+docker compose --profile keycloak up -d
+
+# 3. Controlla il bootstrap utenti
+docker logs tw-keycloak-bootstrap
+```
+
+Risultato atteso:
+
+- Keycloak disponibile su `http://localhost:8180`
+- realm `tenderwriter` importato
+- utenti `admin@admin.com` e `registrazioni.hyperknow@gmail.com` creati o aggiornati automaticamente
+- ruolo `tw_admin` assegnato a `admin@admin.com`
 
 Endpoint utili per la modalità SSO:
 
@@ -186,7 +215,8 @@ Nota:
 
 - In modalità `hybrid`, puoi usare sia il login tradizionale locale sia gli utenti Keycloak sopra.
 - In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
-- Il realm `tenderwriter` importato da file non include utenti di default: se ricrei i volumi Keycloak devi ricreare anche queste utenze.
+- Se ricrei i volumi Keycloak, le utenze del realm vengono riseedate automaticamente dal servizio `tw-keycloak-bootstrap`.
+- Se ricrei i volumi Mattermost, l'utente tecnico `tw-admin` e il team `tenderwriter` vengono riseedati automaticamente dal servizio `tw-mattermost-bootstrap`.
 
 ### Configurazione Email (Mailpit)
 Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit). Non è necessaria alcuna configurazione SMTP reale per lo sviluppo. Per vedere i codici OTP:
@@ -197,12 +227,26 @@ Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit)
 ### Stack Video Collaboration (Opzionale)
 Mattermost, Jitsi, Vosk e il forwarder delle trascrizioni sono dietro al profilo `videochat`, quindi non partono con il normale `docker compose up -d`.
 
+Anche `docker compose --profile keycloak up -d` non li avvia: il profilo `keycloak` resta separato dal profilo `videochat`.
+
+Bootstrap automatico videochat:
+
+- il servizio one-shot `tw-mattermost-bootstrap` crea o riallinea automaticamente l'utente tecnico Mattermost `tw-admin`
+- crea anche il team di default `tenderwriter`
+- aggiunge `tw-admin` al team, così il backend può autenticarsi correttamente anche dopo un reset dei volumi
+- questo evita il classico `401 Unauthorized` su `POST /mm/api/v4/users/login` quando Mattermost riparte vuoto
+
 Per avviare anche la collaborazione video:
 ```bash
 docker compose --profile videochat up -d \
   mm-postgres mattermost \
   jitsi-prosody jitsi-jicofo jitsi-jvb jitsi-web vosk jitsi-jigasi \
   transcript-forwarder
+```
+
+Per avviare contemporaneamente SSO Keycloak e collaborazione video:
+```bash
+docker compose --profile keycloak --profile videochat up -d
 ```
 
 Note operative:
