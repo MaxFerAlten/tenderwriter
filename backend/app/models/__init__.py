@@ -457,9 +457,11 @@ class AIGatewayTarget(Base):
     id = Column(Integer, primary_key=True, index=True)
     route_key = Column(String(50), nullable=False)  # tender | opencode
     target_kind = Column(String(50), nullable=False, default="docker")  # docker|dmz|cloud
+    connection_method = Column(String(50), nullable=False, default="llama_cpp")
     provider = Column(String(50), nullable=False, default="llama")
     base_url = Column(String(500), nullable=False)
     model_name = Column(String(200))
+    api_key = Column(Text, nullable=True)
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=1)
     timeout_ms = Column(Integer, default=30000)

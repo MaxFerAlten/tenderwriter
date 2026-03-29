@@ -51,6 +51,17 @@ async def init_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             # Add is_verified if missing
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE"))
+            # Add gateway target connection method if missing
+            await conn.execute(
+                text(
+                    "ALTER TABLE ai_gateway_targets "
+                    "ADD COLUMN IF NOT EXISTS connection_method VARCHAR(50) DEFAULT 'llama_cpp'"
+                )
+            )
+            # Add gateway target API key if missing
+            await conn.execute(
+                text("ALTER TABLE ai_gateway_targets ADD COLUMN IF NOT EXISTS api_key TEXT")
+            )
             logger.info("Database schema compatibility check completed")
         except Exception as e:
             logger.warning("Database compatibility migration skipped", error=str(e))

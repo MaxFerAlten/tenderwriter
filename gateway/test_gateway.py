@@ -217,3 +217,245 @@ async def test_cloud_fallback_with_anonymizer_and_api_key(monkeypatch):
     assert last.url.host == "anonymizer"
     assert last.headers.get("x-target-url") == "https://api.openai.com/v1/chat/completions"
     assert last.headers.get("authorization") == "Bearer sk-test"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_completion_translation(monkeypatch):
+    import gateway.app as gateway_app
+    gateway_app = importlib.reload(gateway_app)
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        seen["body"] = json.loads(request.content.decode("utf-8"))
+        return Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "ok",
+                        }
+                    }
+                ]
+            },
+        )
+
+    class PatchedAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", PatchedAsyncClient)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/completion",
+        "headers": [],
+        "query_string": b"",
+    }
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(
+                {
+                    "prompt": "Scrivi una risposta breve.",
+                    "n_predict": 128,
+                    "temperature": 0.2,
+                    "stop": ["</s>"],
+                }
+            ).encode("utf-8"),
+            "more_body": False,
+        }
+
+    request = Request(scope, receive)
+    resp = await gateway_app._proxy_request(
+        path="/completion",
+        request=request,
+        timeout=30,
+        candidates=[
+            {
+                "base": "https://openrouter.ai/api/v1",
+                "provider": "openrouter",
+                "model_name": "openai/gpt-4.1-mini",
+                "via_anonymizer": False,
+                "anonymizer_url": None,
+                "api_key": "sk-or-test",
+                "timeout_sec": 30,
+                "max_attempts": 1,
+            }
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert seen["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert seen["auth"] == "Bearer sk-or-test"
+    assert seen["body"]["model"] == "openai/gpt-4.1-mini"
+    assert seen["body"]["messages"][0]["content"] == "Scrivi una risposta breve."
+    assert seen["body"]["max_tokens"] == 128
+
+
+@pytest.mark.asyncio
+async def test_openrouter_falls_through_to_next_candidate(monkeypatch):
+    import gateway.app as gateway_app
+    gateway_app = importlib.reload(gateway_app)
+
+    seen = []
+
+    def handler(request: httpx.Request) -> Response:
+        seen.append(str(request.url))
+        if "bad-target" in str(request.url):
+            return Response(401, json={"detail": "unauthorized"})
+        return Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "ok",
+                        }
+                    }
+                ]
+            },
+        )
+
+    class PatchedAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", PatchedAsyncClient)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/completion",
+        "headers": [],
+        "query_string": b"",
+    }
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(
+                {
+                    "prompt": "fallback openrouter",
+                    "n_predict": 64,
+                }
+            ).encode("utf-8"),
+            "more_body": False,
+        }
+
+    request = Request(scope, receive)
+    resp = await gateway_app._proxy_request(
+        path="/completion",
+        request=request,
+        timeout=30,
+        candidates=[
+            {
+                "base": "https://bad-target.openrouter.ai/api/v1",
+                "provider": "openrouter",
+                "model_name": "openai/gpt-4.1-mini",
+                "via_anonymizer": False,
+                "anonymizer_url": None,
+                "api_key": "sk-bad",
+                "timeout_sec": 30,
+                "max_attempts": 1,
+            },
+            {
+                "base": "https://openrouter.ai/api/v1",
+                "provider": "openrouter",
+                "model_name": "openai/gpt-4.1-mini",
+                "via_anonymizer": False,
+                "anonymizer_url": None,
+                "api_key": "sk-good",
+                "timeout_sec": 30,
+                "max_attempts": 1,
+            },
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert seen[0] == "https://bad-target.openrouter.ai/api/v1/chat/completions"
+    assert seen[1] == "https://openrouter.ai/api/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_llama_explicit_chat_endpoint_uses_openai_compatible_payload(monkeypatch):
+    import gateway.app as gateway_app
+    gateway_app = importlib.reload(gateway_app)
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content.decode("utf-8"))
+        return Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "ok",
+                        }
+                    }
+                ]
+            },
+        )
+
+    class PatchedAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", PatchedAsyncClient)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/completion",
+        "headers": [],
+        "query_string": b"",
+    }
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(
+                {
+                    "prompt": "Riassumi in 100 parole.",
+                    "n_predict": 96,
+                    "temperature": 0.1,
+                }
+            ).encode("utf-8"),
+            "more_body": False,
+        }
+
+    request = Request(scope, receive)
+    resp = await gateway_app._proxy_request(
+        path="/completion",
+        request=request,
+        timeout=30,
+        candidates=[
+            {
+                "base": "http://127.0.0.1:1234/v1/chat/completions",
+                "provider": "llama",
+                "model_name": "qwen3.5-4b-claude-4.6-opus-reasoning-distilled",
+                "via_anonymizer": False,
+                "anonymizer_url": None,
+                "api_key": None,
+                "timeout_sec": 30,
+                "max_attempts": 1,
+            }
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert seen["url"].endswith("/v1/chat/completions")
+    assert not seen["url"].endswith("/completion")
+    assert seen["body"]["model"] == "qwen3.5-4b-claude-4.6-opus-reasoning-distilled"
+    assert seen["body"]["messages"][0]["content"] == "Riassumi in 100 parole."

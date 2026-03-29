@@ -22,6 +22,16 @@ const DEFAULT_CONFIG: KeycloakConfig = {
     clientId: import.meta.env.VITE_KC_CLIENT_ID || 'tw-frontend',
 };
 
+const KEYCLOAK_MESSAGE_TIMEOUT_MS = 2_000;
+
+function isThirdPartyCheckTimeout(err: unknown): boolean {
+    if (!(err instanceof Error)) {
+        return false;
+    }
+
+    return err.message.includes('3rd party check iframe message');
+}
+
 /**
  * Get or create the Keycloak instance (singleton).
  */
@@ -49,7 +59,9 @@ export async function initKeycloak(config?: Partial<KeycloakConfig>): Promise<bo
             onLoad: 'check-sso',
             pkceMethod: 'S256',
             checkLoginIframe: false,
+            silentCheckSsoFallback: false,
             silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
+            messageReceiveTimeout: KEYCLOAK_MESSAGE_TIMEOUT_MS,
         });
 
         if (authenticated) {
@@ -59,6 +71,11 @@ export async function initKeycloak(config?: Partial<KeycloakConfig>): Promise<bo
 
         return authenticated;
     } catch (err) {
+        if (isThirdPartyCheckTimeout(err)) {
+            console.warn('[keycloak] silent SSO unavailable in this browser context, continuing without Keycloak session');
+            return false;
+        }
+
         console.error('[keycloak] init failed:', err);
         return false;
     }

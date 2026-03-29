@@ -172,6 +172,40 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.anonymized)
         engine._anonymize_prompt_variables.assert_not_awaited()
 
+    async def test_extension_failure_keeps_initial_answer(self) -> None:
+        engine = self._build_engine()
+        engine._anonymize_prompt_variables = AsyncMock()
+        engine._generate = AsyncMock(
+            return_value=GenerationResult(
+                text="Risposta iniziale gia valida.",
+                model="internal-model",
+                template_used="general_qa",
+            )
+        )
+        engine._extend_answer_if_needed = AsyncMock(side_effect=RuntimeError("timeout"))
+
+        with patch("app.rag.engine.settings.anonymizer_enabled", False), patch(
+            "app.rag.engine.settings.external_llm_url",
+            "",
+        ):
+            result = await engine.query(
+                RAGQuery(
+                    text="riassumimi il problema di assegnamento con 1000 parole",
+                    mode=QueryMode.QA,
+                )
+            )
+
+        self.assertEqual(result.answer, "Risposta iniziale gia valida.")
+        self.assertEqual(result.llm_route, LLMRoute.INTERNAL)
+        self.assertEqual(result.generation_result.text, "Risposta iniziale gia valida.")
+
+    def test_long_word_requests_use_larger_completion_budget(self) -> None:
+        engine = self._build_engine()
+
+        self.assertEqual(engine._completion_token_budget_for_words(1000), 3072)
+        self.assertEqual(engine._completion_token_budget_for_words(600), 2048)
+        self.assertEqual(engine._completion_token_budget_for_words(200), 600)
+
     async def test_external_target_override_uses_dynamic_generator_configuration(self) -> None:
         engine = self._build_engine()
         engine._anonymize_prompt_variables = AsyncMock(

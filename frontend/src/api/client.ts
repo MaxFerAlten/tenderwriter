@@ -717,9 +717,12 @@ export interface GatewayTarget {
     id: number;
     route_key: string;
     target_kind: string;
+    connection_method?: 'llama_cpp' | 'openrouter';
     provider: string;
     base_url: string;
     model_name?: string | null;
+    api_key?: string | null;
+    has_api_key?: boolean;
     enabled: boolean;
     priority: number;
     timeout_ms: number;
@@ -781,6 +784,7 @@ export interface User {
     email: string;
     name: string;
     role: string;
+    auth_source?: string | null;
 }
 
 export interface AuthResponse {

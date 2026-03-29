@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import AsyncIterator
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import structlog
@@ -19,6 +21,10 @@ import structlog
 from app.config import settings
 
 logger = structlog.get_logger()
+
+_DOCKER_MARKER = Path("/.dockerenv")
+_DOCKER_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
+_INTERNAL_LLAMACPP_HOSTS = {"tw-gateway", "llama-tender", "llama-opencode", "gateway"}
 
 
 # ──────────────────────────────────────────────
@@ -146,6 +152,9 @@ Answer the user's question based on the retrieved context from the knowledge bas
 ## User Question
 {query}
 
+## Response Constraints
+{response_constraints}
+
 Provide a helpful, accurate answer based on the available context.
 If the context doesn't contain enough information, say so clearly.
 
@@ -178,12 +187,163 @@ class Generator:
         self,
         base_url: str | None = None,
         model: str | None = None,
+        provider: str | None = None,
+        api_key: str | None = None,
         timeout: int | None = None,
     ):
         # Use llama_server settings by default, fallback to ollama for backward compatibility
-        self.base_url = base_url or getattr(settings, 'llama_server_url', settings.ollama_base_url)
+        self.base_url = self._normalize_runtime_base_url(
+            base_url or getattr(settings, 'llama_server_url', settings.ollama_base_url)
+        )
         self.model = model or getattr(settings, 'llama_model', settings.ollama_model)
+        self.provider = (provider or "llama").strip().lower()
+        self.api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
         self.timeout = timeout or getattr(settings, 'llama_timeout', 120)
+        if self.provider == "openrouter":
+            self.base_url = self._normalize_openrouter_base_url(self.base_url)
+
+    @staticmethod
+    def _running_in_docker() -> bool:
+        return _DOCKER_MARKER.exists()
+
+    @classmethod
+    def _normalize_runtime_base_url(cls, base_url: str) -> str:
+        normalized = (base_url or "").rstrip("/")
+        if not normalized:
+            return normalized
+
+        parsed = urlsplit(normalized)
+        hostname = (parsed.hostname or "").lower()
+        if hostname not in _DOCKER_LOOPBACK_HOSTS or not cls._running_in_docker():
+            return normalized
+
+        netloc = "host.docker.internal"
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
+
+    @staticmethod
+    def _normalize_openrouter_base_url(base_url: str) -> str:
+        normalized = (base_url or "").rstrip("/")
+        suffixes = (
+            "/chat/completions",
+            "/completions",
+            "/models",
+        )
+        for suffix in suffixes:
+            if normalized.endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+                break
+        return normalized.rstrip("/")
+
+    @staticmethod
+    def _strip_known_endpoint_suffix(base_url: str) -> str:
+        normalized = (base_url or "").rstrip("/")
+        suffixes = (
+            "/chat/completions",
+            "/completions",
+            "/models",
+        )
+        for suffix in suffixes:
+            if normalized.lower().endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+                break
+        return normalized.rstrip("/")
+
+    def _base_hostname(self) -> str:
+        return (urlsplit(self.base_url).hostname or "").lower()
+
+    def _base_path(self) -> str:
+        return urlsplit(self.base_url).path.rstrip("/").lower()
+
+    def _uses_openai_compatible_chat_api(self) -> bool:
+        path = self._base_path()
+        if path.endswith("/chat/completions"):
+            return True
+        if path in {"/v1", "/api/v1"}:
+            return self._base_hostname() not in _INTERNAL_LLAMACPP_HOSTS
+        return False
+
+    def _uses_openai_compatible_completions_api(self) -> bool:
+        path = self._base_path()
+        return path.endswith("/completions") and not path.endswith("/chat/completions")
+
+    def _openai_compatible_root_url(self) -> str:
+        return self._strip_known_endpoint_suffix(self.base_url)
+
+    def _openai_chat_url(self) -> str:
+        if self._base_path().endswith("/chat/completions"):
+            return self.base_url.rstrip("/")
+        return f"{self._openai_compatible_root_url()}/chat/completions"
+
+    def _openai_completion_url(self) -> str:
+        if self._uses_openai_compatible_completions_api():
+            return self.base_url.rstrip("/")
+        return f"{self._openai_compatible_root_url()}/completions"
+
+    def _legacy_llama_completion_url(self) -> str:
+        if self._base_path().endswith("/v1"):
+            return f"{self.base_url[:-3].rstrip('/')}/completion"
+        return f"{self.base_url.rstrip('/')}/completion"
+
+    def _request_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    @staticmethod
+    def _raise_for_status_with_body(response: httpx.Response, *, context: str) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text.strip()
+            if detail:
+                raise RuntimeError(
+                    f"{context} failed with status {response.status_code}: {detail[:1000]}"
+                ) from exc
+            raise
+
+    def _build_openrouter_payload(
+        self,
+        *,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        stop_tokens: list[str],
+        stream: bool,
+    ) -> dict:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": stream,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if stop_tokens:
+            payload["stop"] = stop_tokens
+        return payload
+
+    def _build_openai_completion_payload(
+        self,
+        *,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        stop_tokens: list[str],
+        stream: bool,
+    ) -> dict:
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": stream,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if stop_tokens:
+            payload["stop"] = stop_tokens
+        return payload
 
     @staticmethod
     def _extract_generated_text(data: dict) -> str:
@@ -271,6 +431,92 @@ class Generator:
 
         return "", bool(chunk.get("stop") or chunk.get("done"))
 
+    @staticmethod
+    def _should_retry_empty_openai_response(data: dict) -> bool:
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return False
+        first = choices[0]
+        if not isinstance(first, dict):
+            return False
+        message = first.get("message")
+        if not isinstance(message, dict):
+            return False
+        content = message.get("content")
+        reasoning = message.get("reasoning_content")
+        return (
+            (not isinstance(content, str) or not content.strip())
+            and isinstance(reasoning, str)
+            and reasoning.strip() != ""
+            and first.get("finish_reason") == "length"
+        )
+
+    @staticmethod
+    def _expanded_retry_max_tokens(max_tokens: int) -> int:
+        return min(max(max_tokens * 4, 1024), 4096)
+
+    def _expanded_retry_timeout(self) -> int:
+        return min(max(self.timeout * 4, 120), 300)
+
+    def _timeout_for_requested_tokens(self, max_tokens: int) -> int:
+        if max_tokens >= 1536:
+            return min(max(self.timeout * 6, 180), 300)
+        if max_tokens >= 1024:
+            return min(max(self.timeout * 4, 120), 300)
+        if max_tokens >= 768:
+            return min(max(self.timeout * 3, 90), 300)
+        return self.timeout
+
+    async def _post_json_with_retries(
+        self,
+        *,
+        url: str,
+        request_data: dict,
+        headers: dict[str, str] | None,
+        context: str,
+        timeout: int | None = None,
+    ) -> dict:
+        async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.post(
+                        url,
+                        json=request_data,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    retriable = status in {502, 503, 504}
+                    detail = exc.response.text[:500]
+                    logger.warning(
+                        f"{context} HTTP error",
+                        status=status,
+                        attempt=attempt,
+                        retriable=retriable,
+                        response=detail,
+                    )
+                    if retriable and attempt < max_attempts:
+                        await asyncio.sleep(0.6 * attempt)
+                        continue
+                    raise RuntimeError(
+                        f"{context} failed with status {status}: {detail}"
+                    ) from exc
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    retriable = attempt < max_attempts
+                    logger.warning(
+                        f"{context} transport error",
+                        attempt=attempt,
+                        retriable=retriable,
+                        error=str(exc),
+                    )
+                    if retriable:
+                        await asyncio.sleep(0.6 * attempt)
+                        continue
+                    raise
+
     async def generate(
         self,
         template: str,
@@ -318,65 +564,175 @@ class Generator:
         stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
         stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
 
+        # OpenRouter / OpenAI-compatible chat API
+        if self.provider == "openrouter":
+            request_data = self._build_openrouter_payload(
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stop_tokens=stop_tokens,
+                stream=False,
+            )
+
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=request_data,
+                    headers=self._request_headers(),
+                )
+                self._raise_for_status_with_body(response, context="OpenRouter generation")
+                data = response.json()
+
+            prompt_tokens, completion_tokens = self._extract_usage(data)
+
+            result = GenerationResult(
+                text=self._extract_generated_text(data).strip(),
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                template_used=template_name,
+            )
+        elif self._uses_openai_compatible_chat_api():
+            request_data = self._build_openrouter_payload(
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stop_tokens=stop_tokens,
+                stream=False,
+            )
+            target_url = self._openai_chat_url()
+
+            logger.debug(
+                "Sending request to OpenAI-compatible chat server",
+                url=target_url,
+                prompt_len=len(prompt),
+                max_tokens=max_tokens,
+            )
+
+            data = await self._post_json_with_retries(
+                url=target_url,
+                request_data=request_data,
+                headers=self._request_headers(),
+                context="OpenAI-compatible chat generation",
+                timeout=self._timeout_for_requested_tokens(max_tokens),
+            )
+            if self._should_retry_empty_openai_response(data):
+                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                logger.info(
+                    "Retrying OpenAI-compatible chat generation with higher token budget",
+                    url=target_url,
+                    previous_max_tokens=max_tokens,
+                    retry_max_tokens=retry_max_tokens,
+                )
+                data = await self._post_json_with_retries(
+                    url=target_url,
+                    request_data=self._build_openrouter_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=retry_max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=False,
+                    ),
+                    headers=self._request_headers(),
+                    context="OpenAI-compatible chat generation retry",
+                    timeout=max(
+                        self._expanded_retry_timeout(),
+                        self._timeout_for_requested_tokens(retry_max_tokens),
+                    ),
+                )
+
+            prompt_tokens, completion_tokens = self._extract_usage(data)
+
+            result = GenerationResult(
+                text=self._extract_generated_text(data).strip(),
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                template_used=template_name,
+            )
+        elif self._uses_openai_compatible_completions_api():
+            request_data = self._build_openai_completion_payload(
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stop_tokens=stop_tokens,
+                stream=False,
+            )
+            target_url = self._openai_completion_url()
+
+            logger.debug(
+                "Sending request to OpenAI-compatible completion server",
+                url=target_url,
+                prompt_len=len(prompt),
+                max_tokens=max_tokens,
+            )
+
+            data = await self._post_json_with_retries(
+                url=target_url,
+                request_data=request_data,
+                headers=self._request_headers(),
+                context="OpenAI-compatible completion generation",
+                timeout=self._timeout_for_requested_tokens(max_tokens),
+            )
+            if self._should_retry_empty_openai_response(data):
+                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                logger.info(
+                    "Retrying OpenAI-compatible completion generation with higher token budget",
+                    url=target_url,
+                    previous_max_tokens=max_tokens,
+                    retry_max_tokens=retry_max_tokens,
+                )
+                data = await self._post_json_with_retries(
+                    url=target_url,
+                    request_data=self._build_openai_completion_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=retry_max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=False,
+                    ),
+                    headers=self._request_headers(),
+                    context="OpenAI-compatible completion generation retry",
+                    timeout=max(
+                        self._expanded_retry_timeout(),
+                        self._timeout_for_requested_tokens(retry_max_tokens),
+                    ),
+                )
+
+            prompt_tokens, completion_tokens = self._extract_usage(data)
+
+            result = GenerationResult(
+                text=self._extract_generated_text(data).strip(),
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                template_used=template_name,
+            )
         # Check if using llama.cpp (OpenAI-compatible) or Ollama
-        if "/v1" in self.base_url:
-            # llama.cpp server - use /completion endpoint (not /v1/chat/completions due to parsing bug)
-            base_url_without_v1 = self.base_url.replace("/v1", "")
-            
+        elif "/v1" in self.base_url:
+            # Internal llama.cpp server - use /completion endpoint.
             request_data = {
                 "prompt": prompt,
                 "n_predict": max_tokens,
                 "temperature": temperature,
                 "stop": stop_tokens,
             }
-            
-            logger.debug("Sending request to llama server", 
-                        url=f"{base_url_without_v1}/completion",
-                        prompt_len=len(prompt),
-                        n_predict=max_tokens)
-            
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                data = None
-                max_attempts = 2
-                for attempt in range(1, max_attempts + 1):
-                    try:
-                        response = await client.post(
-                            f"{base_url_without_v1}/completion",
-                            json=request_data,
-                        )
-                        response.raise_for_status()
-                        data = response.json()
-                        break
-                    except httpx.HTTPStatusError as e:
-                        status = e.response.status_code
-                        retriable = status in {502, 503, 504}
-                        logger.warning(
-                            "Llama server HTTP error",
-                            status=status,
-                            attempt=attempt,
-                            retriable=retriable,
-                            response=e.response.text[:500],
-                        )
-                        if retriable and attempt < max_attempts:
-                            await asyncio.sleep(0.6 * attempt)
-                            continue
-                        logger.error(
-                            "Llama server error",
-                            status=status,
-                            response=e.response.text[:500],
-                        )
-                        raise
-                    except (httpx.TimeoutException, httpx.TransportError) as e:
-                        logger.warning(
-                            "Llama transport error",
-                            attempt=attempt,
-                            retriable=attempt < max_attempts,
-                            error=str(e),
-                        )
-                        if attempt < max_attempts:
-                            await asyncio.sleep(0.6 * attempt)
-                            continue
-                        raise
+            target_url = self._legacy_llama_completion_url()
+
+            logger.debug(
+                "Sending request to llama server",
+                url=target_url,
+                prompt_len=len(prompt),
+                n_predict=max_tokens,
+            )
+
+            data = await self._post_json_with_retries(
+                url=target_url,
+                request_data=request_data,
+                headers=None,
+                context="Llama server",
+                timeout=self._timeout_for_requested_tokens(max_tokens),
+            )
             
             prompt_tokens, completion_tokens = self._extract_usage(data)
 
@@ -451,15 +807,103 @@ class Generator:
         stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
         stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
 
-        # Check if using llama.cpp or Ollama
-        if "/v1" in self.base_url:
-            # llama.cpp server - use /completion endpoint with streaming
-            base_url_without_v1 = self.base_url.replace("/v1", "")
-
+        # OpenRouter / OpenAI-compatible chat API
+        if self.provider == "openrouter":
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
                     "POST",
-                    f"{base_url_without_v1}/completion",
+                    f"{self.base_url}/chat/completions",
+                    json=self._build_openrouter_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=True,
+                    ),
+                    headers=self._request_headers(),
+                ) as response:
+                    self._raise_for_status_with_body(
+                        response,
+                        context="OpenRouter streaming generation",
+                    )
+                    async for line in response.aiter_lines():
+                        chunk = self._parse_stream_line(line)
+                        if not chunk:
+                            continue
+                        if chunk.get("done"):
+                            break
+
+                        token, done = self._extract_stream_text_and_done(chunk)
+                        if token:
+                            yield token
+                        if done:
+                            break
+        elif self._uses_openai_compatible_chat_api():
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    self._openai_chat_url(),
+                    json=self._build_openrouter_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=True,
+                    ),
+                    headers=self._request_headers(),
+                ) as response:
+                    self._raise_for_status_with_body(
+                        response,
+                        context="OpenAI-compatible chat streaming generation",
+                    )
+                    async for line in response.aiter_lines():
+                        chunk = self._parse_stream_line(line)
+                        if not chunk:
+                            continue
+                        if chunk.get("done"):
+                            break
+
+                        token, done = self._extract_stream_text_and_done(chunk)
+                        if token:
+                            yield token
+                        if done:
+                            break
+        elif self._uses_openai_compatible_completions_api():
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    self._openai_completion_url(),
+                    json=self._build_openai_completion_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=True,
+                    ),
+                    headers=self._request_headers(),
+                ) as response:
+                    self._raise_for_status_with_body(
+                        response,
+                        context="OpenAI-compatible completion streaming generation",
+                    )
+                    async for line in response.aiter_lines():
+                        chunk = self._parse_stream_line(line)
+                        if not chunk:
+                            continue
+                        if chunk.get("done"):
+                            break
+
+                        token, done = self._extract_stream_text_and_done(chunk)
+                        if token:
+                            yield token
+                        if done:
+                            break
+        # Check if using llama.cpp or Ollama
+        elif "/v1" in self.base_url:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    self._legacy_llama_completion_url(),
                     json={
                         "prompt": prompt,
                         "n_predict": max_tokens,
@@ -515,6 +959,21 @@ class Generator:
         """Check if the LLM server is running and the model is available."""
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+                # Check if using OpenRouter
+                if self.provider == "openrouter":
+                    response = await client.get(
+                        f"{self.base_url}/models",
+                        headers=self._request_headers(),
+                    )
+                    response.raise_for_status()
+                    return True
+                if self._uses_openai_compatible_chat_api() or self._uses_openai_compatible_completions_api():
+                    response = await client.get(
+                        f"{self._openai_compatible_root_url()}/models",
+                        headers=self._request_headers(),
+                    )
+                    response.raise_for_status()
+                    return True
                 # Check if using llama.cpp (OpenAI-compatible) or Ollama
                 if "/v1" in self.base_url:
                     # llama.cpp with OpenAI-compatible API
@@ -541,6 +1000,8 @@ class Generator:
 
     async def ensure_model(self):
         """Pull the model if it's not already available."""
+        if self.provider == "openrouter" or "/v1" in self.base_url:
+            return
         if await self.check_health():
             return
 

@@ -168,6 +168,7 @@ async def rag_query(
         external_target_url=policy.target_base_url,
         external_target_model=policy.target_model,
         external_target_provider=policy.target_provider,
+        external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
     )
@@ -308,6 +309,7 @@ async def generate_section(
         external_target_url=policy.target_base_url,
         external_target_model=policy.target_model,
         external_target_provider=policy.target_provider,
+        external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
     )
@@ -373,6 +375,7 @@ async def compliance_check(
         external_target_url=policy.target_base_url,
         external_target_model=policy.target_model,
         external_target_provider=policy.target_provider,
+        external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
     )
@@ -438,6 +441,7 @@ async def analyze_requirements(
         external_target_url=policy.target_base_url,
         external_target_model=policy.target_model,
         external_target_provider=policy.target_provider,
+        external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
     )

@@ -21,12 +21,15 @@ class EffectivePrivacyPolicy:
     target_provider: str | None = None
     target_base_url: str | None = None
     target_model: str | None = None
+    target_api_key: str | None = None
     target_timeout_ms: int | None = None
     target_use_anonymizer: bool | None = None
     sources: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("target_api_key", None)
+        return data
 
 
 def _default_policy_payload() -> dict[str, Any]:
@@ -44,6 +47,17 @@ def _is_external_target(target: AIGatewayTarget) -> bool:
     if provider and provider not in {"llama", "ollama"}:
         return True
     return target.base_url.rstrip("/") != settings.llama_server_url.rstrip("/")
+
+
+def _effective_target_provider(target: AIGatewayTarget) -> str | None:
+    provider = (target.provider or "").strip().lower()
+    if provider:
+        if provider == "llama" and "openrouter.ai" in (target.base_url or "").strip().lower():
+            return "openrouter"
+        return provider
+    if "openrouter.ai" in (target.base_url or "").strip().lower():
+        return "openrouter"
+    return None
 
 
 def _coerce_rule(value: Any) -> dict[str, Any]:
@@ -104,9 +118,10 @@ async def resolve_effective_privacy_policy(
     if target is not None:
         policy.target_id = target.id
         policy.target_kind = target.target_kind
-        policy.target_provider = target.provider
+        policy.target_provider = _effective_target_provider(target)
         policy.target_base_url = target.base_url
         policy.target_model = target.model_name
+        policy.target_api_key = target.api_key
         policy.target_timeout_ms = target.timeout_ms
         policy.target_use_anonymizer = target.use_anonymizer
         source_notes.append("gateway.active_target")

@@ -68,6 +68,36 @@ const DEFAULT_ANONYMIZER_POLICY: AnonymizerPolicyData = {
 };
 
 const ROUTE_POLICY_OPTIONS = ['tender', 'opencode'] as const;
+const GATEWAY_METHOD_OPTIONS = [
+    { value: 'llama_cpp', label: 'Metodo attuale (llama.cpp / LM Studio)' },
+    { value: 'openrouter', label: 'OpenRouter' },
+] as const;
+
+type GatewayConnectionMethod = (typeof GATEWAY_METHOD_OPTIONS)[number]['value'];
+
+const isOpenRouterBaseUrl = (value?: string | null): boolean =>
+    (value || '').toLowerCase().includes('openrouter.ai');
+
+const getGatewayConnectionMethod = (target: Partial<GatewayTarget>): GatewayConnectionMethod =>
+    target.connection_method === 'openrouter' || target.provider === 'openrouter' || isOpenRouterBaseUrl(target.base_url)
+        ? 'openrouter'
+        : 'llama_cpp';
+
+const getGatewayProviderForMethod = (method: GatewayConnectionMethod): string =>
+    method === 'openrouter' ? 'openrouter' : 'llama';
+
+const formatGatewayMethodLabel = (method: GatewayConnectionMethod): string =>
+    method === 'openrouter' ? 'OpenRouter' : 'Metodo attuale';
+
+const normalizeGatewayTarget = (target: GatewayTarget): GatewayTarget => {
+    const connectionMethod = getGatewayConnectionMethod(target);
+    return {
+        ...target,
+        connection_method: connectionMethod,
+        provider: getGatewayProviderForMethod(connectionMethod),
+        has_api_key: target.has_api_key ?? Boolean(target.api_key),
+    };
+};
 
 const Settings: FC = () => {
     const { user } = useAuth();
@@ -120,9 +150,11 @@ const Settings: FC = () => {
     const [gwForm, setGwForm] = useState<Partial<Omit<GatewayTarget, 'id'>>>({
         route_key: 'tender',
         target_kind: 'docker',
+        connection_method: 'llama_cpp',
         provider: 'llama',
         base_url: '',
         model_name: '',
+        api_key: '',
         priority: 1,
         timeout_ms: 30000,
         enabled: true,
@@ -236,7 +268,9 @@ const Settings: FC = () => {
             setGwLoading(true);
             setGwError(null);
             const items = await gatewayApi.listTargets();
-            const sorted = items.sort((a, b) => a.priority - b.priority);
+            const sorted = items
+                .map((item) => normalizeGatewayTarget(item))
+                .sort((a, b) => a.priority - b.priority);
             setGatewayTargets(sorted);
             savedTargetsRef.current = sorted.map((t) => ({ ...t })); // deep copy snapshot
         } catch {
@@ -284,8 +318,17 @@ const Settings: FC = () => {
     // ── Gateway local-only operations ──
 
     const handleAddTarget = () => {
+        const connectionMethod = getGatewayConnectionMethod(gwForm);
         if (!gwForm.base_url) {
             setGwError('Base URL obbligatoria');
+            return;
+        }
+        if (connectionMethod === 'openrouter' && !gwForm.model_name) {
+            setGwError('Per OpenRouter devi indicare il modello.');
+            return;
+        }
+        if (connectionMethod === 'openrouter' && !gwForm.api_key) {
+            setGwError('Per OpenRouter devi inserire la API key.');
             return;
         }
         setGwError(null);
@@ -293,9 +336,12 @@ const Settings: FC = () => {
             id: tempIdCounter--,  // negative temporary ID
             route_key: gwForm.route_key || 'tender',
             target_kind: gwForm.target_kind || 'docker',
-            provider: gwForm.provider || 'llama',
+            connection_method: connectionMethod,
+            provider: getGatewayProviderForMethod(connectionMethod),
             base_url: gwForm.base_url,
             model_name: gwForm.model_name || '',
+            api_key: gwForm.api_key || '',
+            has_api_key: Boolean(gwForm.api_key),
             enabled: gwForm.enabled ?? true,
             priority: gwForm.priority ?? 1,
             timeout_ms: gwForm.timeout_ms ?? 30000,
@@ -303,7 +349,12 @@ const Settings: FC = () => {
             metadata_json: {},
         };
         setGatewayTargets((prev) => [...prev, newTarget].sort((a, b) => a.priority - b.priority));
-        setGwForm((f) => ({ ...f, base_url: '', model_name: '' }));
+        setGwForm((f) => ({
+            ...f,
+            base_url: '',
+            model_name: '',
+            api_key: '',
+        }));
     };
 
     const toggleEnable = (t: GatewayTarget) => {
@@ -504,6 +555,26 @@ const Settings: FC = () => {
             const savedIds = new Set(saved.map((t) => t.id));
             const currentIds = new Set(current.map((t) => t.id));
 
+            for (const t of current) {
+                const method = getGatewayConnectionMethod(t);
+                if (!t.base_url?.trim()) {
+                    errors.push(`Target gateway senza Base URL (${t.route_key})`);
+                    continue;
+                }
+                if (method === 'openrouter' && !t.model_name?.trim()) {
+                    errors.push(`Target OpenRouter ${t.base_url} senza model_name`);
+                }
+                if (method === 'openrouter' && !(t.api_key?.trim() || t.has_api_key)) {
+                    errors.push(`Target OpenRouter ${t.base_url} senza API key`);
+                }
+            }
+
+            if (errors.length > 0) {
+                setSaveResult({ tone: 'error', message: errors.join(' · ') });
+                setIsSaving(false);
+                return;
+            }
+
             // Delete: in saved but not in current
             for (const t of saved) {
                 if (!currentIds.has(t.id)) {
@@ -522,9 +593,11 @@ const Settings: FC = () => {
                         await gatewayApi.createTarget({
                             route_key: t.route_key,
                             target_kind: t.target_kind,
+                            connection_method: t.connection_method,
                             provider: t.provider,
                             base_url: t.base_url,
                             model_name: t.model_name || '',
+                            api_key: t.api_key || '',
                             enabled: t.enabled,
                             priority: t.priority,
                             timeout_ms: t.timeout_ms,
@@ -561,7 +634,9 @@ const Settings: FC = () => {
             // Reload gateway targets from DB to get real IDs
             try {
                 const items = await gatewayApi.listTargets();
-                const sorted = items.sort((a, b) => a.priority - b.priority);
+                const sorted = items
+                    .map((item) => normalizeGatewayTarget(item))
+                    .sort((a, b) => a.priority - b.priority);
                 setGatewayTargets(sorted);
                 savedTargetsRef.current = sorted.map((t) => ({ ...t }));
             } catch {
@@ -1329,7 +1404,7 @@ const Settings: FC = () => {
                                         >
                                             <div>
                                                 <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    {t.route_key} · {t.provider}
+                                                    {t.route_key} · {formatGatewayMethodLabel(getGatewayConnectionMethod(t))}
                                                     {t.id < 0 && (
                                                         <span style={{ fontSize: '0.7rem', background: 'var(--accent-blue)', color: '#fff', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
                                                             nuovo
@@ -1339,6 +1414,8 @@ const Settings: FC = () => {
                                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.base_url}</div>
                                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                                                     prio {t.priority} · timeout {t.timeout_ms}ms · kind {t.target_kind} · anonymizer {t.use_anonymizer ? 'on' : 'off'}
+                                                    {t.model_name ? ` · model ${t.model_name}` : ''}
+                                                    {t.has_api_key ? ' · API key configurata' : ''}
                                                 </div>
                                             </div>
                                             <button
@@ -1365,9 +1442,31 @@ const Settings: FC = () => {
                                         <option value="tender">tender</option>
                                         <option value="opencode">opencode</option>
                                     </select>
+                                    <select
+                                        className="form-select"
+                                        value={getGatewayConnectionMethod(gwForm)}
+                                        onChange={(e) => {
+                                            const method = e.target.value as GatewayConnectionMethod;
+                                            setGwForm({
+                                                ...gwForm,
+                                                connection_method: method,
+                                                provider: getGatewayProviderForMethod(method),
+                                            });
+                                        }}
+                                    >
+                                        {GATEWAY_METHOD_OPTIONS.map((option) => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                    </select>
                                     <input className="form-input" placeholder="Base URL" value={gwForm.base_url || ''} onChange={(e) => setGwForm({ ...gwForm, base_url: e.target.value })} />
-                                    <input className="form-input" placeholder="Provider (llama/openai/anthropic)" value={gwForm.provider || ''} onChange={(e) => setGwForm({ ...gwForm, provider: e.target.value })} />
                                     <input className="form-input" placeholder="Modello (opzionale)" value={gwForm.model_name || ''} onChange={(e) => setGwForm({ ...gwForm, model_name: e.target.value })} />
+                                    <input
+                                        type="password"
+                                        className="form-input"
+                                        placeholder={getGatewayConnectionMethod(gwForm) === 'openrouter' ? 'API key OpenRouter' : 'API key (solo se richiesta)'}
+                                        value={gwForm.api_key || ''}
+                                        onChange={(e) => setGwForm({ ...gwForm, api_key: e.target.value })}
+                                    />
                                     <input type="number" className="form-input" placeholder="Priorità" value={gwForm.priority ?? 1} onChange={(e) => setGwForm({ ...gwForm, priority: Number(e.target.value) })} />
                                     <input type="number" className="form-input" placeholder="Timeout ms" value={gwForm.timeout_ms ?? 30000} onChange={(e) => setGwForm({ ...gwForm, timeout_ms: Number(e.target.value) })} />
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
@@ -1378,6 +1477,11 @@ const Settings: FC = () => {
                                         <input type="checkbox" checked={gwForm.use_anonymizer ?? false} onChange={(e) => setGwForm({ ...gwForm, use_anonymizer: e.target.checked })} />
                                         Usa anonymizer
                                     </label>
+                                    <div style={{ gridColumn: 'span 2', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                        {getGatewayConnectionMethod(gwForm) === 'openrouter'
+                                            ? 'Per OpenRouter puoi usare `https://openrouter.ai/api/v1` oppure l\'endpoint completo `https://openrouter.ai/api/v1/chat/completions`; il valore viene mantenuto come inserito. Seleziona il modello e inserisci la API key.'
+                                            : 'Il metodo attuale usa il flusso llama.cpp esistente, ma accetta anche endpoint OpenAI-compatible di LM Studio come `http://127.0.0.1:1234/v1/chat/completions`. Se il backend gira in Docker, gli indirizzi `localhost/127.0.0.1` vengono raggiunti automaticamente via `host.docker.internal`. La API key resta opzionale.'}
+                                    </div>
                                     <button className="btn btn-primary btn-sm" onClick={handleAddTarget} style={{ gridColumn: 'span 2', justifySelf: 'flex-start' }}>
                                         <Plus size={14} /> Aggiungi target
                                     </button>

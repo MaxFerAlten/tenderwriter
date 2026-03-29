@@ -126,6 +126,18 @@ async def _proxy_anonymizer(
 
     if response.status_code >= 400:
         detail = body.get("detail") if isinstance(body, dict) else None
+        if (
+            response.status_code == status.HTTP_400_BAD_REQUEST
+            and path.startswith("/v1/")
+            and (detail or "").strip().lower() == "missing x-target-url header"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Anonymizer service is running a legacy relay-only build. "
+                    "Rebuild the tw-anonymizer container/image."
+                ),
+            )
         raise HTTPException(
             status_code=response.status_code,
             detail=detail or "Anonymizer request failed",

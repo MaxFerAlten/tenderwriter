@@ -11,6 +11,7 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+import re
 import time
 from typing import Any, AsyncIterator
 
@@ -28,6 +29,38 @@ from app.rag.reranker import Reranker
 from app.rag.sparse_retriever import SparseRetriever
 
 logger = structlog.get_logger()
+
+WORD_COUNT_REQUEST_RE = re.compile(
+    r"\b(\d{2,5})\s+(?:parole|words|palabras)\b",
+    re.IGNORECASE,
+)
+WORD_RE = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
+CONTINUATION_HEADING_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
+    re.IGNORECASE,
+)
+
+QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
+- Devi rispondere nella STESSA LINGUA della domanda dell'utente.
+- Stai continuando una risposta gia iniziata.
+- Non ricominciare dall'inizio.
+- Non ripetere sezioni o frasi gia scritte.
+- Non commentare il numero di parole.
+- Non scrivere titoli o frasi come "Continuazione della risposta".
+- Continua fino a raggiungere complessivamente circa {target_words} parole.
+
+## User Question
+{query}
+
+## Retrieved Context
+{context}
+
+## Draft Ending
+{current_answer_tail}
+
+## Task
+Scrivi solo la continuazione della risposta, iniziando direttamente con il contenuto mancante in modo fluido e coerente con il draft gia presente.
+"""
 
 
 class QueryMode(str, Enum):
@@ -73,6 +106,7 @@ class RAGQuery:
     external_target_url: str | None = None
     external_target_model: str | None = None
     external_target_provider: str | None = None
+    external_target_api_key: str | None = None
     external_target_id: int | None = None
     external_target_timeout_ms: int | None = None
 
@@ -110,7 +144,7 @@ class HybridRAGEngine:
         self.fusion: RankFusion | None = None
         self.reranker: Reranker | None = None
         self.generator: Generator | None = None
-        self._external_generators: dict[tuple[str, str, int], Generator] = {}
+        self._external_generators: dict[tuple[str, str, int, str, str], Generator] = {}
         self._anonymizer_failure_count = 0
         self._anonymizer_circuit_open_until = 0.0
         self._anonymizer_fallback_events = 0
@@ -356,14 +390,6 @@ class HybridRAGEngine:
                 template=template,
                 variables=variables,
             )
-            if deanonymize_session_id:
-                generation_result = replace(
-                    generation_result,
-                    text=await self._deanonymize_text(
-                        generation_result.text,
-                        deanonymize_session_id,
-                    ),
-                )
         except Exception as e:
             logger.error(
                 "Generation failed",
@@ -396,6 +422,38 @@ class HybridRAGEngine:
                     anonymized=anonymized,
                 )
             raise
+
+        try:
+            generation_result = await self._extend_answer_if_needed(
+                rag_query,
+                generator=generator,
+                context=context,
+                variables=variables,
+                generation_result=generation_result,
+            )
+        except Exception as e:
+            logger.warning(
+                "Answer extension failed, returning initial generation",
+                mode=rag_query.mode.value,
+                llm_route=llm_route.value,
+                error=str(e),
+                target_id=rag_query.external_target_id,
+                target_provider=rag_query.external_target_provider,
+            )
+
+        generation_result = replace(
+            generation_result,
+            text=self._clean_final_answer_text(generation_result.text),
+        )
+
+        if deanonymize_session_id:
+            generation_result = replace(
+                generation_result,
+                text=await self._deanonymize_text(
+                    generation_result.text,
+                    deanonymize_session_id,
+                ),
+            )
 
         logger.info(
             "RAG query completed",
@@ -589,17 +647,21 @@ class HybridRAGEngine:
     def _get_external_generator(self, rag_query: RAGQuery) -> Generator:
         base_url = (rag_query.external_target_url or settings.external_llm_url).strip()
         model = rag_query.external_target_model or settings.external_llm_model or settings.llama_model
+        provider = (rag_query.external_target_provider or "llama").strip().lower()
+        api_key = (rag_query.external_target_api_key or "").strip()
         timeout = (
             rag_query.external_target_timeout_ms / 1000
             if rag_query.external_target_timeout_ms
             else settings.llama_timeout
         )
-        cache_key = (base_url, model, int(timeout))
+        cache_key = (base_url, model, int(timeout), provider, api_key)
         generator = self._external_generators.get(cache_key)
         if generator is None:
             generator = Generator(
                 base_url=base_url,
                 model=model,
+                provider=provider,
+                api_key=api_key or None,
                 timeout=int(timeout),
             )
             self._external_generators[cache_key] = generator
@@ -833,7 +895,195 @@ class HybridRAGEngine:
             template=template,
             variables=variables,
             temperature=rag_query.temperature,
+            max_tokens=self._completion_token_budget_for_words(
+                self._extract_requested_word_count(rag_query.text)
+            ),
         )
+
+    def _extract_requested_word_count(self, query_text: str) -> int | None:
+        match = WORD_COUNT_REQUEST_RE.search(query_text or "")
+        if not match:
+            return None
+        try:
+            value = int(match.group(1))
+        except ValueError:
+            return None
+        return value if value >= 50 else None
+
+    def _count_words(self, text: str) -> int:
+        return len(WORD_RE.findall(text or ""))
+
+    def _minimum_acceptable_word_count(self, target_words: int) -> int:
+        if target_words >= 400:
+            return max(200, int(target_words * 0.95))
+        return max(80, int(target_words * 0.85))
+
+    def _completion_token_budget_for_words(self, target_words: int | None) -> int | None:
+        if not target_words:
+            return None
+
+        estimated_tokens = int(target_words * 3)
+        if target_words >= 800:
+            estimated_tokens = max(estimated_tokens, 3072)
+        elif target_words >= 500:
+            estimated_tokens = max(estimated_tokens, 2048)
+        elif target_words >= 250:
+            estimated_tokens = max(estimated_tokens, 1024)
+        else:
+            estimated_tokens = max(
+                estimated_tokens,
+                getattr(settings, "llama_max_tokens", 256),
+            )
+
+        return min(estimated_tokens, 4096)
+
+    def _continuation_tail(self, text: str, *, limit: int = 1600) -> str:
+        normalized = (text or "").strip()
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[-limit:].lstrip()
+
+    def _clean_continuation_text(self, text: str) -> str:
+        lines = (text or "").strip().splitlines()
+        cleaned_lines: list[str] = []
+        skipping_meta = True
+
+        for line in lines:
+            stripped = line.strip()
+            if skipping_meta and not stripped:
+                continue
+            if skipping_meta and CONTINUATION_HEADING_RE.match(stripped):
+                continue
+            if skipping_meta and stripped.lower().startswith("ecco la continuazione"):
+                continue
+            skipping_meta = False
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines).strip()
+
+    def _clean_final_answer_text(self, text: str) -> str:
+        lines = [
+            line
+            for line in (text or "").strip().splitlines()
+            if not CONTINUATION_HEADING_RE.match(line.strip())
+        ]
+        terminal_chars = {".", "!", "?", ":", ";", '"', "'", ")", "]", "}"}
+        while lines:
+            stripped = lines[-1].strip()
+            if not stripped:
+                lines.pop()
+                continue
+
+            normalized = stripped.lstrip("#").strip()
+            if stripped.startswith("#") and len(normalized.split()) <= 8:
+                lines.pop()
+                continue
+
+            if (
+                stripped[-1] not in terminal_chars
+                and not stripped.startswith(("-", "*", "$"))
+            ):
+                lines.pop()
+                continue
+
+            break
+
+        return "\n".join(lines).strip()
+
+    def _build_response_constraints(self, rag_query: RAGQuery) -> str:
+        target_words = self._extract_requested_word_count(rag_query.text)
+        constraints = [
+            "Rispondi direttamente alla domanda dell'utente senza preamboli meta.",
+            "Non limitarti a contare o commentare il numero di parole della tua risposta.",
+        ]
+
+        if target_words:
+            min_words = self._minimum_acceptable_word_count(target_words)
+            max_words = max(target_words + 100, int(target_words * 1.1))
+            constraints.extend([
+                f"L'utente ha richiesto circa {target_words} parole.",
+                f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
+                f"Avvicinati il piu possibile al target di {target_words} parole senza fermarti molto prima.",
+                "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
+            ])
+        else:
+            constraints.append("Mantieni la risposta proporzionata alla richiesta.")
+
+        return "\n".join(f"- {constraint}" for constraint in constraints)
+
+    async def _extend_answer_if_needed(
+        self,
+        rag_query: RAGQuery,
+        *,
+        generator: Generator,
+        context: str,
+        variables: dict[str, Any],
+        generation_result: GenerationResult,
+    ) -> GenerationResult:
+        if rag_query.mode != QueryMode.QA:
+            return generation_result
+
+        target_words = self._extract_requested_word_count(rag_query.text)
+        if not target_words:
+            return generation_result
+
+        minimum_words = self._minimum_acceptable_word_count(target_words)
+        current_text = generation_result.text.strip()
+        current_words = self._count_words(current_text)
+        if current_words >= minimum_words:
+            return generation_result
+
+        logger.info(
+            "Extending QA answer to satisfy requested length",
+            target_words=target_words,
+            current_words=current_words,
+            minimum_words=minimum_words,
+        )
+
+        for attempt in range(1, 4):
+            remaining_words = max(target_words - current_words, 0)
+            if remaining_words <= 0:
+                break
+
+            continuation_result = await generator.generate(
+                template=QA_CONTINUATION_PROMPT,
+                variables={
+                    "query": variables.get("query", rag_query.text),
+                    "context": variables.get("context", context),
+                    "current_answer_tail": self._continuation_tail(current_text),
+                    "target_words": target_words,
+                },
+                temperature=rag_query.temperature,
+                max_tokens=self._completion_token_budget_for_words(remaining_words),
+            )
+
+            continuation_text = self._clean_continuation_text(continuation_result.text)
+            if not continuation_text:
+                break
+
+            current_text = f"{current_text}\n\n{continuation_text}".strip()
+            current_words = self._count_words(current_text)
+
+            logger.info(
+                "QA answer extension complete",
+                attempt=attempt,
+                current_words=current_words,
+                target_words=target_words,
+            )
+
+            generation_result = replace(
+                generation_result,
+                text=current_text,
+                completion_tokens=(
+                    (generation_result.completion_tokens or 0)
+                    + (continuation_result.completion_tokens or 0)
+                ) or generation_result.completion_tokens,
+            )
+
+            if current_words >= minimum_words:
+                break
+
+        return generation_result
 
     def _resolve_template(self, rag_query: RAGQuery, context: str) -> tuple[str, dict]:
         """Resolve the prompt template and variables for a given query mode."""
@@ -843,6 +1093,7 @@ class HybridRAGEngine:
             return "general_qa", {
                 "context": context,
                 "query": rag_query.text,
+                "response_constraints": self._build_response_constraints(rag_query),
             }
 
         elif mode == QueryMode.WRITE_SECTION:

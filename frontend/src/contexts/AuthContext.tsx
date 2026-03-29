@@ -12,6 +12,10 @@ import { getAuthRuntimeConfig, type AuthMode, type AuthRuntimeConfig } from '../
 
 type SessionKind = 'legacy' | 'keycloak' | null;
 
+function resolveSessionKind(userData: User): SessionKind {
+    return userData.auth_source === 'keycloak' ? 'keycloak' : 'legacy';
+}
+
 interface AuthContextType {
     user: User | null;
     isLoading: boolean;
@@ -32,25 +36,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [keycloakConfig, setKeycloakConfig] = useState<KeycloakConfig | null>(null);
     const [sessionKind, setSessionKind] = useState<SessionKind>(null);
 
-    // ── Legacy mode: check localStorage token ──
-    const initLegacy = useCallback(async (): Promise<boolean> => {
+    // ── Stored session: validate the token already present in localStorage ──
+    const initStoredSession = useCallback(async (): Promise<SessionKind> => {
         const token = localStorage.getItem('token');
         if (!token) {
             setUser(null);
             setSessionKind(null);
-            return false;
+            return null;
         }
 
         try {
             const userData = await authApi.me();
             setUser(userData);
-            setSessionKind('legacy');
-            return true;
+            const resolvedKind = resolveSessionKind(userData);
+            setSessionKind(resolvedKind);
+            return resolvedKind;
         } catch {
             localStorage.removeItem('token');
             setUser(null);
             setSessionKind(null);
-            return false;
+            return null;
         }
     }, []);
 
@@ -97,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         email: kcInfo.email,
                         name: kcInfo.name,
                         role: 'editor',
+                        auth_source: 'keycloak',
                     });
                 } else {
                     setUser(null);
@@ -133,9 +139,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             if (runtimeConfig.auth_mode === 'hybrid') {
-                const kcAuthenticated = await initKeycloakAuth(runtimeConfig, { clearLegacyToken: false });
-                if (!kcAuthenticated) {
-                    await initLegacy();
+                const restoredSession = await initStoredSession();
+                if (restoredSession === 'keycloak') {
+                    void initKeycloakAuth(runtimeConfig, { clearLegacyToken: false });
+                } else if (!restoredSession) {
+                    await initKeycloakAuth(runtimeConfig, { clearLegacyToken: false });
                 }
                 if (!cancelled) {
                     setIsLoading(false);
@@ -144,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             setKeycloakConfig(null);
-            await initLegacy();
+            await initStoredSession();
             if (!cancelled) {
                 setIsLoading(false);
             }
@@ -155,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [initLegacy, initKeycloakAuth]);
+    }, [initStoredSession, initKeycloakAuth]);
 
     // ── Legacy login (email/password) ──
     const login = useCallback((token: string, userData: User) => {

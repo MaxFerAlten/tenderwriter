@@ -1,11 +1,19 @@
 import os
 import asyncio
+import json
+from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, Request, Response
 from pydantic import Field, ConfigDict
 from pydantic_settings import BaseSettings
+
+
+_DOCKER_MARKER = Path("/.dockerenv")
+_DOCKER_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
+_INTERNAL_LLAMACPP_HOSTS = {"tw-gateway", "llama-tender", "llama-opencode", "gateway"}
 
 
 class Settings(BaseSettings):
@@ -71,6 +79,187 @@ def _safe_headers(headers: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in hop_by_hop}
 
 
+def _normalize_openrouter_base(base_url: str) -> str:
+    normalized = (base_url or "").rstrip("/")
+    suffixes = (
+        "/chat/completions",
+        "/completions",
+        "/models",
+    )
+    for suffix in suffixes:
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized.rstrip("/")
+
+
+def _running_in_docker() -> bool:
+    return _DOCKER_MARKER.exists()
+
+
+def _normalize_runtime_base(base_url: str) -> str:
+    normalized = (base_url or "").rstrip("/")
+    if not normalized:
+        return normalized
+
+    parsed = urlsplit(normalized)
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in _DOCKER_LOOPBACK_HOSTS or not _running_in_docker():
+        return normalized
+
+    netloc = "host.docker.internal"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
+
+
+def _strip_known_endpoint_suffix(base_url: str) -> str:
+    normalized = (base_url or "").rstrip("/")
+    suffixes = (
+        "/chat/completions",
+        "/completions",
+        "/models",
+    )
+    for suffix in suffixes:
+        if normalized.lower().endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized.rstrip("/")
+
+
+def _llama_provider_mode(base_url: str) -> str:
+    parsed = urlsplit(base_url)
+    path = parsed.path.rstrip("/").lower()
+    hostname = (parsed.hostname or "").lower()
+    if path.endswith("/chat/completions"):
+        return "openai_chat"
+    if path.endswith("/completions"):
+        return "openai_completion"
+    if path in {"/v1", "/api/v1"} and hostname not in _INTERNAL_LLAMACPP_HOSTS:
+        return "openai_chat"
+    return "llama_completion"
+
+
+def _build_llama_url(base_url: str, path: str) -> str:
+    normalized = _normalize_runtime_base(base_url)
+    mode = _llama_provider_mode(normalized)
+    root = _strip_known_endpoint_suffix(normalized)
+
+    if path == "/v1/models" and mode in {"openai_chat", "openai_completion"}:
+        return f"{root}/models"
+
+    if path == "/completion":
+        if mode == "openai_chat":
+            if normalized.lower().endswith("/chat/completions"):
+                return normalized
+            return f"{root}/chat/completions"
+        if mode == "openai_completion":
+            if normalized.lower().endswith("/completions"):
+                return normalized
+            return f"{root}/completions"
+        if normalized.lower().endswith("/v1"):
+            return f"{normalized[:-3].rstrip('/')}/completion"
+        return f"{normalized}/completion"
+
+    if path == "/v1/chat/completions" and mode == "openai_chat":
+        if normalized.lower().endswith("/chat/completions"):
+            return normalized
+        return f"{root}/chat/completions"
+
+    return normalized + path
+
+
+def _build_openrouter_url(base_url: str, path: str) -> str:
+    normalized = _normalize_openrouter_base(base_url)
+    if normalized.endswith("/api/v1") or normalized.endswith("/v1"):
+        if path == "/completion":
+            return f"{normalized}/chat/completions"
+        if path == "/v1/chat/completions":
+            return f"{normalized}/chat/completions"
+        if path == "/v1/models":
+            return f"{normalized}/models"
+        return normalized + path
+
+    if path == "/completion":
+        return f"{normalized}/api/v1/chat/completions"
+    if path == "/v1/chat/completions":
+        return f"{normalized}/api/v1/chat/completions"
+    if path == "/v1/models":
+        return f"{normalized}/api/v1/models"
+    return normalized + path
+
+
+def _transform_openrouter_completion_body(body: bytes, candidate: dict) -> bytes:
+    if not body:
+        return body
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+
+    model_name = payload.get("model") or candidate.get("model_name")
+    if not model_name:
+        raise ValueError("OpenRouter target requires a model_name.")
+
+    transformed = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": payload.get("prompt", "")}],
+        "stream": bool(payload.get("stream", False)),
+    }
+    if payload.get("temperature") is not None:
+        transformed["temperature"] = payload.get("temperature")
+    if payload.get("n_predict") is not None:
+        transformed["max_tokens"] = payload.get("n_predict")
+    if payload.get("stop"):
+        transformed["stop"] = payload.get("stop")
+    return json.dumps(transformed).encode("utf-8")
+
+
+def _transform_llama_completion_body(body: bytes, candidate: dict, *, mode: str) -> bytes:
+    if not body:
+        return body
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+
+    model_name = payload.get("model") or candidate.get("model_name")
+    if not model_name:
+        raise ValueError("OpenAI-compatible llama targets require a model_name.")
+
+    if mode == "openai_completion":
+        transformed = {
+            "model": model_name,
+            "prompt": payload.get("prompt", ""),
+            "stream": bool(payload.get("stream", False)),
+        }
+        if payload.get("temperature") is not None:
+            transformed["temperature"] = payload.get("temperature")
+        if payload.get("n_predict") is not None:
+            transformed["max_tokens"] = payload.get("n_predict")
+        if payload.get("stop"):
+            transformed["stop"] = payload.get("stop")
+        return json.dumps(transformed).encode("utf-8")
+
+    transformed = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": payload.get("prompt", "")}],
+        "stream": bool(payload.get("stream", False)),
+    }
+    if payload.get("temperature") is not None:
+        transformed["temperature"] = payload.get("temperature")
+    if payload.get("n_predict") is not None:
+        transformed["max_tokens"] = payload.get("n_predict")
+    if payload.get("stop"):
+        transformed["stop"] = payload.get("stop")
+    return json.dumps(transformed).encode("utf-8")
+
+
 async def _proxy_request(
     path: str,
     request: Request,
@@ -84,27 +273,58 @@ async def _proxy_request(
     last_response: httpx.Response | None = None
 
     for idx, candidate in enumerate(candidates):
-        base = candidate["base"]
+        base = _normalize_runtime_base(candidate["base"])
         via_anonymizer = bool(candidate.get("via_anonymizer"))
         anonymizer_url = candidate.get("anonymizer_url")
         api_key = candidate.get("api_key")
         provider = (candidate.get("provider") or "llama").lower()
         timeout_sec = float(candidate.get("timeout_sec") or timeout)
         max_attempts = int(candidate.get("max_attempts") or 2)
+        llama_mode = _llama_provider_mode(base) if provider == "llama" else None
 
         target_path = path
         if path == "/completion" and provider in {"openai", "anthropic"}:
             target_path = "/v1/completions"
+        elif path == "/completion" and provider == "llama":
+            if llama_mode == "openai_chat":
+                target_path = "/v1/chat/completions"
+            elif llama_mode == "openai_completion":
+                target_path = "/v1/completions"
 
         # Build target URL and headers
-        target_url = base.rstrip("/") + target_path
+        target_url = (
+            _build_openrouter_url(base, path)
+            if provider == "openrouter"
+            else _build_llama_url(base, path) if provider == "llama" else base.rstrip("/") + target_path
+        )
         outbound_headers = dict(headers)
+        outbound_headers.pop("content-length", None)
         if api_key:
             outbound_headers["authorization"] = f"Bearer {api_key}"
+        request_body = body
+        if provider == "openrouter" and path == "/completion":
+            try:
+                request_body = _transform_openrouter_completion_body(body, candidate)
+            except ValueError as exc:
+                return Response(
+                    content=str(exc).encode("utf-8"),
+                    status_code=400,
+                    media_type="text/plain",
+                )
+        elif provider == "llama" and path == "/completion" and llama_mode in {"openai_chat", "openai_completion"}:
+            try:
+                request_body = _transform_llama_completion_body(body, candidate, mode=llama_mode)
+            except ValueError as exc:
+                return Response(
+                    content=str(exc).encode("utf-8"),
+                    status_code=400,
+                    media_type="text/plain",
+                )
 
         url_to_call = target_url
         if via_anonymizer and anonymizer_url:
-            url_to_call = anonymizer_url.rstrip("/") + "/" + target_path.lstrip("/")
+            proxy_path = urlsplit(target_url).path or target_path
+            url_to_call = anonymizer_url.rstrip("/") + "/" + proxy_path.lstrip("/")
             outbound_headers["x-target-url"] = target_url
 
         for attempt in range(1, max_attempts + 1):
@@ -113,7 +333,7 @@ async def _proxy_request(
                     resp = await client.request(
                         request.method,
                         url_to_call,
-                        content=body,
+                        content=request_body,
                         params=request.query_params,
                         headers=outbound_headers,
                     )
@@ -125,6 +345,9 @@ async def _proxy_request(
                     if attempt < max_attempts:
                         await asyncio.sleep(0.4 * attempt)
                         continue
+                    break
+
+                if provider in {"openrouter", "openai", "anthropic"} and resp.status_code in {400, 401, 403}:
                     break
 
                 filtered_headers = {
@@ -206,10 +429,11 @@ def _make_app(route_kind: str) -> FastAPI:
                     
                 cands.append({
                     "base": t.get("base_url"),
+                    "model_name": t.get("model_name"),
                     "provider": (t.get("provider") or "llama").lower(),
                     "via_anonymizer": bool(t.get("use_anonymizer")) and settings.anonymizer_url is not None,
                     "anonymizer_url": settings.anonymizer_url,
-                    "api_key": api_key,
+                    "api_key": (t.get("api_key") or api_key),
                     "timeout_sec": max(5.0, float((t.get("timeout_ms") or 30000)) / 1000.0),
                     "max_attempts": 2,
                 })
