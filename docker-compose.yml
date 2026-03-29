@@ -791,4 +791,17 @@ volumes:
   llama_opencode_cache:
   opencode_config:
   opencode_data:
-
+  kc_postgres_data:
+  mm_postgres_data:
+  mm_data:
+  mm_config:
+  mm_logs:
+  mm_plugins:
+  mm_client_plugins:
+  mm_bleve_indexes:
+  jitsi_prosody_cfg:
+  jitsi_jicofo_cfg:
+  jitsi_jvb_cfg:
+  jitsi_web_cfg:
+  jitsi_jigasi_cfg:
+  jitsi_transcripts:
