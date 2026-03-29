@@ -15,13 +15,17 @@ const routeLoaders = {
     '/search': loadPage(() => import('../pages/Search')),
     '/tasks': loadPage(() => import('../pages/TaskManager')),
     '/observability-kpi': loadPage(() => import('../pages/ObservabilityKPI')),
+    '/markov-state-process': loadPage(() => import('../pages/MarkovStateProcess')),
     '/components': loadPage(() => import('../pages/Components')),
     '/settings': loadPage(() => import('../pages/Settings')),
     '/monitor': loadPage(() => import('../pages/SystemMonitor')),
     '/developments': loadPage(() => import('../pages/Developments')),
     '/permissions': loadPage(() => import('../pages/TenderPermissions')),
+    '/tender-access': loadPage(() => import('../pages/TenderPermissions')),
     '/login': loadPage(() => import('../pages/Login')),
     '/register': loadPage(() => import('../pages/Register')),
+    '/forgot-password': loadPage(() => import('../pages/ForgotPassword')),
+    '/observability-kpi/:tenderId/operational-workspace': loadPage(() => import('../pages/OperationalWorkspacePage')),
     '/tenders/:id/chat': loadPage(() => import('../pages/TenderChat')),
 } satisfies Record<string, RouteLoader>;
 
@@ -44,8 +48,24 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
         return '/proposals';
     }
 
+    if (/^\/observability-kpi\/[^/]+\/operational-workspace$/i.test(path)) {
+        return '/observability-kpi/:tenderId/operational-workspace';
+    }
+
+    if (/^\/observability-kpi\/[^/]+(?:\/[^/]+)?$/i.test(path)) {
+        return '/observability-kpi';
+    }
+
+    if (/^\/markov-state-process\/[^/]+$/i.test(path)) {
+        return '/markov-state-process';
+    }
+
     if (/^\/tenders\/[^/]+\/chat$/i.test(path)) {
         return '/tenders/:id/chat';
+    }
+
+    if (path === '/tender-access') {
+        return '/tender-access';
     }
 
     return (path in routeLoaders ? path : null) as keyof typeof routeLoaders | null;
@@ -54,7 +74,7 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
 export function getLikelyRoutePaths(role?: string | null): Array<keyof typeof routeLoaders> {
     const common: Array<keyof typeof routeLoaders> = ['/proposals', '/library', '/tasks'];
     if (role === 'admin') {
-        return [...common, '/observability-kpi', '/monitor'];
+        return [...common, '/observability-kpi', '/markov-state-process', '/monitor'];
     }
     return common;
 }
@@ -88,11 +108,14 @@ export const ContentLibraryPage = lazyPage('/library');
 export const SearchPage = lazyPage('/search');
 export const TaskManagerPage = lazyPage('/tasks');
 export const ObservabilityKpiPage = lazyPage('/observability-kpi');
+export const MarkovStateProcessPage = lazyPage('/markov-state-process');
 export const ComponentsPage = lazyPage('/components');
 export const SettingsPage = lazyPage('/settings');
 export const SystemMonitorPage = lazyPage('/monitor');
 export const DevelopmentsPage = lazyPage('/developments');
-export const TenderPermissionsPage = lazyPage('/permissions');
+export const TenderPermissionsPage = lazyPage('/tender-access');
 export const LoginPage = lazyPage('/login');
 export const RegisterPage = lazyPage('/register');
+export const ForgotPasswordPage = lazyPage('/forgot-password');
+export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/operational-workspace');
 export const TenderChatPage = lazyPage('/tenders/:id/chat');

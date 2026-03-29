@@ -10,7 +10,10 @@ tenderwriter_architettura_completa.drawio
 tenderwriter_presentazione_manageriale_tecnica.pptx
 my-output.md
 my-output-fix.md
+backend/app/ingestion/__pycache__/
+
 # --- Virtual environments ---
+.claude/
 .codex/
 venv/
 .venv/

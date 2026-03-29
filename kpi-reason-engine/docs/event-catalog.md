@@ -47,6 +47,7 @@ Minimum payload:
 
 #### `no_bid_decision_recorded`
 Closes the tender as an explicit no-bid decision.
+This is the only canonical no-bid closure event and it must not be emitted from terminal outcome controls.
 Minimum payload:
 - `decision`
 - `decided_at`
@@ -117,6 +118,24 @@ Minimum payload:
 - `received_at`
 - `delivery_type`
 
+#### `coordination_risk_raised`
+Explicitly pushes the tender from execution back into blocking coordination/rework.
+Minimum payload:
+- `external_rework_id`
+- `external_contribution_id`
+- `requested_at`
+- `reason_code`
+- `notes`
+
+#### `rework_reescalated_to_coordination`
+Closes the blocking rework state and returns the tender to coordination before a new review cycle.
+Minimum payload:
+- `external_rework_id`
+- `external_contribution_id`
+- `resolved_at`
+- `reason_code`
+- `notes`
+
 #### `contribution_review_started`
 Minimum payload:
 - `external_contribution_id`
@@ -184,6 +203,14 @@ Minimum payload:
 - `gate_id`
 - `failed_at`
 - `reason_code`
+
+#### `compliance_gate_rework_requested`
+Minimum payload:
+- `gate_id`
+- `requested_at`
+- `external_rework_id`
+- `reason_code`
+- `notes`
 
 #### `tender_submitted`
 Minimum payload:
@@ -268,6 +295,15 @@ Minimum payload:
 Minimum payload:
 - `outcome`
 - `recorded_at`
+- `reason_code`
+- `notes`
+
+#### `tender_stopped_at_gate`
+Explicitly closes the tender from the compliance gate corridor without passing through submission.
+Minimum payload:
+- `outcome`
+- `recorded_at`
+- `gate_id`
 - `reason_code`
 - `notes`
 

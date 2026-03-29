@@ -55,6 +55,7 @@ _TERMINAL_PHASES = {
     "win": "S11",
     "lost": "S12",
     "loss": "S12",
+    "stopped": "S13",
     "cancelled": "S13",
     "canceled": "S13",
     "excluded": "S13",
@@ -193,7 +194,8 @@ def _latest_outcome(events: list[dict[str, Any]]) -> str | None:
         "loss_reason_recorded": "lost",
         "tender_excluded": "excluded",
         "tender_withdrawn": "withdrawn",
-        "tender_stopped": "cancelled",
+        "tender_stopped": "stopped",
+        "tender_stopped_at_gate": "stopped",
         "no_bid_decision_recorded": "no_bid",
     }
     for event in reversed(events):
@@ -851,6 +853,25 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
                 "severity": _normalized(payload.get("severity")) or "medium",
             }
             continue
+        if event_type in {"coordination_risk_raised", "compliance_gate_rework_requested"}:
+            default_rework_id = (
+                f"gate-rework-{payload.get('external_gate_id') or index}"
+                if event_type == "compliance_gate_rework_requested"
+                else f"coordination-risk-{index}"
+            )
+            rework_id = str(payload.get("external_rework_id") or default_rework_id)
+            contribution_id = str(payload.get("external_contribution_id") or "")
+            if contribution_id:
+                unique_contribution_ids.add(contribution_id)
+            reworks[rework_id] = {
+                "rework_id": rework_id,
+                "contribution_id": contribution_id,
+                "requested_at": _parse_datetime(payload.get("requested_at")) or occurred_at,
+                "resolved_at": None,
+                "is_blocking": bool(payload.get("is_blocking", True)),
+                "severity": _normalized(payload.get("severity")) or "high",
+            }
+            continue
         if event_type == "rework_resolved":
             rework_id = str(payload.get("external_rework_id") or f"rework-resolved-{index}")
             current = reworks.setdefault(
@@ -861,6 +882,20 @@ def _collect_operational_state(events: list[dict[str, Any]]) -> OperationalState
                     "requested_at": _parse_datetime(payload.get("requested_at")),
                     "is_blocking": bool(payload.get("is_blocking", False)),
                     "severity": _normalized(payload.get("severity")) or "medium",
+                },
+            )
+            current["resolved_at"] = _parse_datetime(payload.get("resolved_at")) or occurred_at
+            continue
+        if event_type == "rework_reescalated_to_coordination":
+            rework_id = str(payload.get("external_rework_id") or f"coordination-recovery-{index}")
+            current = reworks.setdefault(
+                rework_id,
+                {
+                    "rework_id": rework_id,
+                    "contribution_id": str(payload.get("external_contribution_id") or ""),
+                    "requested_at": _parse_datetime(payload.get("requested_at")),
+                    "is_blocking": bool(payload.get("is_blocking", True)),
+                    "severity": _normalized(payload.get("severity")) or "high",
                 },
             )
             current["resolved_at"] = _parse_datetime(payload.get("resolved_at")) or occurred_at
@@ -1309,6 +1344,7 @@ def _derive_phase(
     bid_plan_started: bool,
     request_wave_opened: bool,
     draft_ready: bool,
+    execution_started: bool,
     operational_state: OperationalState,
 ) -> str:
     normalized_status = _normalized(current_status)
@@ -1338,6 +1374,8 @@ def _derive_phase(
         return "S5"
     if draft_ready:
         return "S7"
+    if execution_started:
+        return "S4"
     if request_wave_opened:
         return "S3"
     if bid_plan_started or decision == "go":
@@ -1352,8 +1390,6 @@ def _derive_phase(
         return "S3"
     if active_sections > 0 and (a1_score.value or 0.0) < 70.0:
         return "S4"
-    if active_sections > 0:
-        return "S7"
     return "S2"
 
 def _analysis_metadata(*, events: list[dict[str, Any]], requirement_count: int, section_count: int, scored_kpis: list[KpiScore]) -> dict[str, Any]:
@@ -1479,6 +1515,13 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
     )
     active_sections = sum(1 for section in sections if _normalized(section.get("status")) in _ACTIVE_SECTION_STATUSES)
     completed_sections = sum(1 for section in sections if _normalized(section.get("status")) in _COMPLETED_SECTION_STATUSES)
+    execution_started = (
+        _count_events(events, "contribution_received") > 0
+        or _count_events(events, "coordination_risk_raised") > 0
+        or _count_events(events, "rework_reescalated_to_coordination") > 0
+        or proposal_updates > 0
+        or active_sections > 0
+    )
 
     due_at = _parse_datetime(tender.get("due_at"))
     operational_state = _collect_operational_state(events)
@@ -1663,6 +1706,7 @@ def compute_analysis_snapshot(tender: dict[str, Any] | None, events: list[dict[s
         bid_plan_started=bid_plan_started,
         request_wave_opened=request_wave_opened,
         draft_ready=draft_ready,
+        execution_started=execution_started,
         operational_state=operational_state,
     )
 

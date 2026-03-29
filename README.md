@@ -11,10 +11,15 @@ TenderWriter aiuta i team a creare, gestire e inviare proposte di gara professio
 Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i componenti attualmente implementati e funzionanti:
 
 ### 🔐 Authentication & Security
-- **Login Tecnico**: Utente `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
+- **Login Tradizionale**: Utente tecnico `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
+- **Login SSO + Tradizionale**: il progetto supporta tre modalità auth configurabili via env:
+  - `legacy`: solo login email/password
+  - `keycloak`: solo login SSO via Keycloak
+  - `hybrid`: doppia modalità, con bottone SSO e form tradizionale attivi insieme
+- **Utente Test Hybrid/SSO**: in questo ambiente di sviluppo è disponibile `e2e-admin@example.com` con password `E2E-Admin-2026!`, utilizzabile sia con login tradizionale sia con login SSO Keycloak.
 - **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
 - **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
-- **Session Management**: Sistema di autenticazione basato su JWT e React Context.
+- **Session Management**: Sistema di autenticazione basato su JWT legacy, OIDC Keycloak e React Context con bootstrap runtime.
 
 ### 🧠 Motore HybridRAG
 - **Dense Retrieval**: Ricerca semantica tramite **Qdrant** (Vector Database).
@@ -60,11 +65,127 @@ docker compose up -d
 # Backend Docs (OpenAPI): http://localhost:8000/docs
 ```
 
+Per avviare anche il profilo SSO con Keycloak:
+
+```bash
+docker compose --profile keycloak up -d
+```
+
+Endpoint utili per la modalità SSO:
+
+- Frontend: `http://localhost:3000`
+- Keycloak: `http://localhost:8180`
+- Mailpit: `http://localhost:8025`
+
+### Modalità di autenticazione
+
+Il comportamento del login dipende da queste variabili:
+
+```env
+AUTH_PROVIDER=hybrid
+VITE_AUTH_MODE=hybrid
+KEYCLOAK_URL=http://localhost:8180
+KEYCLOAK_INTERNAL_URL=http://keycloak:8080
+MM_EDITION=team
+MM_OIDC_ENABLE=false
+TW_OIDC_ENABLE=true
+MM_LOGIN_REDIRECT_MODE=plugin
+```
+
+Significato operativo:
+
+- `AUTH_PROVIDER=legacy` e `VITE_AUTH_MODE=legacy`: solo login tradizionale
+- `AUTH_PROVIDER=keycloak` e `VITE_AUTH_MODE=keycloak`: solo login SSO
+- `AUTH_PROVIDER=hybrid` e `VITE_AUTH_MODE=hybrid`: login tradizionale + SSO insieme
+
+Con `hybrid`, la pagina `/login` mostra:
+
+- bottone `Accedi con SSO`
+- form email/password classico
+
+### Switching Mattermost: Enterprise vs Team/Community
+
+Il progetto supporta due modalità Mattermost, selezionabili solo via configurazione:
+
+- `MM_EDITION=team`: usa Mattermost Team/Community con plugin `com.tenderwriter.oidc` ed è il default
+- `MM_EDITION=enterprise`: usa Mattermost Enterprise/Entry con OIDC nativo
+
+Configurazione di default per Team/Community:
+
+```env
+MM_EDITION=team
+MM_OIDC_ENABLE=false
+TW_OIDC_ENABLE=true
+MM_LOGIN_REDIRECT_MODE=plugin
+```
+
+Configurazione alternativa per Enterprise/Entry:
+
+```env
+MM_EDITION=enterprise
+MM_OIDC_ENABLE=true
+TW_OIDC_ENABLE=false
+MM_LOGIN_REDIRECT_MODE=off
+```
+
+Note operative:
+
+- il realm Keycloak importato include già entrambe le callback Mattermost:
+  - `http://localhost:3000/mm/signup/openid/complete`
+  - `http://localhost:3000/mm/plugins/com.tenderwriter.oidc/callback`
+- in modalità `team`, l’accesso diretto a `http://localhost:3000/mm/login` può essere reindirizzato al plugin solo se `MM_LOGIN_REDIRECT_MODE=plugin`
+- in modalità `hybrid`, solo le sessioni TenderWriter autenticate via Keycloak usano l’SSO Mattermost; i login tradizionali continuano a usare il fallback legacy
+
+Switch rapido da terminale:
+
+```powershell
+# passa a Team/Community + plugin
+.\utility\switch-mattermost-mode.ps1 team
+
+# passa a Enterprise/Entry + OIDC nativo
+.\utility\switch-mattermost-mode.ps1 enterprise
+
+# aggiorna solo .env senza riavviare i container
+.\utility\switch-mattermost-mode.ps1 team -NoRestart
+```
+
+### Credenziali di sviluppo
+
+Login tecnico legacy:
+
+- Email: `admin@admin.com`
+- Password: valore presente in `.env` oppure default `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`
+
+Utente test SSO + tradizionale:
+
+- Email: `e2e-admin@example.com`
+- Password: `E2E-Admin-2026!`
+
+Nota:
+
+- In questo ambiente l'utente `e2e-admin@example.com` è stato allineato sia su account locale sia su Keycloak, quindi può entrare con entrambi i metodi.
+- In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
+
 ### Configurazione Email (Mailpit)
 Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit). Non è necessaria alcuna configurazione SMTP reale per lo sviluppo. Per vedere i codici OTP:
 1. Registrati nell'app (es. `test@example.com`).
 2. Apri `http://localhost:8025` nel browser.
 3. Copia il codice e inseriscilo nel frontend.
+
+### Stack Video Collaboration (Opzionale)
+Mattermost, Jitsi, Vosk e il forwarder delle trascrizioni sono dietro al profilo `videochat`, quindi non partono con il normale `docker compose up -d`.
+
+Per avviare anche la collaborazione video:
+```bash
+docker compose --profile videochat up -d \
+  mm-postgres mattermost \
+  jitsi-prosody jitsi-jicofo jitsi-jvb jitsi-web vosk jitsi-jigasi \
+  transcript-forwarder
+```
+
+Note operative:
+- `transcript-forwarder` resta in idle se `MM_TRANSCRIPT_WEBHOOK_URL` non è configurata.
+- Il pulsante Mattermost nel frontend usa l'host corrente come fallback, quindi funziona anche se accedi alla dashboard da un IP/LAN e non da `localhost`.
 
 ---
 

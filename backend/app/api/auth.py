@@ -5,12 +5,13 @@ Simple JWT-based authentication with user registration and login.
 """
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import delete, select
@@ -27,6 +28,10 @@ import asyncio
 from app.config import settings
 from app.db.database import get_db
 from app.models import User, OTPToken
+from app.services.mattermost import provision_mm_user_for_tw_user
+
+# Auth mode detection
+_AUTH_MODE = (settings.auth_provider or "legacy").strip().lower()
 
 logger = structlog.get_logger()
 
@@ -38,6 +43,7 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -48,16 +54,25 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 class UserRegister(BaseModel):
     email: EmailStr
     name: str
-    password: str
+    password: str = Field(min_length=8)
 
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8)
 
 class OTPVerify(BaseModel):
     email: EmailStr
     otp: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
 
 
 class UserResponse(BaseModel):
@@ -65,6 +80,7 @@ class UserResponse(BaseModel):
     email: str
     name: str
     role: str
+    auth_source: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -85,8 +101,35 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.app_secret_key, algorithm=ALGORITHM)
 
 
+def get_frontend_base_url() -> str:
+    origins = [origin.strip() for origin in (settings.cors_origins or "").split(",") if origin.strip()]
+    return origins[0].rstrip("/") if origins else "http://localhost:3000"
+
+
+def password_reset_signature(hashed_password: str) -> str:
+    return hmac.new(
+        settings.app_secret_key.encode("utf-8"),
+        hashed_password.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def create_password_reset_token(user: User) -> str:
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "purpose": "password_reset",
+        "pwd_sig": password_reset_signature(user.hashed_password),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, settings.app_secret_key, algorithm=ALGORITHM)
+
+
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return pwd_context.verify(plain, hashed)
+    except Exception:
+        return False
 
 
 def hash_password(password: str) -> str:
@@ -141,6 +184,48 @@ async def send_otp_email(email: str, otp: str):
         logger.info("OTP email sent successfully", email=mask_email(email))
     except Exception as e:
         logger.error("Failed to send OTP email", error=str(e), email=mask_email(email))
+        raise
+
+
+async def send_password_reset_email(email: str, reset_url: str):
+    """Send a password reset email."""
+    if not settings.smtp_host:
+        logger.info("SMTP host not configured. Fallback to mock log.", action="send_password_reset", email=mask_email(email))
+        return
+
+    subject = "TenderWriter password reset"
+    body = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #2563eb;">TenderWriter Password Reset</h2>
+                <p>Hello,</p>
+                <p>You requested a password reset for your TenderWriter account.</p>
+                <p>
+                    <a
+                        href="{reset_url}"
+                        style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 18px; border-radius: 8px; font-weight: bold;"
+                    >
+                        Reset password
+                    </a>
+                </p>
+                <p>If the button does not work, copy and paste this URL into your browser:</p>
+                <p style="word-break: break-all;">{reset_url}</p>
+                <p>This link expires in {PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes.</p>
+                <p>If you didn't request this, you can ignore this email.</p>
+                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="font-size: 12px; color: #666;">This is an automated message from TenderWriter AI.</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _send_sync_email, email, subject, body)
+        logger.info("Password reset email sent successfully", email=mask_email(email))
+    except Exception as e:
+        logger.error("Failed to send password reset email", error=str(e), email=mask_email(email))
         raise
 
 def _send_sync_email(to_email: str, subject: str, html_content: str):
@@ -204,7 +289,7 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 
 @router.post("/verify-otp", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depends(get_db)):
+async def verify_otp(request: Request, data: OTPVerify, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Verify the 2FA OTP and return JWT token."""
     invalid_otp_error = HTTPException(status_code=400, detail="Invalid OTP")
 
@@ -256,6 +341,14 @@ async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depen
     logger.info("User verified via OTP", user_id=user.id, email=mask_email(user.email))
     
     token = create_access_token({"sub": str(user.id), "email": user.email})
+
+    background_tasks.add_task(
+        provision_mm_user_for_tw_user,
+        user_email=user.email,
+        user_name=user.name,
+        tw_user_id=user.id,
+    )
+
     return TokenResponse(
         access_token=token,
         user=UserResponse.model_validate(user),
@@ -264,8 +357,19 @@ async def verify_otp(request: Request, data: OTPVerify, db: AsyncSession = Depen
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, data: UserLogin, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Authenticate and get an access token."""
+    if _AUTH_MODE == "keycloak":
+        logger.warning(
+            "auth.legacy_login_blocked",
+            email=mask_email(data.email),
+            auth_mode=_AUTH_MODE,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Password login is disabled while Keycloak auth is enabled. Use SSO.",
+        )
+
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -280,17 +384,120 @@ async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(ge
     if not user.is_verified:
         logger.warning(f"Login failed: Account not verified for {mask_email(data.email)}")
         raise HTTPException(status_code=403, detail="Account not verified (2FA required)")
-    
+
+    if user.hashed_password == "__keycloak_managed__":
+        logger.warning(
+            "auth.local_login_unavailable",
+            email=mask_email(data.email),
+            auth_mode=_AUTH_MODE,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="This account does not have a local password yet. Use SSO or set a local password first.",
+        )
+
     if not verify_password(data.password, user.hashed_password):
         logger.warning(f"Login failed: Password mismatch for {mask_email(data.email)}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
 
+    background_tasks.add_task(
+        provision_mm_user_for_tw_user,
+        user_email=user.email,
+        user_name=user.name,
+        tw_user_id=user.id,
+    )
+
     return TokenResponse(
         access_token=token,
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post("/request-password-reset")
+@limiter.limit("3/minute")
+async def request_password_reset(
+    request: Request,
+    data: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a password reset link for a local password account."""
+    generic_response = {
+        "message": "If an account exists for that email, a password reset link has been sent."
+    }
+
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+
+    logger.info(
+        "auth.password_reset_requested",
+        email=mask_email(data.email),
+        account_found=bool(user),
+    )
+
+    if not user or not user.is_active:
+        return generic_response
+
+    token = create_password_reset_token(user)
+    reset_url = f"{get_frontend_base_url()}/forgot-password?token={token}"
+
+    try:
+        await send_password_reset_email(user.email, reset_url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to send password reset email. Please try again.",
+        ) from exc
+
+    return generic_response
+
+
+@router.post("/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    data: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset the local password using a short-lived signed token."""
+    invalid_token_error = HTTPException(
+        status_code=400,
+        detail="Invalid or expired reset token.",
+    )
+
+    try:
+        payload = jwt.decode(data.token, settings.app_secret_key, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise invalid_token_error from exc
+
+    if payload.get("purpose") != "password_reset":
+        raise invalid_token_error
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise invalid_token_error
+
+    result = await db.execute(select(User).where(User.id == int(user_id)))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise invalid_token_error
+
+    expected_sig = password_reset_signature(user.hashed_password)
+    if not hmac.compare_digest(payload.get("pwd_sig", ""), expected_sig):
+        raise invalid_token_error
+
+    user.hashed_password = hash_password(data.new_password)
+    user.is_verified = True
+    await db.commit()
+
+    logger.info(
+        "auth.password_reset_completed",
+        user_id=user.id,
+        email=mask_email(user.email),
+    )
+
+    return {"message": "Password reset successful. You can now log in."}
 
 
 async def get_current_user(
@@ -341,3 +548,59 @@ async def update_profile(
     await db.refresh(user)
     logger.info("Profile updated", user_id=user.id, email=mask_email(user.email))
     return UserResponse.model_validate(user)
+
+
+# ── Auth config (public, no auth required) ──
+
+
+@router.get("/config")
+async def auth_config():
+    """Return auth configuration for the frontend.
+
+    Public endpoint — no authentication required.
+    Tells the frontend which auth mode is active so it can render
+    the correct login UI (form, SSO, or both).
+    """
+    config = {"auth_mode": _AUTH_MODE}
+    if _AUTH_MODE in {"keycloak", "hybrid"}:
+        config.update({
+            "keycloak_url": settings.keycloak_url,
+            "keycloak_realm": settings.keycloak_realm,
+            "keycloak_client_id": settings.keycloak_client_id,
+        })
+    return config
+
+
+# ── Logout ──
+
+
+@router.post("/logout")
+async def logout(current_user: UserResponse = Depends(get_current_user)):
+    """Server-side logout.
+
+    In legacy mode: no-op (client just removes localStorage token).
+    In keycloak mode: logs the event for audit. The frontend then
+    redirects to Keycloak end-session endpoint for federated logout.
+
+    In both cases the frontend clears its local state.
+    """
+    logger.info(
+        "auth.logout",
+        user_id=current_user.id,
+        email=mask_email(current_user.email),
+        auth_mode=_AUTH_MODE,
+    )
+
+    if _AUTH_MODE == "keycloak":
+        # Build Keycloak end-session URL for the frontend to redirect to
+        end_session_url = (
+            f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
+            f"/protocol/openid-connect/logout"
+            f"?client_id={settings.keycloak_client_id}"
+        )
+        return {
+            "message": "Logged out",
+            "redirect_url": end_session_url,
+        }
+
+    return {"message": "Logged out"}

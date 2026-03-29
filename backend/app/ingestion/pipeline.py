@@ -18,6 +18,33 @@ import structlog
 from app.config import settings
 
 logger = structlog.get_logger()
+
+
+def _extract_first_json_object(text: str) -> dict | None:
+    """Extract the first valid JSON object from text containing mixed content.
+
+    Tries each '{' position from first to last, returning the first
+    successfully parsed dict. This prefers the outermost/largest object
+    and naturally skips incomplete fragments.
+    """
+    import json
+
+    starts = [i for i, c in enumerate(text) if c == "{"]
+    if not starts:
+        return None
+
+    decoder = json.JSONDecoder()
+    for start in starts:
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    return None
+
+
 _REQUIREMENT_SECTION_KEYWORDS = (
     "requirements",
     "requirement",
@@ -422,16 +449,8 @@ Return as JSON:
 
             # Parse the extracted entities
             import json
-            try:
-                # Try to extract JSON from the response
-                response_text = result.text
-                json_start = response_text.find("{")
-                json_end = response_text.rfind("}") + 1
-                if json_start >= 0 and json_end > json_start:
-                    entities = json.loads(response_text[json_start:json_end])
-                else:
-                    entities = {}
-            except json.JSONDecodeError:
+            entities = _extract_first_json_object(result.text)
+            if entities is None:
                 logger.warning("Failed to parse entity extraction response")
                 entities = {}
 

@@ -49,11 +49,14 @@ router = APIRouter()
 
 class MinioDocumentStore:
     """MinIO-based document storage for OnlyOffice documents.
-    
+
     Replaces in-memory dict storage with persistent MinIO storage.
     Includes TTL-based cleanup for old documents.
+
+    All synchronous minio-client calls are wrapped with asyncio.to_thread()
+    so they never block the event loop.
     """
-    
+
     def __init__(self):
         self.bucket_name = settings.minio_bucket
         self.client = Minio(
@@ -62,7 +65,7 @@ class MinioDocumentStore:
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure,
         )
-    
+
     def _ensure_bucket(self):
         """Create bucket if it doesn't exist."""
         try:
@@ -71,67 +74,80 @@ class MinioDocumentStore:
                 logger.info("Created MinIO bucket", bucket=self.bucket_name)
         except S3Error as e:
             logger.error("Failed to ensure bucket", error=str(e))
-    
+
+    def _save_sync(self, doc_key: str, docx_bytes: bytes) -> None:
+        data = io.BytesIO(docx_bytes)
+        self.client.put_object(
+            self.bucket_name,
+            doc_key,
+            data,
+            length=len(docx_bytes),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
     async def save(self, doc_key: str, docx_bytes: bytes) -> None:
-        """Save document to MinIO."""
+        """Save document to MinIO (non-blocking)."""
+        import asyncio
         try:
-            data = io.BytesIO(docx_bytes)
-            self.client.put_object(
-                self.bucket_name,
-                doc_key,
-                data,
-                length=len(docx_bytes),
-                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
+            await asyncio.to_thread(self._save_sync, doc_key, docx_bytes)
             logger.info("Document saved to MinIO", doc_key=doc_key, size=len(docx_bytes))
         except S3Error as e:
             logger.error("Failed to save document to MinIO", doc_key=doc_key, error=str(e))
             raise
-    
+
+    def _get_sync(self, doc_key: str) -> bytes | None:
+        response = self.client.get_object(self.bucket_name, doc_key)
+        data = response.read()
+        response.close()
+        response.release_conn()
+        return data
+
     async def get(self, doc_key: str) -> bytes | None:
-        """Retrieve document from MinIO."""
+        """Retrieve document from MinIO (non-blocking)."""
+        import asyncio
         try:
-            response = self.client.get_object(self.bucket_name, doc_key)
-            data = response.read()
-            response.close()
-            response.release_conn()
-            return data
+            return await asyncio.to_thread(self._get_sync, doc_key)
         except S3Error as e:
             if e.code == "NoSuchKey":
                 return None
             logger.error("Failed to get document from MinIO", doc_key=doc_key, error=str(e))
             raise
-    
+
     async def delete(self, doc_key: str) -> bool:
-        """Delete document from MinIO."""
+        """Delete document from MinIO (non-blocking)."""
+        import asyncio
         try:
-            self.client.remove_object(self.bucket_name, doc_key)
+            await asyncio.to_thread(self.client.remove_object, self.bucket_name, doc_key)
             logger.info("Document deleted from MinIO", doc_key=doc_key)
             return True
         except S3Error as e:
             logger.error("Failed to delete document from MinIO", doc_key=doc_key, error=str(e))
             return False
-    
+
     async def cleanup_old_documents(self, max_age_hours: int = 24) -> int:
-        """Remove documents older than max_age_hours.
-        
+        """Remove documents older than max_age_hours (non-blocking).
+
         Returns count of deleted documents.
         """
+        import asyncio
         from datetime import timedelta
-        
-        try:
+
+        def _cleanup_sync():
             objects = self.client.list_objects(self.bucket_name)
             deleted_count = 0
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-            
+
             for obj in objects:
                 last_modified = obj.last_modified
                 if last_modified and last_modified.astimezone(timezone.utc) < cutoff_time:
                     self.client.remove_object(self.bucket_name, obj.object_name)
                     deleted_count += 1
                     logger.info("Old document deleted", doc_key=obj.object_name, last_modified=last_modified)
-            
+
             return deleted_count
+
+        try:
+            return await asyncio.to_thread(_cleanup_sync)
         except S3Error as e:
             logger.error("Failed to cleanup old documents", error=str(e))
             return 0
@@ -200,6 +216,8 @@ def _build_config_dict(
                 "help": True,
                 "hideRightMenu": True,
                 "hideRulers": False,
+                # Force a deterministic UI theme across proposal/library/create editors.
+                "uiTheme": settings.onlyoffice_ui_theme,
                 "logo": {
                     "image": "",
                     "visible": False,
@@ -401,7 +419,13 @@ async def save_session_metadata(key: str, metadata: dict, ttl: int = 86400):
 async def get_session_metadata(key: str) -> dict | None:
     """Retrieve session metadata from Redis."""
     data = await redis_client.get(f"oo_session:meta:{key}")
-    return json.loads(data) if data else None
+    if not data:
+        return None
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Corrupted session metadata in Redis", key=key)
+        return None
 
 async def get_active_key(entity_type: str, entity_id: str) -> str | None:
     """Retrieve the active session key for an entity."""

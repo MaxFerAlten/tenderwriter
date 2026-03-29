@@ -6,31 +6,12 @@ import {
     findAutoComplianceGate,
     summarizeRequirements,
 } from './observabilityUtils';
+import { formatDateTime, healthColors } from '../../features/observability/shared';
 
 interface ComplianceDrilldownPanelProps {
     tenderDetail: TenderDetail | null;
     workspace: OperationalWorkspace | null;
     analyticalPhase: string | null;
-}
-
-function healthColors(health: string): { accent: string; soft: string; text: string } {
-    switch (health) {
-        case 'green':
-            return { accent: '#10b981', soft: 'rgba(16, 185, 129, 0.12)', text: '#d1fae5' };
-        case 'amber':
-            return { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.14)', text: '#fef3c7' };
-        case 'red':
-            return { accent: '#ef4444', soft: 'rgba(239, 68, 68, 0.14)', text: '#fee2e2' };
-        default:
-            return { accent: '#64748b', soft: 'rgba(100, 116, 139, 0.14)', text: '#e2e8f0' };
-    }
-}
-
-function formatDateTime(value: string | null): string {
-    if (!value) return 'n/a';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleString('it-IT');
 }
 
 function requirementStatusTone(status: string): { accent: string; soft: string } {

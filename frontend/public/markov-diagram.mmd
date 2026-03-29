@@ -1,0 +1,106 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "background": "#0b1120",
+    "primaryColor": "#18263f",
+    "primaryTextColor": "#eff6ff",
+    "primaryBorderColor": "#93c5fd",
+    "lineColor": "#64748b",
+    "tertiaryColor": "#0f172a",
+    "clusterBkg": "transparent",
+    "clusterBorder": "transparent",
+    "edgeLabelBackground": "#0f172a",
+    "fontFamily": "Inter, Segoe UI, sans-serif"
+  },
+  "flowchart": {
+    "curve": "basis",
+    "nodeSpacing": 40,
+    "rankSpacing": 50,
+    "padding": 12,
+    "useMaxWidth": true,
+    "htmlLabels": true
+  }
+}}%%
+
+flowchart TD
+    START(( )) --> S0
+
+    S0["S0 Intake Opportunity"]
+    S1["S1 Go / No-Go"]
+    S2["S2 Bid Planning"]
+    S3["S3 Request Contributions"]
+    S4["S4 Coordination & Collection"]
+    S5["S5 Review / QA"]
+    S6["S6 Rework / Coordination Exception"]
+    S7["S7 Integrated Draft"]
+    S8["S8 Compliance Gate"]
+    S9["S9 Submission"]
+    S10["S10 Post-Submission Clarifications"]
+    S11["S11 Win"]
+    S12["S12 Loss"]
+    S13["S13 Excluded / Withdrawn / Stopped"]
+    FIN(( ))
+
+    S0 -->|tender_document_ingested| S1
+
+    S1 -->|go_decision_recorded| S2
+    S1 -->|no_bid_decision_recorded| S13
+
+    S2 -->|bid_plan_created| S2
+    S2 -->|bid_plan_approved| S2
+    S2 -->|contribution_request_wave_opened| S3
+
+    S3 -->|contribution_assignment_confirmed| S3
+    S3 -->|contribution_received| S4
+
+    S4 -->|contribution_review_started| S5
+    S4 -->|review_cycle_started| S5
+    S4 -->|coordination_risk_raised| S6
+
+    S5 -->|review_changes_requested| S6
+    S5 -->|rework_requested| S6
+    S5 -->|review_approved| S7
+    S5 -->|draft_integrated_ready| S7
+
+    S6 -->|rework_resolved| S5
+    S6 -->|rework_reescalated_to_coordination| S4
+
+    S7 -->|compliance_gate_opened| S8
+
+    S8 -->|compliance_gate_failed| S8
+    S8 -->|compliance_gate_passed| S7
+    S8 -->|compliance_gate_rework_requested| S6
+    S8 -->|tender_submitted| S9
+    S8 -->|tender_stopped_at_gate| S13
+
+    S9 -->|submission_acknowledged| S9
+    S9 -->|submission_failed| S8
+    S9 -->|clarification_requested| S10
+    S9 -->|award_confirmed| S11
+    S9 -->|loss_reason_recorded| S12
+    S9 -->|tender_excluded| S13
+    S9 -->|tender_withdrawn| S13
+    S9 -->|tender_stopped| S13
+
+    S10 -->|clarification_response_drafted| S10
+    S10 -->|clarification_submitted| S10
+    S10 -->|clarification_closed| S9
+    S10 -->|award_confirmed| S11
+    S10 -->|loss_reason_recorded| S12
+    S10 -->|tender_excluded| S13
+    S10 -->|tender_withdrawn| S13
+    S10 -->|tender_stopped| S13
+
+    S11 --> FIN
+    S12 --> FIN
+    S13 --> FIN
+
+    classDef normal fill:#2b2b2b,stroke:#cfcfcf,stroke-width:1.2,color:#f5f5f5;
+    classDef terminal fill:#4a2f2f,stroke:#ffb3b3,stroke-width:1.4,color:#fff3f3;
+    classDef positive fill:#244233,stroke:#8fe3b0,stroke-width:1.4,color:#f3fff8;
+    classDef endcap fill:#1f1f1f,stroke:#cfcfcf,stroke-width:1.2,color:#ffffff;
+
+    class S0,S1,S2,S3,S4,S5,S6,S7,S8,S9,S10 normal;
+    class S11,S12 positive;
+    class S13 terminal;
+    class START,FIN endcap;

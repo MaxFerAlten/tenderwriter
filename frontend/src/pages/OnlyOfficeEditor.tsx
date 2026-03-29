@@ -19,6 +19,7 @@ export interface OnlyOfficeEditorProps {
     title: string;
     onlyofficeApiUrl: string;
     onConfigLoaded?: (config: any) => void;
+    onDocumentStateChange?: (isDirty: boolean) => void;
 }
 
 interface EditorConfig {
@@ -35,6 +36,7 @@ export default function OnlyOfficeEditor({
     title,
     onlyofficeApiUrl,
     onConfigLoaded,
+    onDocumentStateChange,
 }: OnlyOfficeEditorProps) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const editorRef = useRef<any>(null);
@@ -150,6 +152,13 @@ script.onerror = () => {
                             setLoading(false);
                         },
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onDocumentStateChange: (event: any) => {
+                            // event.data is true when document has unsaved changes
+                            if (onDocumentStateChange) {
+                                onDocumentStateChange(!!event?.data);
+                            }
+                        },
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         onError: (event: any) => {
                             console.error('OnlyOffice Error:', event);
                             // Detail error for debugging if it's an object
@@ -170,7 +179,7 @@ script.onerror = () => {
             );
             setLoading(false);
         }
-    }, [scriptLoaded, mode, proposalId, sectionId, libraryBlockId, editorContainerId]);
+    }, [scriptLoaded, mode, proposalId, sectionId, libraryBlockId, editorContainerId, onDocumentStateChange]);
 
     useEffect(() => {
         initEditor();

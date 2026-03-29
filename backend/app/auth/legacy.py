@@ -47,7 +47,11 @@ class LegacyJWTProvider:
             raise credentials_exception
 
         # ── Fetch user from DB ──
-        result = await db.execute(select(User).where(User.id == int(user_id)))
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            raise credentials_exception
+        result = await db.execute(select(User).where(User.id == uid))
         user = result.scalar_one_or_none()
         if user is None:
             raise credentials_exception
@@ -65,4 +69,6 @@ class LegacyJWTProvider:
                 detail="Account not verified",
             )
 
-        return AuthenticatedUser.model_validate(user)
+        return AuthenticatedUser.model_validate(user).model_copy(
+            update={"auth_source": "legacy"}
+        )

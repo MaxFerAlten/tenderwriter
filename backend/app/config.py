@@ -30,10 +30,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     
     # --- Auth ---
-    auth_provider: str = "legacy"  # "legacy" | "keycloak" (future)
+    auth_provider: str = "legacy"  # "legacy" | "keycloak" | "hybrid"
     admin_username: str = "admin@admin.com"
     admin_password: str = ""
     admin_enabled: bool = True
+
+    # --- Keycloak OIDC (used when auth_provider=keycloak|hybrid) ---
+    keycloak_url: str = "http://localhost:8180"       # Browser/public Keycloak base URL (issuer/logout)
+    keycloak_internal_url: str = "http://keycloak:8080"  # Internal Docker URL for JWKS validation
+    keycloak_realm: str = "tenderwriter"              # Keycloak realm name
+    keycloak_client_id: str = "tw-frontend"           # OIDC client ID for token audience / azp
 
     # --- PostgreSQL ---
     database_url: str = ""
@@ -132,6 +138,7 @@ class Settings(BaseSettings):
     onlyoffice_internal_url: str = "http://onlyoffice"  # URL interno Docker
     backend_public_url: str = "http://tw-backend:8000"  # URL raggiungibile dal container OnlyOffice
     onlyoffice_file_token_ttl_seconds: int = 3600
+    onlyoffice_ui_theme: str = "theme-dark"
 
     # --- KPI Reason Engine ---
     kpi_reason_engine_base_url: str = "http://tw-kpi-reason-engine:8010"

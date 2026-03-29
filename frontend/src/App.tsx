@@ -6,6 +6,7 @@ import {
     BarChart3,
     Code,
     FileText,
+    GitBranch,
     LayoutDashboard,
     Library,
     LogOut,
@@ -22,7 +23,9 @@ import {
     ContentLibraryPage,
     DashboardPage,
     DevelopmentsPage,
+    ForgotPasswordPage,
     LoginPage,
+    MarkovStateProcessPage,
     ObservabilityKpiPage,
     preloadLikelyRoutes,
     preloadRoute,
@@ -34,6 +37,7 @@ import {
     TaskManagerPage,
     TenderChatPage,
     TenderPermissionsPage,
+    OperationalWorkspacePage,
 } from './router/lazyRoutes';
 
 const navItems = [
@@ -42,12 +46,13 @@ const navItems = [
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
     { path: '/tasks', label: 'Task Manager', icon: Play },
+    { path: '/tender-access', label: 'Tender Access', icon: Shield, adminOnly: true },
     { path: '/observability-kpi', label: 'Observability KPI', icon: BarChart3, adminOnly: true },
+    { path: '/markov-state-process', label: 'Markov State Process', icon: GitBranch, adminOnly: true },
     { path: '/components', label: 'Components', icon: Server, adminOnly: true },
     { path: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
     { path: '/monitor', label: 'System Monitor', icon: Activity, adminOnly: true },
     { path: '/developments', label: 'Developments', icon: Code, adminOnly: true },
-    { path: '/permissions', label: 'Permissions', icon: Shield, adminOnly: true },
 ];
 
 function FullscreenLoader({ message }: { message: string }) {
@@ -69,6 +74,7 @@ function RouteLoader() {
 function App() {
     const location = useLocation();
     const { user, isLoading, logout } = useAuth();
+    const isPublicAuthRoute = ['/login', '/register', '/forgot-password'].includes(location.pathname);
 
     useEffect(() => {
         if (!user) {
@@ -90,13 +96,14 @@ function App() {
         return <FullscreenLoader message="Loading..." />;
     }
 
-    if (!user) {
+    if (!user || isPublicAuthRoute) {
         return (
             <AnimatePresence mode="wait">
                 <Suspense fallback={<FullscreenLoader message="Loading authentication..." />}>
                     <Routes location={location} key={location.pathname}>
                         <Route path="/login" element={<LoginPage />} />
                         <Route path="/register" element={<RegisterPage />} />
+                        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                         <Route path="*" element={<Navigate to="/login" replace />} />
                     </Routes>
                 </Suspense>
@@ -132,7 +139,7 @@ function App() {
                     })}
                 </nav>
 
-                <div className="sidebar-nav" style={{ marginTop: 'auto' }}>
+                <div className="sidebar-footer">
                     <button
                         className="nav-item"
                         onClick={logout}
@@ -172,11 +179,17 @@ function App() {
                                 <Route path="/search" element={<SearchPage />} />
                                 <Route path="/tasks" element={<TaskManagerPage />} />
                                 <Route path="/observability-kpi" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId/:section" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
+                                <Route path="/observability-kpi/:tenderId/operational-workspace" element={user.role === 'admin' ? <OperationalWorkspacePage /> : <Navigate to="/" />} />
+                                <Route path="/markov-state-process" element={user.role === 'admin' ? <MarkovStateProcessPage /> : <Navigate to="/" />} />
+                                <Route path="/markov-state-process/:tenderId" element={user.role === 'admin' ? <Navigate to="/markov-state-process" replace /> : <Navigate to="/" />} />
                                 <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
                                 <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                                 <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />
                                 <Route path="/developments" element={user.role === 'admin' ? <DevelopmentsPage /> : <Navigate to="/" />} />
-                                <Route path="/permissions" element={user.role === 'admin' ? <TenderPermissionsPage /> : <Navigate to="/" />} />
+                                <Route path="/permissions" element={user.role === 'admin' ? <Navigate to="/tender-access" replace /> : <Navigate to="/" />} />
+                                <Route path="/tender-access" element={user.role === 'admin' ? <TenderPermissionsPage /> : <Navigate to="/" />} />
                                 <Route path="/tenders/:id/chat" element={<TenderChatPage />} />
                             </Routes>
                         </Suspense>

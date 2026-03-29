@@ -12,6 +12,8 @@ import {
     Check,
     FileEdit,
     MessageSquare,
+    Video,
+    ChevronDown,
     X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -33,13 +35,14 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat, onWarmChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void; onWarmChat: (id: number) => void }) {
+function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat, onWarmChat, onOpenFullChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void; onWarmChat: (id: number) => void; onOpenFullChat: (id: number) => void }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
     const isPast = days !== null && days < 0;
 
     const [uploading, setUploading] = useState(false);
     const [success, setSuccess] = useState(false);
+    const [chatMenuOpen, setChatMenuOpen] = useState(false);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -128,17 +131,73 @@ function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal,
                     </>
                 )}
 
-                <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', gap: '0.25rem' }}
-                    onClick={() => onOpenChat(tender.id)}
-                    onMouseEnter={() => onWarmChat(tender.id)}
-                    onFocus={() => onWarmChat(tender.id)}
-                    onTouchStart={() => onWarmChat(tender.id)}
-                >
-                    <MessageSquare size={12} />
-                    Open Chat
-                </button>
+                {/* Chat mode split-button: Internal Chat (default) + Mattermost dropdown */}
+                <div style={{ position: 'relative', display: 'inline-flex' }}>
+                    <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', gap: '0.25rem', borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                        onClick={() => onOpenChat(tender.id)}
+                        onMouseEnter={() => onWarmChat(tender.id)}
+                        onFocus={() => onWarmChat(tender.id)}
+                        onTouchStart={() => onWarmChat(tender.id)}
+                    >
+                        <MessageSquare size={12} />
+                        Chat
+                    </button>
+                    <button
+                        className="btn btn-ghost btn-sm"
+                        style={{
+                            padding: '0.25rem 0.35rem',
+                            borderTopLeftRadius: 0,
+                            borderBottomLeftRadius: 0,
+                            borderLeft: '1px solid var(--border-default)',
+                            minWidth: 'unset',
+                        }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setChatMenuOpen(!chatMenuOpen);
+                        }}
+                        onBlur={() => setTimeout(() => setChatMenuOpen(false), 150)}
+                        aria-label="Chat options"
+                        aria-haspopup="menu"
+                        aria-expanded={chatMenuOpen}
+                    >
+                        <ChevronDown size={14} />
+                    </button>
+                    {chatMenuOpen && (
+                        <div style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: '0.25rem',
+                            background: 'var(--bg-card, #1e293b)',
+                            border: '1px solid var(--border-default)',
+                            borderRadius: '8px',
+                            boxShadow: 'var(--shadow-lg)',
+                            zIndex: 50,
+                            minWidth: '180px',
+                            overflow: 'hidden',
+                        }}>
+                            <button
+                                className="btn btn-ghost"
+                                style={{ width: '100%', fontSize: '0.78rem', padding: '0.6rem 0.75rem', gap: '0.4rem', justifyContent: 'flex-start', borderRadius: 0 }}
+                                onMouseDown={(e) => { e.preventDefault(); onOpenChat(tender.id); setChatMenuOpen(false); }}
+                            >
+                                <MessageSquare size={14} />
+                                Simple Chat
+                            </button>
+                            <div style={{ borderTop: '1px solid var(--border-default)' }} />
+                            <button
+                                className="btn btn-ghost"
+                                style={{ width: '100%', fontSize: '0.78rem', padding: '0.6rem 0.75rem', gap: '0.4rem', justifyContent: 'flex-start', borderRadius: 0 }}
+                                onMouseDown={(e) => { e.preventDefault(); onOpenFullChat(tender.id); setChatMenuOpen(false); }}
+                            >
+                                <Video size={14} />
+                                Full Chat
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div className="tender-card-footer">
@@ -248,7 +307,6 @@ export default function Dashboard() {
             warmChatExperience(id);
             // Refresh to see status change from DRAFT -> ACTIVE
             await loadTenders();
-            navigate(`/tenders/${id}/chat`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to upload document');
             throw err;
@@ -272,6 +330,24 @@ export default function Dashboard() {
     const handleOpenChat = (id: number) => {
         warmChatExperience(id);
         navigate(`/tenders/${id}/chat`);
+    };
+
+    const handleOpenFullChat = async (id: number) => {
+        try {
+            const session = await tenderApi.fullchat(id);
+            if (session.auth_mode === 'sso') {
+                // SSO mode: Keycloak handles auth via browser redirect — no cookie needed.
+                // Mattermost will redirect to Keycloak, which already has an active session.
+                window.open(session.mm_url, '_blank', 'noopener');
+            } else {
+                // Legacy mode: set the Mattermost browser session cookies before opening the channel.
+                document.cookie = `MMAUTHTOKEN=${session.mm_token}; path=/mm; SameSite=Lax`;
+                document.cookie = `MMUSERID=${session.mm_user_id}; path=/mm; SameSite=Lax`;
+                window.open(session.mm_url, '_blank', 'noopener');
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to open Full Chat');
+        }
     };
 
     const handleSubmitTender = async (id: number) => {
@@ -403,7 +479,7 @@ export default function Dashboard() {
                                     </div>
                                 ) : (
                                     colTenders.map((tender, i) => (
-                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} onOpenChat={handleOpenChat} onWarmChat={handleWarmChat} />
+                                        <TenderCard key={tender.id} tender={tender} index={i} onUpload={handleUpload} onCreateProposal={setShowNewProposal} onEditProposal={handleEditProposal} onSubmit={handleSubmitTender} onOpenChat={handleOpenChat} onWarmChat={handleWarmChat} onOpenFullChat={handleOpenFullChat} />
                                     ))
                                 )}
                             </div>

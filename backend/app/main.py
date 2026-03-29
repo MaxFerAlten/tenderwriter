@@ -70,9 +70,7 @@ async def lifespan(app: FastAPI):
         logger.info("HybridRAG engine ready for lazy initialization")
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logger.error(f"Startup failed: {e}")
+        logger.exception("Startup failed", error=str(e))
         raise e
 
     yield
@@ -118,7 +116,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, anonymizer_admin, auth, chat, content_library, gateway_admin, kpi_admin, observability, onlyoffice, proposals, rag, system, tenders
+    from app.api import admin, anonymizer_admin, auth, chat, content_library, gateway_admin, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -131,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
     app.include_router(observability.router, prefix="/api/tenders", tags=["Operational Observability"])
     app.include_router(chat.router, prefix="/api/tenders", tags=["Tender Chat"])
+    app.include_router(mattermost.router, prefix="/api/tenders", tags=["Mattermost Full Chat"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])
     app.include_router(content_library.router, prefix="/api/content-blocks", tags=["Content Library"])
     app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])

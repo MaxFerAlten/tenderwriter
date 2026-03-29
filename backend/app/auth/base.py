@@ -22,6 +22,7 @@ class AuthenticatedUser(BaseModel):
     email: str
     name: str
     role: str
+    auth_source: str | None = None
 
     model_config = {"from_attributes": True}
 

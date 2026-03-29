@@ -49,6 +49,10 @@ export const authApi = {
     login: (data: Record<string, string>) => request<AuthResponse>('/auth/login', { method: 'POST', body: data }),
     register: (data: Record<string, string>) => request<any>('/auth/register', { method: 'POST', body: data }),
     verifyOtp: (data: Record<string, string>) => request<AuthResponse>('/auth/verify-otp', { method: 'POST', body: data }),
+    requestPasswordReset: (data: { email: string }) =>
+        request<{ message: string }>('/auth/request-password-reset', { method: 'POST', body: data }),
+    resetPassword: (data: { token: string; new_password: string }) =>
+        request<{ message: string }>('/auth/reset-password', { method: 'POST', body: data }),
     me: () => request<User>('/auth/me'),
     updateProfile: (data: { name?: string; email?: string }) =>
         request<User>('/auth/profile', { method: 'PUT', body: data }),
@@ -72,6 +76,14 @@ export const tenderApi = {
         request<TenderLifecycleActionResponse>(`/tenders/${id}/bid-plan`, { method: 'POST', body: data }),
     openContributionWave: (id: number, data: ContributionWaveRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/contribution-wave`, { method: 'POST', body: data }),
+    raiseCoordinationRisk: (id: number, data: TenderCoordinationRiskRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/coordination-risk`, { method: 'POST', body: data }),
+    returnToCoordination: (id: number, data: TenderCoordinationRecoveryRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/coordination-recovery`, { method: 'POST', body: data }),
+    requestGateRework: (id: number, data: TenderGateLifecycleRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/gate-rework`, { method: 'POST', body: data }),
+    stopAtGate: (id: number, data: TenderGateLifecycleRequest) =>
+        request<TenderLifecycleActionResponse>(`/tenders/${id}/gate-stop`, { method: 'POST', body: data }),
     recordOutcome: (id: number, data: TenderOutcomeRecordRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/outcome`, { method: 'POST', body: data }),
     createClarification: (id: number, data: TenderClarificationCreateRequest) =>
@@ -82,6 +94,8 @@ export const tenderApi = {
         request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/submit`, { method: 'POST', body: data }),
     closeClarification: (id: number, clarificationId: string, data: TenderClarificationUpdateRequest) =>
         request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/close`, { method: 'POST', body: data }),
+    fullchat: (id: number) =>
+        request<{ mm_url: string; mm_token: string; channel_name: string; mm_user_id: string; auth_mode: string }>(`/tenders/${id}/fullchat`, { method: 'POST' }),
     uploadDocument: async (id: number, file: File) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -451,6 +465,16 @@ export const proposalApi = {
         request<Section>(`/proposals/${proposalId}/sections/${sectionId}`, {
             method: 'PUT',
             body: data,
+        }),
+    addSection: (proposalId: number, data: { title: string; content?: Record<string, unknown>; order?: number }) =>
+        request<Section>(`/proposals/${proposalId}/sections`, {
+            method: 'POST',
+            body: data,
+        }),
+    bulkCreateSections: (proposalId: number, sections: string[]) =>
+        request<Section[]>(`/proposals/${proposalId}/sections/bulk`, {
+            method: 'POST',
+            body: { sections },
         }),
     markDraftReady: (proposalId: number, data: ProposalDraftReadyRequest = {}) =>
         request<ProposalLifecycleActionResponse>(`/proposals/${proposalId}/draft-ready`, { method: 'POST', body: data }),
@@ -921,6 +945,33 @@ export interface TenderOutcomeRecordRequest {
     recorded_at?: string;
     reason_code?: string;
     notes?: string;
+}
+
+export interface TenderCoordinationRiskRequest {
+    external_rework_id?: string;
+    external_contribution_id?: string;
+    severity?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
+}
+
+export interface TenderCoordinationRecoveryRequest {
+    external_rework_id?: string;
+    external_contribution_id?: string;
+    severity?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
+}
+
+export interface TenderGateLifecycleRequest {
+    external_gate_id?: string;
+    gate_name?: string;
+    external_rework_id?: string;
+    reason_code?: string;
+    notes?: string;
+    occurred_at?: string;
 }
 
 export interface TenderClarificationCreateRequest {

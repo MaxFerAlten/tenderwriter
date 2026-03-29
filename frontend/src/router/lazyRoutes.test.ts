@@ -12,6 +12,16 @@ describe('normalizeRoutePath', () => {
         expect(normalizeRoutePath('/tenders/18/chat')).toBe('/tenders/:id/chat');
     });
 
+    it('normalizes observability nested routes to the page module key', () => {
+        expect(normalizeRoutePath('/observability-kpi/42')).toBe('/observability-kpi');
+        expect(normalizeRoutePath('/observability-kpi/42/compliance')).toBe('/observability-kpi');
+        expect(normalizeRoutePath('/observability-kpi/42/operational-workspace')).toBe('/observability-kpi/:tenderId/operational-workspace');
+    });
+
+    it('normalizes markov state tender routes to the page module key', () => {
+        expect(normalizeRoutePath('/markov-state-process/42')).toBe('/markov-state-process');
+    });
+
     it('returns null for unsupported paths', () => {
         expect(normalizeRoutePath('/unknown')).toBeNull();
         expect(normalizeRoutePath('')).toBeNull();
@@ -24,6 +34,6 @@ describe('getLikelyRoutePaths', () => {
     });
 
     it('extends likely routes for admin users', () => {
-        expect(getLikelyRoutePaths('admin')).toEqual(['/proposals', '/library', '/tasks', '/observability-kpi', '/monitor']);
+        expect(getLikelyRoutePaths('admin')).toEqual(['/proposals', '/library', '/tasks', '/observability-kpi', '/markov-state-process', '/monitor']);
     });
 });

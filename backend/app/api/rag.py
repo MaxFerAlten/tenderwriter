@@ -179,15 +179,17 @@ async def rag_query(
             async for token in engine.query_stream(rag_query):
                 full_response += token
                 yield f"data: {token}\n\n"
-            
+
             # Save history when stream completes
-            history = SearchHistory(
-                user_id=current_user.id,
-                query=data.query,
-                response=full_response
-            )
-            db.add(history)
-            await _audit_rag_result(
+            try:
+                history = SearchHistory(
+                    user_id=current_user.id,
+                    query=data.query,
+                    response=full_response
+                )
+                db.add(history)
+                await db.commit()
+                await _audit_rag_result(
                 db=db,
                 action="rag_query_stream",
                 current_user=current_user,
@@ -197,8 +199,13 @@ async def rag_query(
                 anonymized=policy.mode == "external_anonymized",
                 payload={"mode": mode.value, "stream": True, "policy": policy.as_dict()},
             )
-            await db.commit()
-            
+            except Exception:
+                import structlog
+                structlog.get_logger().warning(
+                    "Failed to save search history during stream",
+                    user_id=current_user.id,
+                )
+
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(

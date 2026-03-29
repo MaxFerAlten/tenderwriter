@@ -28,13 +28,17 @@ from app.services.kpi_reason_engine import (
     build_bid_plan_event_payload,
     build_bid_team_assigned_event_payload,
     build_clarification_event_payload,
+    build_compliance_gate_rework_requested_event_payload,
     build_contribution_wave_event_payload,
+    build_coordination_risk_raised_event_payload,
+    build_rework_reescalated_to_coordination_event_payload,
     build_requirements_extracted_event_payload,
     build_tender_created_event_payload,
     build_tender_decision_event_payload,
     build_tender_document_ingested_event_payload,
     build_tender_outcome_recorded_event_payload,
     build_terminal_lifecycle_event_payload,
+    build_tender_stopped_at_gate_event_payload,
     publish_domain_event,
     publish_tender_sync,
     sync_tender_and_publish_event,
@@ -326,7 +330,14 @@ async def update_tender(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a tender. RBAC-checked."""
-    tender = await check_tender_access(tender_id, current_user, db)
+    # First check access (uses eager loading for requirements/proposals)
+    await check_tender_access(tender_id, current_user, db)
+
+    # Re-fetch with FOR UPDATE lock to prevent concurrent overwrites
+    result = await db.execute(
+        select(Tender).where(Tender.id == tender_id).with_for_update()
+    )
+    tender = result.scalar_one()
     previous_status = tender.status
 
     update_data = data.model_dump(exclude_unset=True)
@@ -578,6 +589,33 @@ class TenderOutcomeRecordRequest(BaseModel):
     notes: str | None = None
 
 
+class TenderCoordinationRiskRequest(BaseModel):
+    external_rework_id: str | None = None
+    external_contribution_id: str | None = None
+    severity: str | None = "high"
+    reason_code: str | None = None
+    notes: str | None = None
+    occurred_at: datetime | None = None
+
+
+class TenderCoordinationRecoveryRequest(BaseModel):
+    external_rework_id: str | None = None
+    external_contribution_id: str | None = None
+    severity: str | None = "high"
+    reason_code: str | None = None
+    notes: str | None = None
+    occurred_at: datetime | None = None
+
+
+class TenderGateLifecycleRequest(BaseModel):
+    external_gate_id: str | None = None
+    gate_name: str | None = None
+    external_rework_id: str | None = None
+    reason_code: str | None = None
+    notes: str | None = None
+    occurred_at: datetime | None = None
+
+
 class TenderClarificationCreate(BaseModel):
     request_id: str | None = None
     request_summary: str
@@ -601,7 +639,7 @@ class TenderLifecycleActionResponse(BaseModel):
 
 _ALLOWED_DECISIONS = {"go", "no_bid"}
 _ALLOWED_BID_PLAN_STATUSES = {"created", "approved"}
-_ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "no_bid", "stopped", "cancelled"}
+_ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "stopped", "cancelled"}
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
@@ -621,6 +659,46 @@ def _clone_lifecycle_metadata(tender: Tender) -> tuple[dict, dict]:
 def _store_lifecycle_metadata(tender: Tender, *, metadata: dict, lifecycle: dict) -> None:
     metadata["lifecycle"] = lifecycle
     tender.metadata_json = metadata
+
+
+def _apply_structured_outcome(
+    tender: Tender,
+    *,
+    metadata: dict,
+    lifecycle: dict,
+    outcome: str,
+    recorded_at: datetime,
+    reason_code: str | None,
+    notes: str | None,
+    actor_id: int,
+) -> None:
+    lifecycle["structured_outcome"] = {
+        "outcome": outcome,
+        "recorded_at": recorded_at.isoformat(),
+        "reason_code": reason_code,
+        "notes": notes,
+        "actor_id": actor_id,
+    }
+    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
+
+    if outcome == "won":
+        tender.status = TenderStatus.WON
+    elif outcome == "lost":
+        tender.status = TenderStatus.LOST
+    elif outcome in {"excluded", "withdrawn", "stopped", "cancelled"}:
+        tender.status = TenderStatus.CANCELLED
+
+
+def _event_type_for_structured_outcome(outcome: str) -> str:
+    if outcome == "won":
+        return "award_confirmed"
+    if outcome == "lost":
+        return "loss_reason_recorded"
+    if outcome == "excluded":
+        return "tender_excluded"
+    if outcome == "withdrawn":
+        return "tender_withdrawn"
+    return "tender_stopped"
 
 
 def _upsert_clarification_record(
@@ -796,36 +874,20 @@ async def record_structured_outcome(
 
     recorded_at = _utc_or_now(data.recorded_at)
     metadata, lifecycle = _clone_lifecycle_metadata(tender)
-    lifecycle["structured_outcome"] = {
-        "outcome": outcome,
-        "recorded_at": recorded_at.isoformat(),
-        "reason_code": data.reason_code,
-        "notes": data.notes,
-        "actor_id": current_user.id,
-    }
-    _store_lifecycle_metadata(tender, metadata=metadata, lifecycle=lifecycle)
-
-    if outcome == "won":
-        tender.status = TenderStatus.WON
-    elif outcome == "lost":
-        tender.status = TenderStatus.LOST
-    elif outcome in {"excluded", "withdrawn", "no_bid", "stopped", "cancelled"}:
-        tender.status = TenderStatus.CANCELLED
+    _apply_structured_outcome(
+        tender,
+        metadata=metadata,
+        lifecycle=lifecycle,
+        outcome=outcome,
+        recorded_at=recorded_at,
+        reason_code=data.reason_code,
+        notes=data.notes,
+        actor_id=current_user.id,
+    )
 
     await db.flush()
 
-    if outcome == "won":
-        event_type = "award_confirmed"
-    elif outcome == "lost":
-        event_type = "loss_reason_recorded"
-    elif outcome == "excluded":
-        event_type = "tender_excluded"
-    elif outcome == "withdrawn":
-        event_type = "tender_withdrawn"
-    elif outcome == "no_bid":
-        event_type = "no_bid_decision_recorded"
-    else:
-        event_type = "tender_stopped"
+    event_type = _event_type_for_structured_outcome(outcome)
 
     payload = build_terminal_lifecycle_event_payload(
         outcome=outcome,
@@ -842,6 +904,130 @@ async def record_structured_outcome(
         occurred_at=recorded_at,
     )
     return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/coordination-risk", response_model=TenderLifecycleActionResponse, status_code=202)
+async def raise_tender_coordination_risk(
+    tender_id: int,
+    data: TenderCoordinationRiskRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    payload = build_coordination_risk_raised_event_payload(
+        occurred_at=occurred_at,
+        external_rework_id=data.external_rework_id,
+        external_contribution_id=data.external_contribution_id,
+        severity=data.severity,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="coordination_risk_raised",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="coordination_risk_raised", tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/coordination-recovery", response_model=TenderLifecycleActionResponse, status_code=202)
+async def return_tender_to_coordination(
+    tender_id: int,
+    data: TenderCoordinationRecoveryRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    payload = build_rework_reescalated_to_coordination_event_payload(
+        occurred_at=occurred_at,
+        external_rework_id=data.external_rework_id,
+        external_contribution_id=data.external_contribution_id,
+        severity=data.severity,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="rework_reescalated_to_coordination",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="rework_reescalated_to_coordination", tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/gate-rework", response_model=TenderLifecycleActionResponse, status_code=202)
+async def request_tender_gate_rework(
+    tender_id: int,
+    data: TenderGateLifecycleRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    occurred_at = _utc_or_now(data.occurred_at)
+    payload = build_compliance_gate_rework_requested_event_payload(
+        occurred_at=occurred_at,
+        external_gate_id=data.external_gate_id,
+        gate_name=data.gate_name,
+        external_rework_id=data.external_rework_id,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="compliance_gate_rework_requested",
+        event_payload=payload,
+        occurred_at=occurred_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="compliance_gate_rework_requested", tender_id=tender.id, payload=payload)
+
+
+@router.post("/{tender_id}/gate-stop", response_model=TenderLifecycleActionResponse, status_code=202)
+async def stop_tender_at_gate(
+    tender_id: int,
+    data: TenderGateLifecycleRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await check_tender_access(tender_id, current_user, db)
+    recorded_at = _utc_or_now(data.occurred_at)
+    metadata, lifecycle = _clone_lifecycle_metadata(tender)
+    _apply_structured_outcome(
+        tender,
+        metadata=metadata,
+        lifecycle=lifecycle,
+        outcome="stopped",
+        recorded_at=recorded_at,
+        reason_code=data.reason_code,
+        notes=data.notes,
+        actor_id=current_user.id,
+    )
+    await db.flush()
+
+    payload = build_tender_stopped_at_gate_event_payload(
+        recorded_at=recorded_at,
+        external_gate_id=data.external_gate_id,
+        gate_name=data.gate_name,
+        reason_code=data.reason_code,
+        notes=data.notes,
+    )
+    await sync_tender_and_publish_event(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        event_type="tender_stopped_at_gate",
+        event_payload=payload,
+        occurred_at=recorded_at,
+    )
+    return TenderLifecycleActionResponse(status="accepted", event_type="tender_stopped_at_gate", tender_id=tender.id, payload=payload)
 
 
 @router.post("/{tender_id}/clarifications", response_model=TenderLifecycleActionResponse, status_code=202)

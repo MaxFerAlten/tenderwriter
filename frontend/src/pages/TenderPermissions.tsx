@@ -108,7 +108,7 @@ if (!confirm(`Revoke ${userName}'s access to this tender?`)) return;
                         Gestione Permessi Tender
                     </h1>
                     <p className="page-subtitle">
-                        Controlla l'accesso granulare ai tender per ogni utente
+                        Assegna utenti non admin ai tender creati e gestisci gli accessi in modo centralizzato
                     </p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
