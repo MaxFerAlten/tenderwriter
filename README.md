@@ -11,12 +11,15 @@ TenderWriter aiuta i team a creare, gestire e inviare proposte di gara professio
 Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i componenti attualmente implementati e funzionanti:
 
 ### 🔐 Authentication & Security
-- **Login Tradizionale**: Utente tecnico `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
+- **Login Tradizionale (legacy/local)**: Utente tecnico `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
 - **Login SSO + Tradizionale**: il progetto supporta tre modalità auth configurabili via env:
   - `legacy`: solo login email/password
   - `keycloak`: solo login SSO via Keycloak
   - `hybrid`: doppia modalità, con bottone SSO e form tradizionale attivi insieme
-- **Utente Test Hybrid/SSO**: in questo ambiente di sviluppo è disponibile `e2e-admin@example.com` con password `E2E-Admin-2026!`, utilizzabile sia con login tradizionale sia con login SSO Keycloak.
+- **Utenti Keycloak → TenderWriter**: nel setup di sviluppo attualmente allineato al realm `tenderwriter` sono usati:
+  - `admin@admin.com` / `TestPass123!` → ruolo Keycloak `tw_admin` → ruolo TenderWriter `admin`
+  - `registrazioni.hyperknow@gmail.com` / `TestPass123!` → ruolo Keycloak di default → ruolo TenderWriter `editor`
+- **Nota Realm Keycloak**: il file di import del realm `tenderwriter` non crea utenti automaticamente; le utenze sopra vanno presenti/create come da procedura di bootstrap.
 - **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
 - **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
 - **Session Management**: Sistema di autenticazione basato su JWT legacy, OIDC Keycloak e React Context con bootstrap runtime.
@@ -151,19 +154,39 @@ Switch rapido da terminale:
 
 ### Credenziali di sviluppo
 
-Login tecnico legacy:
+Account locale legacy:
 
 - Email: `admin@admin.com`
 - Password: valore presente in `.env` oppure default `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`
 
-Utente test SSO + tradizionale:
+Utenti Keycloak sincronizzati su TenderWriter:
 
-- Email: `e2e-admin@example.com`
-- Password: `E2E-Admin-2026!`
+- `admin@admin.com` / `TestPass123!`
+  - Realm: `tenderwriter`
+  - Ruolo Keycloak: `tw_admin`
+  - Ruolo applicativo TenderWriter: `admin`
+- `registrazioni.hyperknow@gmail.com` / `TestPass123!`
+  - Realm: `tenderwriter`
+  - Ruolo Keycloak: `default-roles-tenderwriter`
+  - Ruolo applicativo TenderWriter: `editor`
+
+Admin console Keycloak:
+
+- URL: `http://localhost:8180/admin`
+- Username: `admin`
+- Password: `DefaultKCAdmin2026Pass`
+
+Mattermost system admin:
+
+- Username: `tw-admin`
+- Email: `tw-admin@tenderwriter.local`
+- Password: `TW2026Secure!Pass`
 
 Nota:
 
-- In questo ambiente l'utente `e2e-admin@example.com` è stato allineato sia su account locale sia su Keycloak, quindi può entrare con entrambi i metodi.
+- In modalità `hybrid`, puoi usare sia il login tradizionale locale sia gli utenti Keycloak sopra.
+- In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
+- Il realm `tenderwriter` importato da file non include utenti di default: se ricrei i volumi Keycloak devi ricreare anche queste utenze.
 - In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
 
 ### Configurazione Email (Mailpit)
@@ -221,8 +244,10 @@ Nota: Le password di default sono ora DefaultPg2024Pass, DefaultNEO4J2024Pass, D
 
 Credenziali temporanee per test:
 
-Email: admin@admin.com
-Password: vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0
+- Legacy locale: `admin@admin.com` / valore in `.env`
+- Keycloak/TenderWriter admin: `admin@admin.com` / `TestPass123!`
+- Keycloak/TenderWriter editor: `registrazioni.hyperknow@gmail.com` / `TestPass123!`
+- Mattermost admin: `tw-admin` / `TW2026Secure!Pass`
 ---
 
 ## 🗺️ Roadmap Prossimi Passi

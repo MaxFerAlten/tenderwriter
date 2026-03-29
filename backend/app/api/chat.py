@@ -163,6 +163,15 @@ class ChatRetrospectiveResponse(BaseModel):
 
 
 async def _get_user_from_ws_token(token: str, db: AsyncSession) -> UserResponse | None:
+    from app.auth.provider import _get_provider
+
+    try:
+        provider = _get_provider()
+        return await provider.validate_token(token, db)
+    except Exception:
+        pass
+
+    # Fallback: try legacy JWT decode for backward compatibility
     try:
         payload = jwt.decode(token, settings.app_secret_key, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
