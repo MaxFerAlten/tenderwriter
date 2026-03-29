@@ -49,6 +49,10 @@ export const authApi = {
     login: (data: Record<string, string>) => request<AuthResponse>('/auth/login', { method: 'POST', body: data }),
     register: (data: Record<string, string>) => request<any>('/auth/register', { method: 'POST', body: data }),
     verifyOtp: (data: Record<string, string>) => request<AuthResponse>('/auth/verify-otp', { method: 'POST', body: data }),
+    requestPasswordReset: (data: { email: string }) =>
+        request<{ message: string }>('/auth/request-password-reset', { method: 'POST', body: data }),
+    resetPassword: (data: { token: string; new_password: string }) =>
+        request<{ message: string }>('/auth/reset-password', { method: 'POST', body: data }),
     me: () => request<User>('/auth/me'),
     updateProfile: (data: { name?: string; email?: string }) =>
         request<User>('/auth/profile', { method: 'PUT', body: data }),

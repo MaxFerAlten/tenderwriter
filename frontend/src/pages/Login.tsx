@@ -130,6 +130,12 @@ export default function Login() {
                             </div>
                         </div>
 
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-0.25rem', marginBottom: '0.75rem' }}>
+                            <Link to="/forgot-password" style={{ color: '#93c5fd', fontSize: '0.9rem', textDecoration: 'none' }}>
+                                Hai dimenticato la password?
+                            </Link>
+                        </div>
+
                         <button
                             type="submit"
                             className="btn-primary auth-submit"
@@ -143,6 +149,7 @@ export default function Login() {
 
                 <div className="auth-footer">
                     <p>Non hai un account? <Link to="/register">Registrati</Link></p>
+                    <p><Link to="/forgot-password">Reset password</Link></p>
                 </div>
             </motion.div>
         </div>

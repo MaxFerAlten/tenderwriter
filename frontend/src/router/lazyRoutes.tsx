@@ -24,6 +24,7 @@ const routeLoaders = {
     '/tender-access': loadPage(() => import('../pages/TenderPermissions')),
     '/login': loadPage(() => import('../pages/Login')),
     '/register': loadPage(() => import('../pages/Register')),
+    '/forgot-password': loadPage(() => import('../pages/ForgotPassword')),
     '/observability-kpi/:tenderId/operational-workspace': loadPage(() => import('../pages/OperationalWorkspacePage')),
     '/tenders/:id/chat': loadPage(() => import('../pages/TenderChat')),
 } satisfies Record<string, RouteLoader>;
@@ -115,5 +116,6 @@ export const DevelopmentsPage = lazyPage('/developments');
 export const TenderPermissionsPage = lazyPage('/tender-access');
 export const LoginPage = lazyPage('/login');
 export const RegisterPage = lazyPage('/register');
+export const ForgotPasswordPage = lazyPage('/forgot-password');
 export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/operational-workspace');
 export const TenderChatPage = lazyPage('/tenders/:id/chat');

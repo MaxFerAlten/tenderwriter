@@ -23,6 +23,7 @@ import {
     ContentLibraryPage,
     DashboardPage,
     DevelopmentsPage,
+    ForgotPasswordPage,
     LoginPage,
     MarkovStateProcessPage,
     ObservabilityKpiPage,
@@ -73,6 +74,7 @@ function RouteLoader() {
 function App() {
     const location = useLocation();
     const { user, isLoading, logout } = useAuth();
+    const isPublicAuthRoute = ['/login', '/register', '/forgot-password'].includes(location.pathname);
 
     useEffect(() => {
         if (!user) {
@@ -94,13 +96,14 @@ function App() {
         return <FullscreenLoader message="Loading..." />;
     }
 
-    if (!user) {
+    if (!user || isPublicAuthRoute) {
         return (
             <AnimatePresence mode="wait">
                 <Suspense fallback={<FullscreenLoader message="Loading authentication..." />}>
                     <Routes location={location} key={location.pathname}>
                         <Route path="/login" element={<LoginPage />} />
                         <Route path="/register" element={<RegisterPage />} />
+                        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                         <Route path="*" element={<Navigate to="/login" replace />} />
                     </Routes>
                 </Suspense>
