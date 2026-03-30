@@ -7,6 +7,8 @@ check compliance, and analyze requirements.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -179,7 +181,7 @@ async def rag_query(
             full_response = ""
             async for token in engine.query_stream(rag_query):
                 full_response += token
-                yield f"data: {token}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
 
             # Save history when stream completes
             try:
@@ -216,24 +218,24 @@ async def rag_query(
 
     result = await engine.query(rag_query)
 
-    # Save to history
-    history = SearchHistory(
-        user_id=current_user.id,
-        query=data.query,
-        response=result.answer
-    )
-    db.add(history)
-    await _audit_rag_result(
-        db=db,
-        action="rag_query",
-        current_user=current_user,
-        rag_query=rag_query,
-        policy=policy,
-        llm_route=result.llm_route.value if result.llm_route else None,
-        anonymized=result.anonymized,
-        payload={"mode": mode.value, "stream": False, "policy": policy.as_dict()},
-    )
-    await db.commit()
+    if mode != QueryMode.SEARCH:
+        history = SearchHistory(
+            user_id=current_user.id,
+            query=data.query,
+            response=result.answer
+        )
+        db.add(history)
+        await _audit_rag_result(
+            db=db,
+            action="rag_query",
+            current_user=current_user,
+            rag_query=rag_query,
+            policy=policy,
+            llm_route=result.llm_route.value if result.llm_route else None,
+            anonymized=result.anonymized,
+            payload={"mode": mode.value, "stream": False, "policy": policy.as_dict()},
+        )
+        await db.commit()
 
     return RAGResponse(
         answer=result.answer,

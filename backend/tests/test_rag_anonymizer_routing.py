@@ -206,6 +206,45 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine._completion_token_budget_for_words(600), 2048)
         self.assertEqual(engine._completion_token_budget_for_words(200), 600)
 
+    def test_line_requests_are_centrally_mapped_to_long_answer_targets(self) -> None:
+        engine = self._build_engine()
+
+        target = engine._extract_requested_length_target(
+            "scrivimi un resoconto dettagliato di 1000 righe"
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.requested_unit, "lines")
+        self.assertEqual(target.requested_value, 1000)
+        self.assertEqual(target.target_words, 8000)
+        self.assertTrue(target.approximate)
+        self.assertEqual(engine._extract_requested_word_count("scrivimi 1000 righe"), 8000)
+
+    def test_line_requests_update_response_constraints_and_attempt_budget(self) -> None:
+        engine = self._build_engine()
+        target = engine._extract_requested_length_target("parlami del tema con 1000 righe")
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(text="parlami del tema con 1000 righe", mode=QueryMode.QA)
+        )
+
+        self.assertIsNotNone(target)
+        self.assertIn("1000 righe", constraints)
+        self.assertIn("8000 parole", constraints)
+        self.assertEqual(engine._continuation_attempt_budget(8000), 7)
+        self.assertEqual(engine._minimum_acceptable_word_count(8000, approximate=True), 800)
+        self.assertEqual(engine._generation_pass_token_budget(target), 768)
+
+    def test_generation_query_strips_explicit_length_request(self) -> None:
+        engine = self._build_engine()
+
+        self.assertEqual(
+            engine._query_text_without_length_request(
+                "parlami del II problema di assegnamento 1000 righe"
+            ),
+            "parlami del II problema di assegnamento",
+        )
+
     async def test_external_target_override_uses_dynamic_generator_configuration(self) -> None:
         engine = self._build_engine()
         engine._anonymize_prompt_variables = AsyncMock(
@@ -274,6 +313,29 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "[PERSONA_1] guida il progetto.",
             "session-stream",
         )
+
+    async def test_query_stream_uses_length_aware_token_budget(self) -> None:
+        engine = self._build_engine()
+        captured_kwargs: dict = {}
+
+        async def fake_generate_stream(**kwargs):
+            captured_kwargs.update(kwargs)
+            for token in ("prima parte ", "seconda parte"):
+                yield token
+
+        engine.generator.generate_stream = fake_generate_stream
+
+        output = await self._collect_stream(
+            engine.query_stream(
+                RAGQuery(
+                    text="parlami del problema di assegnamento 1000 righe",
+                    mode=QueryMode.QA,
+                )
+            )
+        )
+
+        self.assertEqual(output, "prima parte seconda parte")
+        self.assertEqual(captured_kwargs["max_tokens"], 768)
 
     async def test_anonymizer_circuit_open_short_circuits_requests(self) -> None:
         engine = self._build_engine()

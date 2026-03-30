@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import Field, ConfigDict
 from pydantic_settings import BaseSettings
 
@@ -260,6 +261,16 @@ def _transform_llama_completion_body(body: bytes, candidate: dict, *, mode: str)
     return json.dumps(transformed).encode("utf-8")
 
 
+def _request_wants_stream(path: str, body: bytes) -> bool:
+    if path not in {"/completion", "/v1/chat/completions"} or not body:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return isinstance(payload, dict) and bool(payload.get("stream"))
+
+
 async def _proxy_request(
     path: str,
     request: Request,
@@ -270,6 +281,7 @@ async def _proxy_request(
     body = await request.body()
     headers = _safe_headers(dict(request.headers))
 
+    wants_stream = _request_wants_stream(path, body)
     last_response: httpx.Response | None = None
 
     for idx, candidate in enumerate(candidates):
@@ -329,6 +341,62 @@ async def _proxy_request(
 
         for attempt in range(1, max_attempts + 1):
             try:
+                if wants_stream:
+                    client = httpx.AsyncClient(timeout=timeout_sec)
+                    req = client.build_request(
+                        request.method,
+                        url_to_call,
+                        content=request_body,
+                        params=request.query_params,
+                        headers=outbound_headers,
+                    )
+                    resp = await client.send(req, stream=True)
+                    last_response = resp
+
+                    if resp.status_code in {502, 503, 504}:
+                        if attempt < max_attempts:
+                            await resp.aclose()
+                            await client.aclose()
+                            await asyncio.sleep(0.4 * attempt)
+                            continue
+                        detail = await resp.aread()
+                        await resp.aclose()
+                        await client.aclose()
+                        last_response = Response(
+                            content=detail or b"upstream unavailable",
+                            status_code=resp.status_code,
+                        )
+                        break
+
+                    if provider in {"openrouter", "openai", "anthropic"} and resp.status_code in {400, 401, 403}:
+                        detail = await resp.aread()
+                        await resp.aclose()
+                        await client.aclose()
+                        last_response = Response(content=detail, status_code=resp.status_code)
+                        break
+
+                    filtered_headers = {
+                        k: v
+                        for k, v in resp.headers.items()
+                        if k.lower() in {"content-type", "cache-control"}
+                    }
+
+                    async def iter_upstream():
+                        try:
+                            async for chunk in resp.aiter_bytes():
+                                if chunk:
+                                    yield chunk
+                        finally:
+                            await resp.aclose()
+                            await client.aclose()
+
+                    return StreamingResponse(
+                        iter_upstream(),
+                        status_code=resp.status_code,
+                        headers=filtered_headers,
+                        media_type=resp.headers.get("content-type"),
+                    )
+
                 async with httpx.AsyncClient(timeout=timeout_sec) as client:
                     resp = await client.request(
                         request.method,
@@ -372,9 +440,12 @@ async def _proxy_request(
 
     # If we reach here, all attempts failed
     status = last_response.status_code if last_response else 502
-    content = (
-        last_response.content if last_response else b"upstream unavailable"
-    )
+    if isinstance(last_response, Response):
+        content = last_response.body
+    else:
+        content = (
+            last_response.content if last_response else b"upstream unavailable"
+        )
     return Response(content=content, status_code=status, media_type="text/plain")
 
 

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
     Search as SearchIcon,
     Sparkles,
     Send,
+    Square,
     FileText,
     Database,
     Network,
@@ -73,9 +74,18 @@ export default function RAGSearch() {
     const [hasSearched, setHasSearched] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [history, setHistory] = useState<HistoryItem[]>([]);
+    const streamControllerRef = useRef<AbortController | null>(null);
+    const pendingTokensRef = useRef<string[]>([]);
+    const answerFlushTimerRef = useRef<number | null>(null);
+    const streamCompletedRef = useRef(false);
+    const drainWaitersRef = useRef<Array<() => void>>([]);
 
     useEffect(() => {
         loadHistory();
+        return () => {
+            streamControllerRef.current?.abort();
+            cancelAnswerFlush();
+        };
     }, []);
 
     const loadHistory = async () => {
@@ -88,15 +98,101 @@ export default function RAGSearch() {
     };
 
     const loadHistoricalItem = (item: HistoryItem) => {
+        streamControllerRef.current?.abort();
+        cancelAnswerFlush();
         setQuery(item.query);
         setAnswer(item.response);
         setResults([]);
         setHasSearched(true);
         setError(null);
+        setIsSearching(false);
+    };
+
+    const resolveDrainWaiters = () => {
+        if (drainWaitersRef.current.length === 0) return;
+        const waiters = [...drainWaitersRef.current];
+        drainWaitersRef.current = [];
+        waiters.forEach((resolve) => resolve());
+    };
+
+    const scheduleAnswerFlush = () => {
+        if (answerFlushTimerRef.current !== null) return;
+        answerFlushTimerRef.current = window.setTimeout(() => {
+            answerFlushTimerRef.current = null;
+
+            if (pendingTokensRef.current.length === 0) {
+                if (streamCompletedRef.current) {
+                    resolveDrainWaiters();
+                }
+                return;
+            }
+
+            let chunkCharCount = 0;
+            let chunkTokenCount = 0;
+            while (pendingTokensRef.current.length > 0 && chunkTokenCount < 8 && chunkCharCount < 48) {
+                chunkCharCount += pendingTokensRef.current[0].length;
+                chunkTokenCount += 1;
+            }
+
+            const nextChunk = pendingTokensRef.current.splice(0, chunkTokenCount).join('');
+            if (nextChunk) {
+                setAnswer((current) => current + nextChunk);
+            }
+
+            if (pendingTokensRef.current.length > 0 || !streamCompletedRef.current) {
+                scheduleAnswerFlush();
+                return;
+            }
+
+            resolveDrainWaiters();
+        }, 24);
+    };
+
+    const queueAnswerToken = (token: string) => {
+        pendingTokensRef.current.push(token);
+        scheduleAnswerFlush();
+    };
+
+    const markAnswerStreamCompleted = () => {
+        streamCompletedRef.current = true;
+        if (pendingTokensRef.current.length === 0 && answerFlushTimerRef.current === null) {
+            resolveDrainWaiters();
+        }
+    };
+
+    const waitForAnswerDrain = () => {
+        if (streamCompletedRef.current && pendingTokensRef.current.length === 0 && answerFlushTimerRef.current === null) {
+            return Promise.resolve();
+        }
+
+        return new Promise<void>((resolve) => {
+            drainWaitersRef.current.push(resolve);
+        });
+    };
+
+    const cancelAnswerFlush = () => {
+        if (answerFlushTimerRef.current !== null) {
+            window.clearTimeout(answerFlushTimerRef.current);
+            answerFlushTimerRef.current = null;
+        }
+        pendingTokensRef.current = [];
+        streamCompletedRef.current = false;
+        resolveDrainWaiters();
+    };
+
+    const stopStreaming = () => {
+        streamControllerRef.current?.abort();
+        streamControllerRef.current = null;
+        cancelAnswerFlush();
+        setIsSearching(false);
     };
 
     const handleSearch = async () => {
         if (!query.trim()) return;
+        streamControllerRef.current?.abort();
+        cancelAnswerFlush();
+        const controller = new AbortController();
+        streamControllerRef.current = controller;
 
         setIsSearching(true);
         setHasSearched(true);
@@ -105,23 +201,44 @@ export default function RAGSearch() {
         setAnswer('');
 
         try {
-            const data: RAGResponse = await ragApi.query({
-                query: query,
-                mode: 'qa',
+            const sourcePromise: Promise<DisplayResult[]> = ragApi.query({
+                query,
+                mode: 'search',
                 temperature: 0.3,
-            });
-
-            setAnswer(data.answer || '');
-            setResults(
-                data.sources.map((s) => ({
+            }).then((sourceData: RAGResponse) =>
+                sourceData.sources.map((s) => ({
                     text: s.text,
                     score: normalizeMatchScore(s.score),
                     sources: inferSources(s.metadata),
                     metadata: s.metadata,
                 }))
             );
-            loadHistory(); // refresh history after a new search
+            void sourcePromise.catch(() => undefined);
+
+            const streamPromise = ragApi.streamQuery({
+                query,
+                mode: 'qa',
+                temperature: 0.3,
+            }, {
+                signal: controller.signal,
+                onToken: (token) => {
+                    queueAnswerToken(token);
+                },
+            });
+
+            await streamPromise;
+            markAnswerStreamCompleted();
+            await waitForAnswerDrain();
+            const sourceData = await sourcePromise;
+            setResults(sourceData);
+            await loadHistory();
         } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') {
+                cancelAnswerFlush();
+                return;
+            }
+            cancelAnswerFlush();
+            controller.abort();
             const msg = err instanceof Error ? err.message : 'Search failed';
             setError(msg);
             // Show a helpful message if the backend is likely offline
@@ -129,6 +246,9 @@ export default function RAGSearch() {
                 setError('Could not reach the backend. Make sure the API server is running on port 8000.');
             }
         } finally {
+            if (streamControllerRef.current === controller) {
+                streamControllerRef.current = null;
+            }
             setIsSearching(false);
         }
     };
@@ -224,8 +344,8 @@ export default function RAGSearch() {
                     />
                     <button
                         className="btn btn-primary btn-sm"
-                        onClick={handleSearch}
-                        disabled={isSearching || !query.trim()}
+                        onClick={isSearching ? stopStreaming : handleSearch}
+                        disabled={!isSearching && !query.trim()}
                         style={{
                             position: 'absolute',
                             right: '0.5rem',
@@ -234,7 +354,9 @@ export default function RAGSearch() {
                         }}
                     >
                         {isSearching ? (
-                            <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                            <>
+                                <Square size={12} /> Stop
+                            </>
                         ) : (
                             <>
                                 <Send size={14} /> Search
@@ -279,10 +401,10 @@ export default function RAGSearch() {
                 )}
 
                 {/* Results */}
-                {hasSearched && !isSearching && !error && (
+                {hasSearched && !error && (isSearching || answer || results.length > 0) && (
                     <div style={{ display: 'grid', gap: '1.5rem' }}>
                         {/* AI Answer */}
-                        {answer && (
+                        {(answer || isSearching) && (
                             <motion.div
                                 className="card"
                                 initial={{ opacity: 0, y: 10 }}
@@ -293,6 +415,18 @@ export default function RAGSearch() {
                                     <Sparkles size={18} color="#60a5fa" />
                                     <h3 style={{ fontSize: '1rem' }}>AI Answer</h3>
                                     <span className="ai-badge">HybridRAG</span>
+                                    {isSearching && (
+                                        <span style={{
+                                            fontSize: '0.72rem',
+                                            fontWeight: 700,
+                                            color: 'var(--accent-blue)',
+                                            padding: '0.18rem 0.5rem',
+                                            borderRadius: 999,
+                                            background: 'color-mix(in srgb, var(--accent-blue) 14%, transparent)',
+                                        }}>
+                                            Streaming...
+                                        </span>
+                                    )}
                                 </div>
                                 <div
                                     style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}
@@ -301,11 +435,16 @@ export default function RAGSearch() {
                                             .replace(/\*\*(.*?)\*\*/g, '<strong style="color: var(--text-primary)">$1</strong>')
                                     }}
                                 />
+                                {isSearching && (
+                                    <div style={{ marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                        Sto scrivendo la risposta in tempo reale...
+                                    </div>
+                                )}
                             </motion.div>
                         )}
 
                         {/* No answer and no results */}
-                        {!answer && results.length === 0 && (
+                        {!isSearching && !answer && results.length === 0 && (
                             <div className="empty-state" style={{ padding: '2rem 0' }}>
                                 <SearchIcon size={48} />
                                 <h3>No results found</h3>
@@ -314,7 +453,7 @@ export default function RAGSearch() {
                         )}
 
                         {/* Source Documents */}
-                        {results.length > 0 && (
+                        {!isSearching && results.length > 0 && (
                             <>
                                 <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
                                     Retrieved Sources ({results.length})
@@ -369,11 +508,11 @@ export default function RAGSearch() {
                 )}
 
                 {/* Loading */}
-                {isSearching && (
+                {isSearching && !answer && (
                     <div className="loading-spinner" style={{ flexDirection: 'column', gap: '1rem' }}>
                         <div className="spinner" />
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                            Searching vectors, keywords, and knowledge graph...
+                            Recupero le fonti e avvio la generazione streaming...
                         </p>
                     </div>
                 )}

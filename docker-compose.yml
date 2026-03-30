@@ -440,7 +440,7 @@ services:
     environment:
       GATEWAY_TENDER_UPSTREAM: http://llama-tender:8080
       GATEWAY_OPENCODE_UPSTREAM: http://llama-opencode:8080
-      GATEWAY_TIMEOUT: 30
+      GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-180}
       GATEWAY_TENDER_DMZ_UPSTREAM: http://llama-tender:8080
       GATEWAY_OPENCODE_DMZ_UPSTREAM: http://llama-opencode:8080
       GATEWAY_ANONYMIZER_URL: http://tw-anonymizer:8090

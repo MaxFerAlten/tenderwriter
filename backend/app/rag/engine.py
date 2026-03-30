@@ -11,6 +11,7 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+import math
 import re
 import time
 from typing import Any, AsyncIterator
@@ -34,20 +35,26 @@ WORD_COUNT_REQUEST_RE = re.compile(
     r"\b(\d{2,5})\s+(?:parole|words|palabras)\b",
     re.IGNORECASE,
 )
+LINE_COUNT_REQUEST_RE = re.compile(
+    r"\b(\d{2,5})\s+(?:righe|riga|linee|line|lines|lineas|líneas)\b",
+    re.IGNORECASE,
+)
 WORD_RE = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
 CONTINUATION_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
     re.IGNORECASE,
 )
+APPROX_WORDS_PER_LINE = 8
+LONG_FORM_PASS_TOKEN_CAP = 768
 
 QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
 - Devi rispondere nella STESSA LINGUA della domanda dell'utente.
 - Stai continuando una risposta gia iniziata.
 - Non ricominciare dall'inizio.
 - Non ripetere sezioni o frasi gia scritte.
-- Non commentare il numero di parole.
+- Non commentare la lunghezza della risposta.
 - Non scrivere titoli o frasi come "Continuazione della risposta".
-- Continua fino a raggiungere complessivamente circa {target_words} parole.
+- {length_instruction}
 
 ## User Question
 {query}
@@ -120,6 +127,24 @@ class RAGResponse:
     generation_result: GenerationResult | None = None
     llm_route: LLMRoute | None = None
     anonymized: bool = False
+
+
+@dataclass(frozen=True)
+class ResponseLengthTarget:
+    """Normalized user-requested answer length."""
+
+    requested_value: int
+    requested_unit: str
+    target_words: int
+    approximate: bool = False
+
+
+@dataclass(frozen=True)
+class RetrievedContext:
+    """Shared retrieval payload used by sync and streaming flows."""
+
+    context: str
+    sources: list[dict]
 
 
 class HybridRAGEngine:
@@ -259,95 +284,9 @@ class HybridRAGEngine:
             mode=rag_query.mode.value,
             query_len=len(rag_query.text),
         )
-
-        # ─── Step 1: Retrieve from all sources ───
-        dense_results = []
-        sparse_results = []
-        graph_results = []
-
-        # Dense retrieval
-        try:
-            raw_dense = self.dense_retriever.search(
-                query=rag_query.text,
-                top_k=rag_query.top_k or settings.rag_top_k_dense,
-                filters=rag_query.filters,
-            )
-            dense_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_dense
-            ]
-        except Exception as e:
-            logger.warning("Dense retrieval failed", error=str(e))
-
-        # Sparse retrieval
-        try:
-            raw_sparse = self.sparse_retriever.search(
-                query=rag_query.text,
-                top_k=rag_query.top_k or settings.rag_top_k_sparse,
-                filters=rag_query.filters,
-            )
-            sparse_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_sparse
-            ]
-        except Exception as e:
-            logger.warning("Sparse retrieval failed", error=str(e))
-
-        # Graph retrieval
-        try:
-            raw_graph = await self.graph_retriever.search(
-                query=rag_query.text,
-                top_k=rag_query.top_k or settings.rag_top_k_graph,
-                filters=rag_query.filters,
-            )
-            graph_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_graph
-            ]
-        except Exception as e:
-            logger.warning("Graph retrieval failed", error=str(e))
-
-        # ─── Step 2: Fuse results ───
-        fused = self.fusion.fuse(
-            dense_results=dense_results,
-            sparse_results=sparse_results,
-            graph_results=graph_results,
-            top_k=20,  # Send top 20 to re-ranker
-        )
-
-        # ─── Step 3: Re-rank ───
-        top_k_final = rag_query.top_k or settings.rag_top_k_final
-        reranked = []
-        if fused:
-            try:
-                fused_dicts = [
-                    {"text": f.text, "score": f.score, "metadata": f.metadata, "sources": f.sources}
-                    for f in fused
-                ]
-                reranked = self.reranker.rerank(
-                    query=rag_query.text,
-                    results=fused_dicts,
-                    top_k=top_k_final,
-                )
-            except Exception as e:
-                logger.warning("Re-ranking failed, using fusion order", error=str(e))
-                # Fallback: use fusion results directly
-                reranked = fused[:top_k_final]
-
-        # Build context from top results
-        context_texts = []
-        sources = []
-        for r in reranked:
-            text = r.text if hasattr(r, "text") else r.get("text", "")
-            metadata = r.metadata if hasattr(r, "metadata") else r.get("metadata", {})
-            context_texts.append(text)
-            sources.append({
-                "text": text[:200] + "..." if len(text) > 200 else text,
-                "score": r.score if hasattr(r, "score") else r.get("score", 0),
-                "metadata": metadata,
-            })
-
-        context = "\n\n---\n\n".join(context_texts)
+        retrieved = await self._retrieve_context_and_sources(rag_query)
+        context = retrieved.context
+        sources = retrieved.sources
 
         # ─── Step 4: Search-only mode ───
         if rag_query.mode == QueryMode.SEARCH:
@@ -484,20 +423,10 @@ class HybridRAGEngine:
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
         await self.ensure_initialized()
-
-        # Run retrieval pipeline (same as query, but stream the generation)
-        # For brevity, we reuse the query method's retrieval logic
-        rag_query_copy = RAGQuery(
-            text=rag_query.text,
-            mode=QueryMode.SEARCH,
-            filters=rag_query.filters,
-            top_k=rag_query.top_k,
-            anonymizer_enabled_override=rag_query.anonymizer_enabled_override,
-            route_key=rag_query.route_key,
-            tender_id=rag_query.tender_id,
-        )
-        search_result = await self.query(rag_query_copy)
-        context = "\n\n---\n\n".join(s["text"] for s in search_result.sources)
+        retrieved = await self._retrieve_context_and_sources(rag_query)
+        context = retrieved.context
+        length_target = self._extract_requested_length_target(rag_query.text)
+        stream_max_tokens = self._generation_pass_token_budget(length_target)
 
         # Determine template and variables
         template, variables = self._resolve_template(rag_query, context)
@@ -525,6 +454,7 @@ class HybridRAGEngine:
                 template=template,
                 variables=stream_variables,
                 temperature=rag_query.temperature,
+                max_tokens=stream_max_tokens,
             ):
                 buffered_tokens.append(token)
             restored = await self._deanonymize_text("".join(buffered_tokens), deanonymize_session_id)
@@ -536,8 +466,99 @@ class HybridRAGEngine:
             template=template,
             variables=stream_variables,
             temperature=rag_query.temperature,
+            max_tokens=stream_max_tokens,
         ):
             yield token
+
+    async def _retrieve_context_and_sources(
+        self,
+        rag_query: RAGQuery,
+    ) -> RetrievedContext:
+        retrieval_query = self._query_text_without_length_request(rag_query.text)
+
+        dense_results = []
+        sparse_results = []
+        graph_results = []
+
+        try:
+            raw_dense = self.dense_retriever.search(
+                query=retrieval_query,
+                top_k=rag_query.top_k or settings.rag_top_k_dense,
+                filters=rag_query.filters,
+            )
+            dense_results = [
+                {"text": r.text, "score": r.score, "metadata": r.metadata}
+                for r in raw_dense
+            ]
+        except Exception as e:
+            logger.warning("Dense retrieval failed", error=str(e))
+
+        try:
+            raw_sparse = self.sparse_retriever.search(
+                query=retrieval_query,
+                top_k=rag_query.top_k or settings.rag_top_k_sparse,
+                filters=rag_query.filters,
+            )
+            sparse_results = [
+                {"text": r.text, "score": r.score, "metadata": r.metadata}
+                for r in raw_sparse
+            ]
+        except Exception as e:
+            logger.warning("Sparse retrieval failed", error=str(e))
+
+        try:
+            raw_graph = await self.graph_retriever.search(
+                query=retrieval_query,
+                top_k=rag_query.top_k or settings.rag_top_k_graph,
+                filters=rag_query.filters,
+            )
+            graph_results = [
+                {"text": r.text, "score": r.score, "metadata": r.metadata}
+                for r in raw_graph
+            ]
+        except Exception as e:
+            logger.warning("Graph retrieval failed", error=str(e))
+
+        fused = self.fusion.fuse(
+            dense_results=dense_results,
+            sparse_results=sparse_results,
+            graph_results=graph_results,
+            top_k=20,
+        )
+
+        top_k_final = rag_query.top_k or settings.rag_top_k_final
+        reranked = []
+        if fused:
+            try:
+                fused_dicts = [
+                    {"text": f.text, "score": f.score, "metadata": f.metadata, "sources": f.sources}
+                    for f in fused
+                ]
+                reranked = self.reranker.rerank(
+                    query=retrieval_query,
+                    results=fused_dicts,
+                    top_k=top_k_final,
+                )
+            except Exception as e:
+                logger.warning("Re-ranking failed, using fusion order", error=str(e))
+                reranked = fused[:top_k_final]
+
+        context_texts = []
+        sources = []
+        for r in reranked:
+            text = r.text if hasattr(r, "text") else r.get("text", "")
+            metadata = r.metadata if hasattr(r, "metadata") else r.get("metadata", {})
+            context_texts.append(text)
+            sources.append({
+                "text": text[:200] + "..." if len(text) > 200 else text,
+                "score": r.score if hasattr(r, "score") else r.get("score", 0),
+                "metadata": metadata,
+            })
+
+        return RetrievedContext(
+            context="\n\n---\n\n".join(context_texts),
+            sources=sources,
+        )
 
     def _has_external_llm(self, rag_query: RAGQuery | None = None) -> bool:
         if rag_query and rag_query.external_target_url:
@@ -891,32 +912,100 @@ class HybridRAGEngine:
             template, variables = self._resolve_template(rag_query, context)
 
         active_generator = generator or self.generator
+        length_target = self._extract_requested_length_target(rag_query.text)
         return await active_generator.generate(
             template=template,
             variables=variables,
             temperature=rag_query.temperature,
-            max_tokens=self._completion_token_budget_for_words(
-                self._extract_requested_word_count(rag_query.text)
-            ),
+            max_tokens=self._generation_pass_token_budget(length_target),
         )
 
+    def _extract_requested_length_target(
+        self,
+        query_text: str,
+    ) -> ResponseLengthTarget | None:
+        normalized_query = query_text or ""
+
+        word_match = WORD_COUNT_REQUEST_RE.search(normalized_query)
+        if word_match:
+            try:
+                value = int(word_match.group(1))
+            except ValueError:
+                value = 0
+            if value >= 50:
+                return ResponseLengthTarget(
+                    requested_value=value,
+                    requested_unit="words",
+                    target_words=value,
+                    approximate=False,
+                )
+
+        line_match = LINE_COUNT_REQUEST_RE.search(normalized_query)
+        if line_match:
+            try:
+                value = int(line_match.group(1))
+            except ValueError:
+                value = 0
+            if value >= 20:
+                return ResponseLengthTarget(
+                    requested_value=value,
+                    requested_unit="lines",
+                    target_words=max(50, value * APPROX_WORDS_PER_LINE),
+                    approximate=True,
+                )
+
+        return None
+
     def _extract_requested_word_count(self, query_text: str) -> int | None:
-        match = WORD_COUNT_REQUEST_RE.search(query_text or "")
-        if not match:
-            return None
-        try:
-            value = int(match.group(1))
-        except ValueError:
-            return None
-        return value if value >= 50 else None
+        length_target = self._extract_requested_length_target(query_text)
+        return length_target.target_words if length_target else None
+
+    def _length_target_requested_label(self, length_target: ResponseLengthTarget) -> str:
+        if length_target.requested_unit == "lines":
+            return f"{length_target.requested_value} righe"
+        return f"{length_target.requested_value} parole"
+
+    def _length_target_instruction(self, length_target: ResponseLengthTarget) -> str:
+        if length_target.requested_unit == "lines":
+            return (
+                "Continua finche la risposta diventa il piu estesa e dettagliata possibile, "
+                f"avvicinandoti al target di circa {length_target.requested_value} righe "
+                f"(equivalenti a circa {length_target.target_words} parole)."
+            )
+        return (
+            "Continua fino a raggiungere complessivamente circa "
+            f"{length_target.target_words} parole."
+        )
+
+    def _query_text_without_length_request(self, query_text: str) -> str:
+        cleaned = WORD_COUNT_REQUEST_RE.sub("", query_text or "", count=1)
+        cleaned = LINE_COUNT_REQUEST_RE.sub("", cleaned, count=1)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;:-")
+        return cleaned or (query_text or "").strip()
 
     def _count_words(self, text: str) -> int:
         return len(WORD_RE.findall(text or ""))
 
-    def _minimum_acceptable_word_count(self, target_words: int) -> int:
+    def _minimum_acceptable_word_count(
+        self,
+        target_words: int,
+        *,
+        approximate: bool = False,
+    ) -> int:
+        if approximate:
+            if target_words >= 4000:
+                return max(800, int(target_words * 0.1))
+            if target_words >= 1500:
+                return max(600, int(target_words * 0.25))
+            return max(160, int(target_words * 0.6))
         if target_words >= 400:
             return max(200, int(target_words * 0.95))
         return max(80, int(target_words * 0.85))
+
+    def _continuation_attempt_budget(self, target_words: int) -> int:
+        if target_words <= 0:
+            return 0
+        return max(3, min(8, math.ceil(target_words / 1200)))
 
     def _completion_token_budget_for_words(self, target_words: int | None) -> int | None:
         if not target_words:
@@ -936,6 +1025,25 @@ class HybridRAGEngine:
             )
 
         return min(estimated_tokens, 4096)
+
+    def _generation_pass_token_budget(
+        self,
+        length_target: ResponseLengthTarget | None,
+        *,
+        current_words: int = 0,
+    ) -> int | None:
+        if not length_target:
+            return None
+
+        remaining_words = max(length_target.target_words - current_words, 0)
+        total_budget = self._completion_token_budget_for_words(remaining_words)
+        if not total_budget:
+            return None
+
+        if length_target.target_words >= 500 or length_target.approximate:
+            return min(total_budget, LONG_FORM_PASS_TOKEN_CAP)
+
+        return total_budget
 
     def _continuation_tail(self, text: str, *, limit: int = 1600) -> str:
         normalized = (text or "").strip()
@@ -991,21 +1099,37 @@ class HybridRAGEngine:
         return "\n".join(lines).strip()
 
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
-        target_words = self._extract_requested_word_count(rag_query.text)
+        length_target = self._extract_requested_length_target(rag_query.text)
         constraints = [
             "Rispondi direttamente alla domanda dell'utente senza preamboli meta.",
-            "Non limitarti a contare o commentare il numero di parole della tua risposta.",
+            "Non limitarti a contare o commentare la lunghezza della tua risposta.",
         ]
 
-        if target_words:
-            min_words = self._minimum_acceptable_word_count(target_words)
-            max_words = max(target_words + 100, int(target_words * 1.1))
-            constraints.extend([
-                f"L'utente ha richiesto circa {target_words} parole.",
-                f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
-                f"Avvicinati il piu possibile al target di {target_words} parole senza fermarti molto prima.",
-                "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
-            ])
+        if length_target:
+            min_words = self._minimum_acceptable_word_count(
+                length_target.target_words,
+                approximate=length_target.approximate,
+            )
+            max_words = max(
+                length_target.target_words + 100,
+                int(length_target.target_words * 1.1),
+            )
+            constraints.append(
+                f"L'utente ha richiesto circa {self._length_target_requested_label(length_target)}."
+            )
+            if length_target.requested_unit == "lines":
+                constraints.extend([
+                    f"Tratta questo obiettivo come una risposta molto estesa, equivalente a circa {length_target.target_words} parole.",
+                    "Non discutere la fattibilita del numero di righe richiesto e non scusarti per la lunghezza: rispondi subito nel merito.",
+                    f"Scrivi una risposta completa di almeno {min_words} parole circa, usando tutto lo spazio disponibile prima di fermarti.",
+                    "Organizza la spiegazione in sezioni sostanziali, esempi e passaggi logici, senza riempitivi o ripetizioni.",
+                ])
+            else:
+                constraints.extend([
+                    f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
+                    f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
+                    "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
+                ])
         else:
             constraints.append("Mantieni la risposta proporzionata alla richiesta.")
 
@@ -1023,25 +1147,39 @@ class HybridRAGEngine:
         if rag_query.mode != QueryMode.QA:
             return generation_result
 
-        target_words = self._extract_requested_word_count(rag_query.text)
-        if not target_words:
+        length_target = self._extract_requested_length_target(rag_query.text)
+        if not length_target:
             return generation_result
 
-        minimum_words = self._minimum_acceptable_word_count(target_words)
+        minimum_words = self._minimum_acceptable_word_count(
+            length_target.target_words,
+            approximate=length_target.approximate,
+        )
         current_text = generation_result.text.strip()
         current_words = self._count_words(current_text)
+        if length_target.approximate:
+            logger.info(
+                "Skipping iterative extension for approximate requested length",
+                requested_unit=length_target.requested_unit,
+                requested_value=length_target.requested_value,
+                target_words=length_target.target_words,
+                current_words=current_words,
+            )
+            return generation_result
         if current_words >= minimum_words:
             return generation_result
 
         logger.info(
             "Extending QA answer to satisfy requested length",
-            target_words=target_words,
+            requested_unit=length_target.requested_unit,
+            requested_value=length_target.requested_value,
+            target_words=length_target.target_words,
             current_words=current_words,
             minimum_words=minimum_words,
         )
 
-        for attempt in range(1, 4):
-            remaining_words = max(target_words - current_words, 0)
+        for attempt in range(1, self._continuation_attempt_budget(length_target.target_words) + 1):
+            remaining_words = max(length_target.target_words - current_words, 0)
             if remaining_words <= 0:
                 break
 
@@ -1051,10 +1189,13 @@ class HybridRAGEngine:
                     "query": variables.get("query", rag_query.text),
                     "context": variables.get("context", context),
                     "current_answer_tail": self._continuation_tail(current_text),
-                    "target_words": target_words,
+                    "length_instruction": self._length_target_instruction(length_target),
                 },
                 temperature=rag_query.temperature,
-                max_tokens=self._completion_token_budget_for_words(remaining_words),
+                max_tokens=self._generation_pass_token_budget(
+                    length_target,
+                    current_words=current_words,
+                ),
             )
 
             continuation_text = self._clean_continuation_text(continuation_result.text)
@@ -1068,7 +1209,7 @@ class HybridRAGEngine:
                 "QA answer extension complete",
                 attempt=attempt,
                 current_words=current_words,
-                target_words=target_words,
+                target_words=length_target.target_words,
             )
 
             generation_result = replace(
@@ -1092,7 +1233,7 @@ class HybridRAGEngine:
         if mode == QueryMode.QA:
             return "general_qa", {
                 "context": context,
-                "query": rag_query.text,
+                "query": self._query_text_without_length_request(rag_query.text),
                 "response_constraints": self._build_response_constraints(rag_query),
             }
 
@@ -1126,7 +1267,7 @@ class HybridRAGEngine:
         else:
             return "general_qa", {
                 "context": context,
-                "query": rag_query.text,
+                "query": self._query_text_without_length_request(rag_query.text),
             }
 
     # ──────────────────────────────────────────────

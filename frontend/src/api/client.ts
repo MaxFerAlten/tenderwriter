@@ -11,6 +11,22 @@ interface RequestOptions {
     headers?: Record<string, string>;
 }
 
+interface StreamRequestOptions {
+    signal?: AbortSignal;
+    onToken?: (token: string) => void;
+}
+
+function findSseEventBoundary(buffer: string): { index: number; length: number } | null {
+    const match = /\r?\n\r?\n/.exec(buffer);
+    if (!match || typeof match.index !== 'number') {
+        return null;
+    }
+    return {
+        index: match.index,
+        length: match[0].length,
+    };
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, headers = {} } = options;
 
@@ -41,6 +57,92 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
 
     return response.json();
+}
+
+async function streamRequest(
+    path: string,
+    body: unknown,
+    options: StreamRequestOptions = {},
+): Promise<void> {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: options.signal,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    if (!response.body) {
+        throw new Error('Streaming response body is not available');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const flushEvent = (rawEvent: string): boolean => {
+        const dataLines = rawEvent
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart());
+
+        if (dataLines.length === 0) {
+            return false;
+        }
+
+        const payload = dataLines.join('\n');
+        if (!payload) {
+            return false;
+        }
+        if (payload === '[DONE]') {
+            return true;
+        }
+
+        try {
+            const parsed = JSON.parse(payload) as { type?: string; token?: string };
+            if (parsed.type === 'token' && typeof parsed.token === 'string') {
+                options.onToken?.(parsed.token);
+                return false;
+            }
+        } catch {
+            options.onToken?.(payload);
+            return false;
+        }
+
+        return false;
+    };
+
+    while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+        let boundary = findSseEventBoundary(buffer);
+        while (boundary) {
+            const rawEvent = buffer.slice(0, boundary.index).trim();
+            buffer = buffer.slice(boundary.index + boundary.length);
+            if (rawEvent && flushEvent(rawEvent)) {
+                return;
+            }
+            boundary = findSseEventBoundary(buffer);
+        }
+
+        if (done) {
+            const finalEvent = buffer.trim();
+            if (finalEvent) {
+                flushEvent(finalEvent);
+            }
+            return;
+        }
+    }
 }
 
 // ── Auth ──
@@ -502,6 +604,8 @@ export const contentApi = {
 export const ragApi = {
     query: (data: RAGQueryRequest) =>
         request<RAGResponse>('/rag/query', { method: 'POST', body: data }),
+    streamQuery: (data: RAGQueryRequest, options?: StreamRequestOptions) =>
+        streamRequest('/rag/query', { ...data, stream: true }, options),
     getHistory: () => request<{ id: number, query: string, response: string, created_at: string }[]>('/rag/history'),
     generateSection: (data: GenerateSectionRequest) =>
         request<RAGResponse>('/rag/generate-section', { method: 'POST', body: data }),
@@ -1073,6 +1177,7 @@ export interface RAGQueryRequest {
     filters?: Record<string, unknown>;
     top_k?: number;
     temperature?: number;
+    stream?: boolean;
 }
 
 export interface GenerateSectionRequest {
