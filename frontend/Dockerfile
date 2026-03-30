@@ -5,6 +5,14 @@ RUN npm config set strict-ssl false
 RUN npm install --include=dev
 RUN npm install -g typescript
 COPY . .
+ARG VITE_AUTH_MODE=legacy
+ARG VITE_KC_URL=http://localhost:8180
+ARG VITE_KC_REALM=tenderwriter
+ARG VITE_KC_CLIENT_ID=tw-frontend
+ENV VITE_AUTH_MODE=$VITE_AUTH_MODE
+ENV VITE_KC_URL=$VITE_KC_URL
+ENV VITE_KC_REALM=$VITE_KC_REALM
+ENV VITE_KC_CLIENT_ID=$VITE_KC_CLIENT_ID
 RUN npm run build
 
 FROM nginx:alpine

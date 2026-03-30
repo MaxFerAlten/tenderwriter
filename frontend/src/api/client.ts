@@ -1753,3 +1753,113 @@ export interface AttendanceRecordUpsertRequest {
     recorded_at?: string;
     notes?: string;
 }
+
+// ── Data Explorer ──
+
+export interface QdrantCollectionInfo {
+    name: string;
+    points_count: number;
+    vectors_count: number;
+    indexed_vectors_count: number;
+    dimension: number | null;
+    distance: string;
+    status: string;
+    segments_count: number;
+    on_disk_payload: boolean;
+}
+
+export interface QdrantSamplePoint {
+    id: string;
+    text_preview: string;
+    metadata: Record<string, unknown>;
+}
+
+export interface Neo4jLabelCount {
+    label: string;
+    count: number;
+}
+
+export interface Neo4jRelTypeCount {
+    type: string;
+    count: number;
+}
+
+export interface Neo4jConstraint {
+    name: string;
+    type: string;
+    entity_type: string;
+    labels_or_types: string[];
+    properties: string[];
+}
+
+export interface Neo4jOverview {
+    total_nodes: number;
+    total_relationships: number;
+    node_labels: Neo4jLabelCount[];
+    relationship_types: Neo4jRelTypeCount[];
+    constraints: Neo4jConstraint[];
+}
+
+export interface Neo4jGraphNode {
+    id: string;
+    label: string;
+    name: string;
+}
+
+export interface Neo4jGraphEdge {
+    source: string;
+    target: string;
+    type: string;
+    properties: Record<string, unknown>;
+}
+
+export interface Neo4jNodeDetail {
+    id: string;
+    labels: string[];
+    properties: Record<string, unknown>;
+}
+
+export interface Neo4jRelationshipDetail {
+    source_id: string;
+    rel_type: string;
+    rel_props: Record<string, unknown>;
+    target_id: string;
+    target_labels: string[];
+    target_name: string;
+}
+
+export interface DataExplorerStatus {
+    engine_initialized: boolean;
+    qdrant_connected: boolean;
+    qdrant_collections: number;
+    neo4j_connected: boolean;
+    neo4j_has_schema: boolean;
+    data_ready: boolean;
+}
+
+export const dataExplorerApi = {
+    status: () => request<DataExplorerStatus>('/data-explorer/status'),
+    initialize: () => request<{ status: string }>('/data-explorer/initialize', { method: 'POST' }),
+    qdrantOverview: () =>
+        request<{ collections: QdrantCollectionInfo[] }>('/data-explorer/qdrant/overview'),
+    qdrantSample: (collection: string, limit = 10, offset?: string) => {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (offset) params.set('offset', offset);
+        return request<{ collection: string; items: QdrantSamplePoint[]; next_offset: string | null; count: number }>(
+            `/data-explorer/qdrant/collection/${collection}/sample?${params}`
+        );
+    },
+    qdrantPayloadKeys: (collection: string) =>
+        request<{ collection: string; sampled_points: number; keys: Record<string, { count: number; type: string; sample_values: (string | null)[] }> }>(
+            `/data-explorer/qdrant/collection/${collection}/payload-keys`
+        ),
+    neo4jOverview: () => request<Neo4jOverview>('/data-explorer/neo4j/overview'),
+    neo4jSample: (label: string, limit = 20) =>
+        request<{ label: string; nodes: Neo4jNodeDetail[]; relationships: Neo4jRelationshipDetail[] }>(
+            `/data-explorer/neo4j/sample/${label}?limit=${limit}`
+        ),
+    neo4jGraphSnapshot: (limit = 100) =>
+        request<{ nodes: Neo4jGraphNode[]; edges: Neo4jGraphEdge[] }>(
+            `/data-explorer/neo4j/graph-snapshot?limit=${limit}`
+        ),
+};

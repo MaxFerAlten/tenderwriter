@@ -386,7 +386,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: tw-frontend
     restart: unless-stopped
     depends_on:
@@ -396,8 +396,18 @@ services:
       - "3000:3000"
     environment:
       MM_LOGIN_REDIRECT_MODE: ${MM_LOGIN_REDIRECT_MODE:-off}
+      VITE_API_TARGET: http://backend:8000
+      VITE_AUTH_MODE: ${AUTH_PROVIDER:-legacy}
+      VITE_KC_URL: ${KEYCLOAK_URL:-http://localhost:8180}
+      VITE_KC_REALM: ${KEYCLOAK_REALM:-tenderwriter}
+      VITE_KC_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-tw-frontend}
     volumes:
-      - ./frontend/src:/app/src # Hot reload in development
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tsconfig.app.json:/app/tsconfig.app.json
+      - ./frontend/index.html:/app/index.html
 
   # --- Mock External LLM (Python) ---
   mock-external-llm:

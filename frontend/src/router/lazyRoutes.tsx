@@ -27,6 +27,7 @@ const routeLoaders = {
     '/forgot-password': loadPage(() => import('../pages/ForgotPassword')),
     '/observability-kpi/:tenderId/operational-workspace': loadPage(() => import('../pages/OperationalWorkspacePage')),
     '/tenders/:id/chat': loadPage(() => import('../pages/TenderChat')),
+    '/data-explorer': loadPage(() => import('../pages/DataExplorer')),
 } satisfies Record<string, RouteLoader>;
 
 const warmedRoutes = new Set<string>();
@@ -119,3 +120,4 @@ export const RegisterPage = lazyPage('/register');
 export const ForgotPasswordPage = lazyPage('/forgot-password');
 export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/operational-workspace');
 export const TenderChatPage = lazyPage('/tenders/:id/chat');
+export const DataExplorerPage = lazyPage('/data-explorer');
