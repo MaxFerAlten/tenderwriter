@@ -45,6 +45,7 @@ const accentGreen = '#34d399';
 const accentRose = '#fb7185';
 
 const labelColors: Record<string, string> = {
+    Tender: '#22c55e',
     Project: accentBlue,
     TeamMember: accentPurple,
     Client: accentAmber,
@@ -58,6 +59,7 @@ function getLabelColor(label: string): string {
 }
 
 const relColors: Record<string, string> = {
+    HAS_REQUIREMENT: '#22c55e',
     FOR_CLIENT: accentAmber,
     HAS_CATEGORY: accentRose,
     DELIVERED: accentPurple,

@@ -55,6 +55,7 @@ class GraphRetriever:
     async def _ensure_schema(self):
         """Create indexes and constraints for the knowledge graph."""
         constraints = [
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (tnd:Tender) REQUIRE tnd.id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (t:TeamMember) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Client) REQUIRE c.name IS UNIQUE",
@@ -63,6 +64,7 @@ class GraphRetriever:
         ]
 
         indexes = [
+            "CREATE INDEX IF NOT EXISTS FOR (tnd:Tender) ON (tnd.title)",
             "CREATE INDEX IF NOT EXISTS FOR (p:Project) ON (p.name)",
             "CREATE INDEX IF NOT EXISTS FOR (t:TeamMember) ON (t.name)",
         ]
@@ -72,6 +74,30 @@ class GraphRetriever:
                 await session.run(stmt)
 
         logger.info("Neo4j schema constraints ensured")
+
+    async def upsert_tender(self, tender: dict):
+        """Create or update a Tender node in the knowledge graph."""
+        query = """
+        MERGE (t:Tender {id: $id})
+        SET t.title = $title,
+            t.status = $status,
+            t.client = $client,
+            t.category = $category,
+            t.deadline = $deadline
+        """
+
+        async with self._driver.session() as session:
+            await session.run(
+                query,
+                id=tender["id"],
+                title=tender.get("title") or tender["id"],
+                status=tender.get("status"),
+                client=tender.get("client"),
+                category=tender.get("category"),
+                deadline=tender.get("deadline"),
+            )
+
+        logger.info("Upserted tender in graph", tender_id=tender["id"])
 
     async def add_project(self, project: dict):
         """
@@ -169,15 +195,25 @@ class GraphRetriever:
                 async with self._driver.session() as session:
                     await session.run(cert_query, member_id=member["id"], cert_name=cert)
 
-    async def add_requirement(self, requirement: dict, tender_id: str):
-        """Add a tender requirement to the knowledge graph."""
+    async def add_requirement(self, requirement: dict, tender_id: str, tender: dict | None = None):
+        """Add a tender requirement to the knowledge graph and link it to its tender."""
         query = """
+        MERGE (t:Tender {id: $tender_id})
+        ON CREATE SET t.title = coalesce($tender_title, $tender_id)
+        SET t.title = coalesce($tender_title, t.title),
+            t.status = coalesce($tender_status, t.status),
+            t.client = coalesce($tender_client, t.client),
+            t.category = coalesce($tender_category, t.category),
+            t.deadline = coalesce($tender_deadline, t.deadline)
+        WITH t
         MERGE (r:Requirement {id: $id})
         SET r.text = $text,
             r.category = $category,
             r.priority = $priority,
             r.tender_id = $tender_id
+        MERGE (t)-[:HAS_REQUIREMENT]->(r)
         """
+        tender = tender or {}
         async with self._driver.session() as session:
             await session.run(
                 query,
@@ -186,6 +222,11 @@ class GraphRetriever:
                 category=requirement.get("category", "general"),
                 priority=requirement.get("priority", "medium"),
                 tender_id=tender_id,
+                tender_title=tender.get("title"),
+                tender_status=tender.get("status"),
+                tender_client=tender.get("client"),
+                tender_category=tender.get("category"),
+                tender_deadline=tender.get("deadline"),
             )
 
     async def search(

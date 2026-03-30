@@ -325,7 +325,7 @@ async def neo4j_sample_nodes(
     driver = await _get_neo4j_driver(request)
 
     # Sanitize label to prevent injection
-    allowed_labels = {"Project", "TeamMember", "Client", "Certification", "Category", "Requirement"}
+    allowed_labels = {"Tender", "Project", "TeamMember", "Client", "Certification", "Category", "Requirement"}
     if label not in allowed_labels:
         raise HTTPException(status_code=400, detail=f"Invalid label. Allowed: {', '.join(sorted(allowed_labels))}")
 
@@ -361,7 +361,13 @@ async def neo4j_sample_nodes(
                     "rel_props": dict(r["rel_props"]) if r["rel_props"] else {},
                     "target_id": r["target_id"],
                     "target_labels": list(r["target_labels"]),
-                    "target_name": r["target_props"].get("name", r["target_props"].get("id", "")),
+                    "target_name": (
+                        r["target_props"].get("name")
+                        or r["target_props"].get("title")
+                        or r["target_props"].get("id")
+                        or r["target_props"].get("category")
+                        or str(r["target_props"].get("text", ""))[:80]
+                    ),
                 })
 
         return {
@@ -389,10 +395,10 @@ async def neo4j_graph_snapshot(
             result = await session.run(
                 "MATCH (n)-[r]->(m) "
                 "RETURN elementId(n) AS src_id, labels(n) AS src_labels, "
-                "coalesce(n.name, n.id, '') AS src_name, "
+                "coalesce(n.name, n.title, n.id, n.category, substring(n.text, 0, 80), '') AS src_name, "
                 "type(r) AS rel_type, properties(r) AS rel_props, "
                 "elementId(m) AS tgt_id, labels(m) AS tgt_labels, "
-                "coalesce(m.name, m.id, '') AS tgt_name "
+                "coalesce(m.name, m.title, m.id, m.category, substring(m.text, 0, 80), '') AS tgt_name "
                 "LIMIT $limit",
                 limit=limit,
             )
@@ -423,6 +429,24 @@ async def neo4j_graph_snapshot(
                     "type": r["rel_type"],
                     "properties": dict(r["rel_props"]) if r["rel_props"] else {},
                 })
+
+            standalone_result = await session.run(
+                "MATCH (n) "
+                "RETURN elementId(n) AS node_id, "
+                "labels(n) AS node_labels, "
+                "coalesce(n.name, n.title, n.id, n.category, substring(n.text, 0, 80), '') AS node_name "
+                "LIMIT $limit",
+                limit=limit,
+            )
+            async for r in standalone_result:
+                node_id = r["node_id"]
+                if node_id in nodes_map:
+                    continue
+                nodes_map[node_id] = {
+                    "id": node_id,
+                    "label": r["node_labels"][0] if r["node_labels"] else "Unknown",
+                    "name": r["node_name"],
+                }
 
         return {
             "nodes": list(nodes_map.values()),

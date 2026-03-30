@@ -44,7 +44,10 @@ from app.services.kpi_reason_engine import (
     sync_tender_and_publish_event,
 )
 from app.services.compliance_observability import sync_requirement_compliance_and_gate
-from app.services.tender_requirements import apply_extracted_requirement_candidates
+from app.services.tender_requirements import (
+    apply_extracted_requirement_candidates,
+    sync_tender_requirements_to_graph,
+)
 
 router = APIRouter()
 
@@ -492,6 +495,12 @@ async def import_tender_document(
     requirement_candidates = list(stats.get("requirement_candidates") or [])
     created_requirements = apply_extracted_requirement_candidates(tender, requirement_candidates)
     await db.flush()
+    graph_synced = await sync_tender_requirements_to_graph(
+        rag_engine,
+        tender,
+        list(tender.requirements or created_requirements),
+    )
+    stats["graph_synced"] = graph_synced
     compliance_events = await sync_requirement_compliance_and_gate(
         db,
         tender_id=tender.id,
