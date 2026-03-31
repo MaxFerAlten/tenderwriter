@@ -6,6 +6,7 @@ import {
     prefetchTenderChatContext,
     prefetchTenderChatRetrospective,
     proposalApi,
+    ragApi,
     resetTenderChatContextCacheForTest,
     resolveTenderChatContext,
     resolveTenderChatRetrospective,
@@ -27,6 +28,19 @@ const localStorageMock = {
         storage.clear();
     }),
 };
+
+function createStreamResponse(chunks: string[]): Response {
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream({
+        start(controller) {
+            chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+            controller.close();
+        },
+    }), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+    });
+}
 
 describe('kpiAdminApi', () => {
     beforeEach(() => {
@@ -579,6 +593,62 @@ describe('proposalApi', () => {
         );
     });
 });
+
+describe('ragApi streaming', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        resetTenderChatContextCacheForTest();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('preserves leading spaces emitted by SSE tokens', async () => {
+        const tokens: string[] = [];
+
+        fetchMock.mockResolvedValue(
+            createStreamResponse([
+                'data: Il problema\n\n',
+                'data:  di assegnamento\n\n',
+                'data:  continua\n\n',
+                'data: [DONE]\n\n',
+            ])
+        );
+
+        await ragApi.streamQuery(
+            { query: 'assignment', mode: 'qa' },
+            { onToken: (token) => tokens.push(token) }
+        );
+
+        expect(tokens.join('')).toBe('Il problema di assegnamento continua');
+    });
+
+    it('preserves multiline SSE payloads without trimming formatting', async () => {
+        const tokens: string[] = [];
+
+        fetchMock.mockResolvedValue(
+            createStreamResponse([
+                'data:  Prima riga\n',
+                'data: seconda riga\n\n',
+                'data:  \n\n',
+                'data: [DONE]\n\n',
+            ])
+        );
+
+        await ragApi.streamQuery(
+            { query: 'assignment', mode: 'qa' },
+            { onToken: (token) => tokens.push(token) }
+        );
+
+        expect(tokens).toEqual([' Prima riga\nseconda riga', ' ']);
+    });
+});
+
 describe('observabilityApi', () => {
     beforeEach(() => {
         storage.clear();

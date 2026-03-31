@@ -25,6 +25,8 @@ logger = structlog.get_logger()
 _DOCKER_MARKER = Path("/.dockerenv")
 _DOCKER_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
 _INTERNAL_LLAMACPP_HOSTS = {"tw-gateway", "llama-tender", "llama-opencode", "gateway"}
+_KNOWN_OPENAI_COMPATIBLE_PORTS = {1234, 8080, 5000, 5001, 11434}
+_OPENAI_API_PATH_MARKERS = {"/v1", "/api/v1", "/chat/completions", "/completions"}
 
 
 # ──────────────────────────────────────────────
@@ -201,6 +203,8 @@ class Generator:
         self.timeout = timeout or getattr(settings, 'llama_timeout', 120)
         if self.provider == "openrouter":
             self.base_url = self._normalize_openrouter_base_url(self.base_url)
+        else:
+            self.base_url = self._normalize_external_llm_base_url(self.base_url)
 
     @staticmethod
     def _running_in_docker() -> bool:
@@ -222,6 +226,51 @@ class Generator:
             netloc = f"{netloc}:{parsed.port}"
 
         return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
+
+    @staticmethod
+    def _normalize_external_llm_base_url(base_url: str) -> str:
+        """Append /v1 to bare host:port URLs for external OpenAI-compatible servers.
+
+        LM Studio, vLLM, and similar servers expose an OpenAI-compatible API
+        at ``/v1``.  Users often configure just ``http://host:port`` without
+        the path suffix, which causes the Generator to fall through to the
+        Ollama code path.  This method detects that situation and appends
+        ``/v1`` so that the OpenAI-compatible chat API is used instead.
+
+        Ollama (default port 11434) is excluded because it uses its own
+        ``/api/generate`` endpoint.
+        """
+        normalized = (base_url or "").rstrip("/")
+        if not normalized:
+            return normalized
+
+        parsed = urlsplit(normalized)
+        path = (parsed.path or "").rstrip("/").lower()
+
+        # Already has a recognised API path — leave it alone.
+        if path and any(path.endswith(m) for m in _OPENAI_API_PATH_MARKERS):
+            return normalized
+
+        hostname = (parsed.hostname or "").lower()
+
+        # Internal llama.cpp hosts are handled by the legacy /completion path.
+        if hostname in _INTERNAL_LLAMACPP_HOSTS:
+            return normalized
+
+        # Ollama uses port 11434 and its own /api/generate endpoint.
+        if parsed.port == 11434:
+            return normalized
+
+        # Bare host:port (no meaningful path) that is NOT an internal host →
+        # almost certainly an OpenAI-compatible server (LM Studio, vLLM, …).
+        if not path or path == "/":
+            logger.debug(
+                "Auto-appending /v1 to bare external LLM URL",
+                original_url=normalized,
+            )
+            return f"{normalized}/v1"
+
+        return normalized
 
     @staticmethod
     def _normalize_openrouter_base_url(base_url: str) -> str:
@@ -563,6 +612,7 @@ class Generator:
         temperature = temperature if temperature is not None else getattr(settings, "llama_temperature", 0.3)
         stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
         stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        request_timeout = self._timeout_for_requested_tokens(max_tokens)
 
         # OpenRouter / OpenAI-compatible chat API
         if self.provider == "openrouter":
@@ -574,14 +624,36 @@ class Generator:
                 stream=False,
             )
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=request_data,
-                    headers=self._request_headers(),
+            data = await self._post_json_with_retries(
+                url=f"{self.base_url}/chat/completions",
+                request_data=request_data,
+                headers=self._request_headers(),
+                context="OpenRouter generation",
+                timeout=request_timeout,
+            )
+            if self._should_retry_empty_openai_response(data):
+                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                logger.info(
+                    "Retrying OpenRouter generation with higher token budget",
+                    previous_max_tokens=max_tokens,
+                    retry_max_tokens=retry_max_tokens,
                 )
-                self._raise_for_status_with_body(response, context="OpenRouter generation")
-                data = response.json()
+                data = await self._post_json_with_retries(
+                    url=f"{self.base_url}/chat/completions",
+                    request_data=self._build_openrouter_payload(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=retry_max_tokens,
+                        stop_tokens=stop_tokens,
+                        stream=False,
+                    ),
+                    headers=self._request_headers(),
+                    context="OpenRouter generation retry",
+                    timeout=max(
+                        self._expanded_retry_timeout(),
+                        self._timeout_for_requested_tokens(retry_max_tokens),
+                    ),
+                )
 
             prompt_tokens, completion_tokens = self._extract_usage(data)
 
@@ -614,7 +686,7 @@ class Generator:
                 request_data=request_data,
                 headers=self._request_headers(),
                 context="OpenAI-compatible chat generation",
-                timeout=self._timeout_for_requested_tokens(max_tokens),
+                timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
                 retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
@@ -672,7 +744,7 @@ class Generator:
                 request_data=request_data,
                 headers=self._request_headers(),
                 context="OpenAI-compatible completion generation",
-                timeout=self._timeout_for_requested_tokens(max_tokens),
+                timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
                 retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
@@ -731,7 +803,7 @@ class Generator:
                 request_data=request_data,
                 headers=None,
                 context="Llama server",
-                timeout=self._timeout_for_requested_tokens(max_tokens),
+                timeout=request_timeout,
             )
             
             prompt_tokens, completion_tokens = self._extract_usage(data)
@@ -806,10 +878,11 @@ class Generator:
         temperature = temperature if temperature is not None else getattr(settings, "llama_temperature", 0.3)
         stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
         stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        stream_timeout = self._timeout_for_requested_tokens(max_tokens)
 
         # OpenRouter / OpenAI-compatible chat API
         if self.provider == "openrouter":
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
@@ -839,7 +912,7 @@ class Generator:
                         if done:
                             break
         elif self._uses_openai_compatible_chat_api():
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     self._openai_chat_url(),
@@ -869,7 +942,7 @@ class Generator:
                         if done:
                             break
         elif self._uses_openai_compatible_completions_api():
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     self._openai_completion_url(),
@@ -900,7 +973,7 @@ class Generator:
                             break
         # Check if using llama.cpp or Ollama
         elif "/v1" in self.base_url:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     self._legacy_llama_completion_url(),
@@ -927,7 +1000,7 @@ class Generator:
                             break
         else:
             # Ollama API
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/api/generate",

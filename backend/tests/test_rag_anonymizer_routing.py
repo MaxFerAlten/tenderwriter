@@ -206,11 +206,11 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine._completion_token_budget_for_words(600), 2048)
         self.assertEqual(engine._completion_token_budget_for_words(200), 600)
 
-    def test_line_requests_are_centrally_mapped_to_long_answer_targets(self) -> None:
+    def test_line_requests_are_normalized_to_approximate_word_targets(self) -> None:
         engine = self._build_engine()
 
         target = engine._extract_requested_length_target(
-            "scrivimi un resoconto dettagliato di 1000 righe"
+            "parlami del problema di assegnamento 1000 righe"
         )
 
         self.assertIsNotNone(target)
@@ -218,32 +218,151 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target.requested_value, 1000)
         self.assertEqual(target.target_words, 8000)
         self.assertTrue(target.approximate)
-        self.assertEqual(engine._extract_requested_word_count("scrivimi 1000 righe"), 8000)
-
-    def test_line_requests_update_response_constraints_and_attempt_budget(self) -> None:
-        engine = self._build_engine()
-        target = engine._extract_requested_length_target("parlami del tema con 1000 righe")
-
-        constraints = engine._build_response_constraints(
-            RAGQuery(text="parlami del tema con 1000 righe", mode=QueryMode.QA)
-        )
-
-        self.assertIsNotNone(target)
-        self.assertIn("1000 righe", constraints)
-        self.assertIn("8000 parole", constraints)
-        self.assertEqual(engine._continuation_attempt_budget(8000), 7)
-        self.assertEqual(engine._minimum_acceptable_word_count(8000, approximate=True), 800)
-        self.assertEqual(engine._generation_pass_token_budget(target), 768)
-
-    def test_generation_query_strips_explicit_length_request(self) -> None:
-        engine = self._build_engine()
-
         self.assertEqual(
             engine._query_text_without_length_request(
-                "parlami del II problema di assegnamento 1000 righe"
+                "parlami del problema di assegnamento 1000 righe"
             ),
-            "parlami del II problema di assegnamento",
+            "parlami del problema di assegnamento",
         )
+
+    def test_external_long_form_budget_is_not_capped_like_internal(self) -> None:
+        engine = self._build_engine()
+        length_target = engine._extract_requested_length_target(
+            "parlami del problema di assegnamento 1000 righe"
+        )
+
+        external_generator = SimpleNamespace(provider="openrouter")
+        internal_generator = SimpleNamespace(provider="llama")
+
+        self.assertEqual(
+            engine._generation_pass_token_budget(
+                length_target,
+                generator=external_generator,
+            ),
+            4096,
+        )
+        self.assertEqual(
+            engine._generation_pass_token_budget(
+                length_target,
+                generator=internal_generator,
+            ),
+            512,
+        )
+
+    def test_detects_when_trailing_sentence_needs_completion(self) -> None:
+        engine = self._build_engine()
+
+        self.assertTrue(
+            engine._needs_sentence_completion(
+                "Il problema di assegnamento si collega anche al trasporto"
+            )
+        )
+        self.assertFalse(
+            engine._needs_sentence_completion(
+                "Il problema di assegnamento si collega anche al trasporto."
+            )
+        )
+
+    async def test_complete_trailing_sentence_if_needed_appends_short_closure(self) -> None:
+        engine = self._build_engine()
+        fake_generator = Mock(provider="openrouter")
+        fake_generator.generate = AsyncMock(
+            return_value=GenerationResult(
+                text="ottimo in modo naturale e coerente.",
+                model="qwen-test",
+                template_used="custom",
+                completion_tokens=18,
+            )
+        )
+
+        completion = await engine._complete_trailing_sentence_if_needed(
+            RAGQuery(text="spiega il problema di assegnamento", mode=QueryMode.QA),
+            generator=fake_generator,
+            context="contesto di test",
+            variables={
+                "query": "spiega il problema di assegnamento",
+                "context": "contesto di test",
+            },
+            current_text="Il problema di assegnamento si collega anche al trasporto",
+        )
+
+        self.assertIsNotNone(completion)
+        self.assertEqual(
+            completion.text,
+            "ottimo in modo naturale e coerente.",
+        )
+        fake_generator.generate.assert_awaited_once()
+
+    def test_clean_continuation_text_stops_before_prompt_leakage_sections(self) -> None:
+        engine = self._build_engine()
+
+        cleaned = engine._sanitize_continuation_text(
+            "Paragrafo iniziale.",
+            "Nuovo paragrafo utile.\n\n## Draft Ending\nVecchio testo che non deve rientrare.",
+        )
+
+        self.assertEqual(cleaned, "Nuovo paragrafo utile.")
+
+    def test_deduplicate_repeated_paragraphs_removes_looping_blocks(self) -> None:
+        engine = self._build_engine()
+
+        cleaned = engine._deduplicate_repeated_paragraphs(
+            "Primo blocco.\n\nInoltre, il fornitore puo scegliere i prezzi f e g.\n\n"
+            "Inoltre, il fornitore puo scegliere i prezzi f e g.\n\n"
+            "Conclusione finale."
+        )
+
+        self.assertEqual(
+            cleaned,
+            "Primo blocco.\n\nInoltre, il fornitore puo scegliere i prezzi f e g.\n\nConclusione finale.",
+        )
+
+    def test_remove_length_meta_blocks_filters_word_count_chatter(self) -> None:
+        engine = self._build_engine()
+
+        cleaned = engine._remove_length_meta_blocks(
+            "Spiegazione utile.\n\n"
+            "parole sarebbero insufficienti per fornire una comprensione dettagliata del problema.\n\n"
+            "Conclusione utile."
+        )
+
+        self.assertEqual(cleaned, "Spiegazione utile.\n\nConclusione utile.")
+
+    def test_math_rendering_constraints_are_added_when_requested(self) -> None:
+        engine = self._build_engine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text="spiega il problema di assegnamento e rendi ogni formula latex corretta",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("notazione matematica leggibile e coerente", constraints)
+        self.assertIn("pseudo-LaTeX incompleto", constraints)
+
+    def test_local_generator_context_is_trimmed_to_budget(self) -> None:
+        engine = self._build_engine()
+        local_generator = SimpleNamespace(provider="llama")
+        context = "\n\n---\n\n".join([
+            "A" * 2500,
+            "B" * 2500,
+            "C" * 2500,
+        ])
+
+        fitted = engine._fit_context_for_generator(context, generator=local_generator)
+
+        self.assertLessEqual(len(fitted), 4500)
+        self.assertIn("A", fitted)
+
+    def test_external_generator_keeps_full_context(self) -> None:
+        engine = self._build_engine()
+        external_generator = SimpleNamespace(provider="openrouter")
+        context = "X" * 7000
+
+        fitted = engine._fit_context_for_generator(context, generator=external_generator)
+
+        self.assertEqual(fitted, context)
 
     async def test_external_target_override_uses_dynamic_generator_configuration(self) -> None:
         engine = self._build_engine()
@@ -314,28 +433,46 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "session-stream",
         )
 
-    async def test_query_stream_uses_length_aware_token_budget(self) -> None:
+    async def test_query_stream_passes_large_budget_to_external_generator_for_line_requests(self) -> None:
         engine = self._build_engine()
-        captured_kwargs: dict = {}
+        captured_calls: list[dict] = []
+        engine._continuation_attempt_budget = Mock(return_value=1)
+
+        async def capture_anonymize(variables):
+            captured_calls.append({"anonymized_query": variables["query"]})
+            return variables, "session-lines"
+
+        engine._anonymize_prompt_variables = AsyncMock(side_effect=capture_anonymize)
+        engine._deanonymize_text = AsyncMock(side_effect=lambda text, _session: text)
+
+        external_generator = Mock(provider="openrouter")
 
         async def fake_generate_stream(**kwargs):
-            captured_kwargs.update(kwargs)
-            for token in ("prima parte ", "seconda parte"):
-                yield token
+            captured_calls.append(kwargs)
+            yield "Risposta lunga."
 
-        engine.generator.generate_stream = fake_generate_stream
+        external_generator.generate_stream = fake_generate_stream
+        engine._get_external_generator = Mock(return_value=external_generator)
 
-        output = await self._collect_stream(
-            engine.query_stream(
-                RAGQuery(
-                    text="parlami del problema di assegnamento 1000 righe",
-                    mode=QueryMode.QA,
+        with patch("app.rag.engine.settings.anonymizer_enabled", True):
+            output = await self._collect_stream(
+                engine.query_stream(
+                    RAGQuery(
+                        text="parlami del problema di assegnamento 1000 righe",
+                        mode=QueryMode.QA,
+                        external_target_url="https://gateway.example.com/v1",
+                        external_target_model="qwen-test",
+                        external_target_provider="openrouter",
+                    )
                 )
             )
-        )
 
-        self.assertEqual(output, "prima parte seconda parte")
-        self.assertEqual(captured_kwargs["max_tokens"], 768)
+        self.assertEqual(output, "Risposta lunga.")
+        self.assertEqual(
+            captured_calls[0]["anonymized_query"],
+            "parlami del problema di assegnamento",
+        )
+        self.assertEqual(captured_calls[1]["max_tokens"], 4096)
 
     async def test_anonymizer_circuit_open_short_circuits_requests(self) -> None:
         engine = self._build_engine()

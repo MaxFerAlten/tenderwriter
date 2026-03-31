@@ -7,8 +7,6 @@ check compliance, and analyze requirements.
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -24,6 +22,12 @@ from app.privacy_policy import EffectivePrivacyPolicy, resolve_effective_privacy
 from app.rag.engine import QueryMode, RAGQuery
 
 router = APIRouter()
+
+
+def _encode_sse_data(payload: str) -> str:
+    """Encode text as a valid SSE data frame, preserving embedded newlines."""
+    normalized = str(payload).replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(f"data: {line}\n" for line in normalized.split("\n")) + "\n"
 
 
 async def _load_runtime_anonymizer_enabled(db: AsyncSession) -> bool:
@@ -181,7 +185,7 @@ async def rag_query(
             full_response = ""
             async for token in engine.query_stream(rag_query):
                 full_response += token
-                yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+                yield _encode_sse_data(token)
 
             # Save history when stream completes
             try:
@@ -209,7 +213,7 @@ async def rag_query(
                     user_id=current_user.id,
                 )
 
-            yield "data: [DONE]\n\n"
+            yield _encode_sse_data("[DONE]")
 
         return StreamingResponse(
             stream_generator(),
@@ -218,24 +222,24 @@ async def rag_query(
 
     result = await engine.query(rag_query)
 
-    if mode != QueryMode.SEARCH:
-        history = SearchHistory(
-            user_id=current_user.id,
-            query=data.query,
-            response=result.answer
-        )
-        db.add(history)
-        await _audit_rag_result(
-            db=db,
-            action="rag_query",
-            current_user=current_user,
-            rag_query=rag_query,
-            policy=policy,
-            llm_route=result.llm_route.value if result.llm_route else None,
-            anonymized=result.anonymized,
-            payload={"mode": mode.value, "stream": False, "policy": policy.as_dict()},
-        )
-        await db.commit()
+    # Save to history
+    history = SearchHistory(
+        user_id=current_user.id,
+        query=data.query,
+        response=result.answer
+    )
+    db.add(history)
+    await _audit_rag_result(
+        db=db,
+        action="rag_query",
+        current_user=current_user,
+        rag_query=rag_query,
+        policy=policy,
+        llm_route=result.llm_route.value if result.llm_route else None,
+        anonymized=result.anonymized,
+        payload={"mode": mode.value, "stream": False, "policy": policy.as_dict()},
+    )
+    await db.commit()
 
     return RAGResponse(
         answer=result.answer,

@@ -27,6 +27,29 @@ function findSseEventBoundary(buffer: string): { index: number; length: number }
     };
 }
 
+function decodeSseDataLine(line: string): string | null {
+    if (!line.startsWith('data:')) {
+        return null;
+    }
+
+    const remainder = line.slice(5);
+    // SSE allows a single optional space after `data:`.
+    return remainder.startsWith(' ') ? remainder.slice(1) : remainder;
+}
+
+function extractSsePayload(rawEvent: string): string | null {
+    const dataLines = rawEvent
+        .split(/\r?\n/)
+        .map(decodeSseDataLine)
+        .filter((line): line is string => line !== null);
+
+    if (dataLines.length === 0) {
+        return null;
+    }
+
+    return dataLines.join('\n');
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, headers = {} } = options;
 
@@ -90,17 +113,8 @@ async function streamRequest(
     let buffer = '';
 
     const flushEvent = (rawEvent: string): boolean => {
-        const dataLines = rawEvent
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart());
-
-        if (dataLines.length === 0) {
-            return false;
-        }
-
-        const payload = dataLines.join('\n');
-        if (!payload) {
+        const payload = extractSsePayload(rawEvent);
+        if (payload === null) {
             return false;
         }
         if (payload === '[DONE]') {
@@ -127,7 +141,7 @@ async function streamRequest(
 
         let boundary = findSseEventBoundary(buffer);
         while (boundary) {
-            const rawEvent = buffer.slice(0, boundary.index).trim();
+            const rawEvent = buffer.slice(0, boundary.index);
             buffer = buffer.slice(boundary.index + boundary.length);
             if (rawEvent && flushEvent(rawEvent)) {
                 return;
@@ -136,7 +150,7 @@ async function streamRequest(
         }
 
         if (done) {
-            const finalEvent = buffer.trim();
+            const finalEvent = buffer;
             if (finalEvent) {
                 flushEvent(finalEvent);
             }

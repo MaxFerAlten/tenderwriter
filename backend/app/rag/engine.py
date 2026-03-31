@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from enum import Enum
 import math
 import re
@@ -36,7 +37,7 @@ WORD_COUNT_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 LINE_COUNT_REQUEST_RE = re.compile(
-    r"\b(\d{2,5})\s+(?:righe|riga|linee|line|lines|lineas|líneas)\b",
+    r"\b(\d{2,5})\s+(?:righe|lines|lineas)\b",
     re.IGNORECASE,
 )
 WORD_RE = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
@@ -44,29 +45,66 @@ CONTINUATION_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
     re.IGNORECASE,
 )
+PROMPT_LEAKAGE_HEADING_RE = re.compile(
+    r"^\s*#{1,6}\s*(?:draft ending|task|retrieved context|user question|response constraints|istruzioni importanti)\b.*$",
+    re.IGNORECASE,
+)
+MATH_RENDERING_REQUEST_RE = re.compile(
+    r"\b(?:latex|la\s*tex|formula|formule|equation|equazioni|matematica|matematiche|simboli matematici|math)\b",
+    re.IGNORECASE,
+)
+LENGTH_META_PARAGRAPH_RE = re.compile(
+    r"\b(?:parole|words|righe|lines)\b.*\b(?:sufficienti|insufficienti|troppo pochi|troppo poche|too few|enough|conteggio|numero di parole)\b",
+    re.IGNORECASE,
+)
 APPROX_WORDS_PER_LINE = 8
-LONG_FORM_PASS_TOKEN_CAP = 768
+LONG_FORM_INTERNAL_PASS_TOKEN_CAP = 512
+LOCAL_CONTEXT_CHAR_BUDGET = 4500
 
 QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
 - Devi rispondere nella STESSA LINGUA della domanda dell'utente.
 - Stai continuando una risposta gia iniziata.
 - Non ricominciare dall'inizio.
 - Non ripetere sezioni o frasi gia scritte.
-- Non commentare la lunghezza della risposta.
+- Non commentare il numero di parole.
 - Non scrivere titoli o frasi come "Continuazione della risposta".
-- {length_instruction}
+- Non citare o copiare etichette interne del prompt.
+- Se nel draft trovi formule OCR rovinate o simboli incompleti, non copiarli alla cieca: riscrivi il passaggio in forma corretta oppure spiegalo in prosa accurata.
+- Aggiungi solo contenuto nuovo, sostanziale e coerente con quanto gia scritto.
 
-## User Question
+DOMANDA UTENTE:
 {query}
 
-## Retrieved Context
+CONTESTO RECUPERATO:
 {context}
 
-## Draft Ending
+PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
 {current_answer_tail}
 
-## Task
-Scrivi solo la continuazione della risposta, iniziando direttamente con il contenuto mancante in modo fluido e coerente con il draft gia presente.
+COMPITO:
+Scrivi solo il seguito naturale della risposta, iniziando direttamente dal contenuto mancante.
+"""
+
+QA_SENTENCE_CLOSURE_PROMPT = """ISTRUZIONI IMPORTANTI:
+- Devi rispondere nella STESSA LINGUA della domanda dell'utente.
+- Devi completare solo la frase o il concetto finale rimasto interrotto.
+- Non iniziare un nuovo paragrafo, una nuova sezione o un nuovo argomento.
+- Non ripetere il testo gia scritto.
+- Scrivi al massimo 60 parole.
+- Chiudi con una frase completa e coerente.
+- Non citare o copiare etichette interne del prompt.
+
+DOMANDA UTENTE:
+{query}
+
+CONTESTO RECUPERATO:
+{context}
+
+PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
+{current_answer_tail}
+
+COMPITO:
+Continua solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto. Inizia direttamente con il testo mancante.
 """
 
 
@@ -131,8 +169,7 @@ class RAGResponse:
 
 @dataclass(frozen=True)
 class ResponseLengthTarget:
-    """Normalized user-requested answer length."""
-
+    """Normalized target length extracted from the user's query."""
     requested_value: int
     requested_unit: str
     target_words: int
@@ -141,8 +178,7 @@ class ResponseLengthTarget:
 
 @dataclass(frozen=True)
 class RetrievedContext:
-    """Shared retrieval payload used by sync and streaming flows."""
-
+    """Shared retrieval output reused by sync and streaming flows."""
     context: str
     sources: list[dict]
 
@@ -267,209 +303,6 @@ class HybridRAGEngine:
                 self._initialization_task = None
                 raise
 
-    async def query(self, rag_query: RAGQuery) -> RAGResponse:
-        """
-        Execute the full HybridRAG pipeline.
-
-        Args:
-            rag_query: The query with mode, filters, and additional context.
-
-        Returns:
-            RAGResponse with the generated answer and source references.
-        """
-        await self.ensure_initialized()
-
-        logger.info(
-            "RAG query started",
-            mode=rag_query.mode.value,
-            query_len=len(rag_query.text),
-        )
-        retrieved = await self._retrieve_context_and_sources(rag_query)
-        context = retrieved.context
-        sources = retrieved.sources
-
-        # ─── Step 4: Search-only mode ───
-        if rag_query.mode == QueryMode.SEARCH:
-            return RAGResponse(
-                answer="",
-                sources=sources,
-                mode=rag_query.mode,
-                llm_route=None,
-                anonymized=False,
-            )
-
-        template, variables = self._resolve_template(rag_query, context)
-        (
-            generator,
-            variables,
-            llm_route,
-            anonymized,
-            deanonymize_session_id,
-            anonymizer_enabled,
-        ) = await self._prepare_generation_route(rag_query, variables)
-        logger.info(
-            "RAG route selected",
-            mode=rag_query.mode.value,
-            route_key=rag_query.route_key,
-            tender_id=rag_query.tender_id,
-            anonymizer_enabled=anonymizer_enabled,
-            anonymizer_used=anonymized,
-            llm_route=llm_route.value,
-            session_token=self._mask_session_token(deanonymize_session_id),
-            target_id=rag_query.external_target_id,
-            target_provider=rag_query.external_target_provider,
-        )
-
-        # ─── Step 5: Generate response ───
-        try:
-            generation_result = await self._generate(
-                rag_query,
-                context,
-                generator=generator,
-                template=template,
-                variables=variables,
-            )
-        except Exception as e:
-            logger.error(
-                "Generation failed",
-                mode=rag_query.mode.value,
-                anonymizer_used=anonymized,
-                llm_route=llm_route.value,
-                session_token=self._mask_session_token(deanonymize_session_id),
-                error=str(e),
-            )
-            if rag_query.mode == QueryMode.QA:
-                fallback_answer = "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
-                generation_result = GenerationResult(
-                    text=fallback_answer,
-                    model=self.generator.model if self.generator else "unknown",
-                    template_used="fallback_unavailable",
-                )
-                logger.warning(
-                    "RAG query returned fallback answer",
-                    mode=rag_query.mode.value,
-                    anonymizer_used=anonymized,
-                    llm_route=llm_route.value,
-                    session_token=self._mask_session_token(deanonymize_session_id),
-                )
-                return RAGResponse(
-                    answer=fallback_answer,
-                    sources=sources,
-                    mode=rag_query.mode,
-                    generation_result=generation_result,
-                    llm_route=llm_route,
-                    anonymized=anonymized,
-                )
-            raise
-
-        try:
-            generation_result = await self._extend_answer_if_needed(
-                rag_query,
-                generator=generator,
-                context=context,
-                variables=variables,
-                generation_result=generation_result,
-            )
-        except Exception as e:
-            logger.warning(
-                "Answer extension failed, returning initial generation",
-                mode=rag_query.mode.value,
-                llm_route=llm_route.value,
-                error=str(e),
-                target_id=rag_query.external_target_id,
-                target_provider=rag_query.external_target_provider,
-            )
-
-        generation_result = replace(
-            generation_result,
-            text=self._clean_final_answer_text(generation_result.text),
-        )
-
-        if deanonymize_session_id:
-            generation_result = replace(
-                generation_result,
-                text=await self._deanonymize_text(
-                    generation_result.text,
-                    deanonymize_session_id,
-                ),
-            )
-
-        logger.info(
-            "RAG query completed",
-            mode=rag_query.mode.value,
-            route_key=rag_query.route_key,
-            tender_id=rag_query.tender_id,
-            anonymizer_used=anonymized,
-            llm_route=llm_route.value,
-            session_token=self._mask_session_token(deanonymize_session_id),
-            source_count=len(sources),
-            answer_len=len(generation_result.text),
-            target_id=rag_query.external_target_id,
-            target_provider=rag_query.external_target_provider,
-        )
-        return RAGResponse(
-            answer=generation_result.text,
-            sources=sources,
-            mode=rag_query.mode,
-            generation_result=generation_result,
-            llm_route=llm_route,
-            anonymized=anonymized,
-        )
-
-    async def query_stream(self, rag_query: RAGQuery) -> AsyncIterator[str]:
-        """
-        Stream the RAG pipeline response token by token.
-
-        Retrieval + fusion + re-ranking happen first, then generation is streamed.
-        """
-        await self.ensure_initialized()
-        retrieved = await self._retrieve_context_and_sources(rag_query)
-        context = retrieved.context
-        length_target = self._extract_requested_length_target(rag_query.text)
-        stream_max_tokens = self._generation_pass_token_budget(length_target)
-
-        # Determine template and variables
-        template, variables = self._resolve_template(rag_query, context)
-        (
-            generator,
-            stream_variables,
-            llm_route,
-            anonymized,
-            deanonymize_session_id,
-            _anonymizer_enabled,
-        ) = await self._prepare_generation_route(rag_query, variables)
-
-        if llm_route == LLMRoute.EXTERNAL_ANONYMIZED and deanonymize_session_id:
-            logger.info(
-                "RAG stream buffered for deanonymization",
-                route_key=rag_query.route_key,
-                tender_id=rag_query.tender_id,
-                llm_route=llm_route.value,
-                target_id=rag_query.external_target_id,
-                target_provider=rag_query.external_target_provider,
-                session_token=self._mask_session_token(deanonymize_session_id),
-            )
-            buffered_tokens: list[str] = []
-            async for token in generator.generate_stream(
-                template=template,
-                variables=stream_variables,
-                temperature=rag_query.temperature,
-                max_tokens=stream_max_tokens,
-            ):
-                buffered_tokens.append(token)
-            restored = await self._deanonymize_text("".join(buffered_tokens), deanonymize_session_id)
-            if restored:
-                yield restored
-            return
-
-        async for token in generator.generate_stream(
-            template=template,
-            variables=stream_variables,
-            temperature=rag_query.temperature,
-            max_tokens=stream_max_tokens,
-        ):
-            yield token
-
     async def _retrieve_context_and_sources(
         self,
         rag_query: RAGQuery,
@@ -559,6 +392,320 @@ class HybridRAGEngine:
             context="\n\n---\n\n".join(context_texts),
             sources=sources,
         )
+
+    async def query(self, rag_query: RAGQuery) -> RAGResponse:
+        """
+        Execute the full HybridRAG pipeline.
+
+        Args:
+            rag_query: The query with mode, filters, and additional context.
+
+        Returns:
+            RAGResponse with the generated answer and source references.
+        """
+        await self.ensure_initialized()
+
+        logger.info(
+            "RAG query started",
+            mode=rag_query.mode.value,
+            query_len=len(rag_query.text),
+        )
+        retrieved = await self._retrieve_context_and_sources(rag_query)
+        context = retrieved.context
+        sources = retrieved.sources
+
+        # ─── Step 4: Search-only mode ───
+        if rag_query.mode == QueryMode.SEARCH:
+            return RAGResponse(
+                answer="",
+                sources=sources,
+                mode=rag_query.mode,
+                llm_route=None,
+                anonymized=False,
+            )
+
+        template, variables = self._resolve_template(rag_query, context)
+        (
+            generator,
+            variables,
+            llm_route,
+            anonymized,
+            deanonymize_session_id,
+            anonymizer_enabled,
+        ) = await self._prepare_generation_route(rag_query, variables)
+        logger.info(
+            "RAG route selected",
+            mode=rag_query.mode.value,
+            route_key=rag_query.route_key,
+            tender_id=rag_query.tender_id,
+            anonymizer_enabled=anonymizer_enabled,
+            anonymizer_used=anonymized,
+            llm_route=llm_route.value,
+            session_token=self._mask_session_token(deanonymize_session_id),
+            target_id=rag_query.external_target_id,
+            target_provider=rag_query.external_target_provider,
+        )
+
+        fitted_context = self._fit_context_for_generator(context, generator=generator)
+        if fitted_context != context:
+            context = fitted_context
+            variables = {**variables, "context": fitted_context}
+
+        # ─── Step 5: Generate response ───
+        try:
+            generation_result = await self._generate(
+                rag_query,
+                context,
+                generator=generator,
+                template=template,
+                variables=variables,
+            )
+        except Exception as e:
+            logger.error(
+                "Generation failed",
+                mode=rag_query.mode.value,
+                anonymizer_used=anonymized,
+                llm_route=llm_route.value,
+                session_token=self._mask_session_token(deanonymize_session_id),
+                error=str(e),
+            )
+            if rag_query.mode == QueryMode.QA:
+                fallback_answer = "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
+                generation_result = GenerationResult(
+                    text=fallback_answer,
+                    model=self.generator.model if self.generator else "unknown",
+                    template_used="fallback_unavailable",
+                )
+                logger.warning(
+                    "RAG query returned fallback answer",
+                    mode=rag_query.mode.value,
+                    anonymizer_used=anonymized,
+                    llm_route=llm_route.value,
+                    session_token=self._mask_session_token(deanonymize_session_id),
+                )
+                return RAGResponse(
+                    answer=fallback_answer,
+                    sources=sources,
+                    mode=rag_query.mode,
+                    generation_result=generation_result,
+                    llm_route=llm_route,
+                    anonymized=anonymized,
+                )
+            raise
+
+        try:
+            generation_result = await self._extend_answer_if_needed(
+                rag_query,
+                generator=generator,
+                context=context,
+                variables=variables,
+                generation_result=generation_result,
+            )
+        except Exception as e:
+            logger.warning(
+                "Answer extension failed, returning initial generation",
+                mode=rag_query.mode.value,
+                llm_route=llm_route.value,
+                error=str(e),
+                target_id=rag_query.external_target_id,
+                target_provider=rag_query.external_target_provider,
+            )
+
+        try:
+            trailing_completion = await self._complete_trailing_sentence_if_needed(
+                rag_query,
+                generator=generator,
+                context=context,
+                variables=variables,
+                current_text=generation_result.text,
+            )
+        except Exception as e:
+            logger.warning(
+                "Trailing sentence completion failed, returning current answer",
+                mode=rag_query.mode.value,
+                llm_route=llm_route.value,
+                error=str(e),
+            )
+            trailing_completion = None
+
+        if trailing_completion:
+            generation_result = replace(
+                generation_result,
+                text=self._merge_completion_suffix(
+                    generation_result.text,
+                    trailing_completion.text,
+                ),
+                completion_tokens=(
+                    (generation_result.completion_tokens or 0)
+                    + (trailing_completion.completion_tokens or 0)
+                ) or generation_result.completion_tokens,
+            )
+
+        generation_result = replace(
+            generation_result,
+            text=self._clean_final_answer_text(generation_result.text),
+        )
+
+        if deanonymize_session_id:
+            generation_result = replace(
+                generation_result,
+                text=await self._deanonymize_text(
+                    generation_result.text,
+                    deanonymize_session_id,
+                ),
+            )
+
+        logger.info(
+            "RAG query completed",
+            mode=rag_query.mode.value,
+            route_key=rag_query.route_key,
+            tender_id=rag_query.tender_id,
+            anonymizer_used=anonymized,
+            llm_route=llm_route.value,
+            session_token=self._mask_session_token(deanonymize_session_id),
+            source_count=len(sources),
+            answer_len=len(generation_result.text),
+            target_id=rag_query.external_target_id,
+            target_provider=rag_query.external_target_provider,
+        )
+        return RAGResponse(
+            answer=generation_result.text,
+            sources=sources,
+            mode=rag_query.mode,
+            generation_result=generation_result,
+            llm_route=llm_route,
+            anonymized=anonymized,
+        )
+
+    async def query_stream(self, rag_query: RAGQuery) -> AsyncIterator[str]:
+        """
+        Stream the RAG pipeline response token by token.
+
+        Retrieval + fusion + re-ranking happen first, then generation is streamed.
+        """
+        await self.ensure_initialized()
+        retrieved = await self._retrieve_context_and_sources(rag_query)
+        context = retrieved.context
+        length_target = self._extract_requested_length_target(rag_query.text)
+
+        # Determine template and variables
+        template, variables = self._resolve_template(rag_query, context)
+        (
+            generator,
+            stream_variables,
+            llm_route,
+            anonymized,
+            deanonymize_session_id,
+            _anonymizer_enabled,
+        ) = await self._prepare_generation_route(rag_query, variables)
+
+        fitted_context = self._fit_context_for_generator(context, generator=generator)
+        if fitted_context != context:
+            context = fitted_context
+            stream_variables = {**stream_variables, "context": fitted_context}
+
+        target_goal_words = None
+        if rag_query.mode == QueryMode.QA and length_target:
+            target_goal_words = (
+                length_target.target_words
+                if self._supports_large_long_form_generation(generator)
+                else self._minimum_acceptable_word_count(
+                    length_target.target_words,
+                    approximate=length_target.approximate,
+                )
+            )
+
+        current_text = ""
+        active_template = template
+        active_variables = stream_variables
+        pass_attempts = (
+            self._continuation_attempt_budget(length_target.target_words)
+            if rag_query.mode == QueryMode.QA and length_target
+            else 1
+        )
+
+        for attempt in range(1, pass_attempts + 1):
+            max_tokens = self._generation_pass_token_budget(
+                length_target,
+                generator=generator,
+                current_words=self._count_words(current_text),
+            )
+
+            buffered_tokens: list[str] = []
+            if deanonymize_session_id:
+                logger.info(
+                    "RAG stream buffered for deanonymization",
+                    route_key=rag_query.route_key,
+                    tender_id=rag_query.tender_id,
+                    llm_route=llm_route.value,
+                    target_id=rag_query.external_target_id,
+                    target_provider=rag_query.external_target_provider,
+                    session_token=self._mask_session_token(deanonymize_session_id),
+                    attempt=attempt,
+                    max_tokens=max_tokens,
+                )
+
+            if attempt > 1 and current_text:
+                yield "\n\n"
+
+            async for token in generator.generate_stream(
+                template=active_template,
+                variables=active_variables,
+                temperature=rag_query.temperature,
+                max_tokens=max_tokens,
+            ):
+                buffered_tokens.append(token)
+                if not deanonymize_session_id:
+                    yield token
+
+            pass_text = self._sanitize_continuation_text(current_text, "".join(buffered_tokens))
+            if not pass_text:
+                break
+
+            if deanonymize_session_id:
+                restored = await self._deanonymize_text(pass_text, deanonymize_session_id)
+                if restored:
+                    yield restored
+
+            current_text = f"{current_text}\n\n{pass_text}".strip() if current_text else pass_text
+
+            if not (rag_query.mode == QueryMode.QA and length_target and target_goal_words):
+                break
+
+            current_words = self._count_words(current_text)
+            if current_words >= target_goal_words:
+                break
+
+            active_template = QA_CONTINUATION_PROMPT
+            active_variables = {
+                "query": stream_variables.get(
+                    "query",
+                    self._query_text_without_length_request(rag_query.text),
+                ),
+                "context": stream_variables.get("context", context),
+                "current_answer_tail": self._continuation_tail(current_text),
+                "target_words": length_target.target_words,
+            }
+
+        trailing_completion = await self._complete_trailing_sentence_if_needed(
+            rag_query,
+            generator=generator,
+            context=context,
+            variables=(
+                active_variables
+                if current_text and active_template == QA_CONTINUATION_PROMPT
+                else stream_variables
+            ),
+            current_text=current_text,
+        )
+        if trailing_completion:
+            completion_chunk = self._merge_completion_suffix("", trailing_completion.text)
+            if deanonymize_session_id:
+                restored = await self._deanonymize_text(completion_chunk, deanonymize_session_id)
+                if restored:
+                    yield restored
+            else:
+                yield completion_chunk
 
     def _has_external_llm(self, rag_query: RAGQuery | None = None) -> bool:
         if rag_query and rag_query.external_target_url:
@@ -917,13 +1064,13 @@ class HybridRAGEngine:
             template=template,
             variables=variables,
             temperature=rag_query.temperature,
-            max_tokens=self._generation_pass_token_budget(length_target),
+            max_tokens=self._generation_pass_token_budget(
+                length_target,
+                generator=active_generator,
+            ),
         )
 
-    def _extract_requested_length_target(
-        self,
-        query_text: str,
-    ) -> ResponseLengthTarget | None:
+    def _extract_requested_length_target(self, query_text: str) -> ResponseLengthTarget | None:
         normalized_query = query_text or ""
 
         word_match = WORD_COUNT_REQUEST_RE.search(normalized_query)
@@ -950,32 +1097,11 @@ class HybridRAGEngine:
                 return ResponseLengthTarget(
                     requested_value=value,
                     requested_unit="lines",
-                    target_words=max(50, value * APPROX_WORDS_PER_LINE),
+                    target_words=max(200, value * APPROX_WORDS_PER_LINE),
                     approximate=True,
                 )
 
         return None
-
-    def _extract_requested_word_count(self, query_text: str) -> int | None:
-        length_target = self._extract_requested_length_target(query_text)
-        return length_target.target_words if length_target else None
-
-    def _length_target_requested_label(self, length_target: ResponseLengthTarget) -> str:
-        if length_target.requested_unit == "lines":
-            return f"{length_target.requested_value} righe"
-        return f"{length_target.requested_value} parole"
-
-    def _length_target_instruction(self, length_target: ResponseLengthTarget) -> str:
-        if length_target.requested_unit == "lines":
-            return (
-                "Continua finche la risposta diventa il piu estesa e dettagliata possibile, "
-                f"avvicinandoti al target di circa {length_target.requested_value} righe "
-                f"(equivalenti a circa {length_target.target_words} parole)."
-            )
-        return (
-            "Continua fino a raggiungere complessivamente circa "
-            f"{length_target.target_words} parole."
-        )
 
     def _query_text_without_length_request(self, query_text: str) -> str:
         cleaned = WORD_COUNT_REQUEST_RE.sub("", query_text or "", count=1)
@@ -983,29 +1109,25 @@ class HybridRAGEngine:
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;:-")
         return cleaned or (query_text or "").strip()
 
+    def _extract_requested_word_count(self, query_text: str) -> int | None:
+        length_target = self._extract_requested_length_target(query_text)
+        if not length_target:
+            return None
+        return length_target.target_words
+
     def _count_words(self, text: str) -> int:
         return len(WORD_RE.findall(text or ""))
 
-    def _minimum_acceptable_word_count(
-        self,
-        target_words: int,
-        *,
-        approximate: bool = False,
-    ) -> int:
+    def _minimum_acceptable_word_count(self, target_words: int, *, approximate: bool = False) -> int:
         if approximate:
             if target_words >= 4000:
-                return max(800, int(target_words * 0.1))
+                return max(1200, int(target_words * 0.2))
             if target_words >= 1500:
-                return max(600, int(target_words * 0.25))
-            return max(160, int(target_words * 0.6))
+                return max(700, int(target_words * 0.35))
+            return max(240, int(target_words * 0.6))
         if target_words >= 400:
             return max(200, int(target_words * 0.95))
         return max(80, int(target_words * 0.85))
-
-    def _continuation_attempt_budget(self, target_words: int) -> int:
-        if target_words <= 0:
-            return 0
-        return max(3, min(8, math.ceil(target_words / 1200)))
 
     def _completion_token_budget_for_words(self, target_words: int | None) -> int | None:
         if not target_words:
@@ -1026,10 +1148,20 @@ class HybridRAGEngine:
 
         return min(estimated_tokens, 4096)
 
+    def _supports_large_long_form_generation(self, generator: Generator) -> bool:
+        provider = (getattr(generator, "provider", "llama") or "llama").strip().lower()
+        return provider in {"openrouter", "openai", "anthropic"}
+
+    def _continuation_attempt_budget(self, target_words: int) -> int:
+        if target_words <= 0:
+            return 0
+        return max(3, min(8, math.ceil(target_words / 1200)))
+
     def _generation_pass_token_budget(
         self,
         length_target: ResponseLengthTarget | None,
         *,
+        generator: Generator,
         current_words: int = 0,
     ) -> int | None:
         if not length_target:
@@ -1040,8 +1172,11 @@ class HybridRAGEngine:
         if not total_budget:
             return None
 
+        if self._supports_large_long_form_generation(generator):
+            return total_budget
+
         if length_target.target_words >= 500 or length_target.approximate:
-            return min(total_budget, LONG_FORM_PASS_TOKEN_CAP)
+            return min(total_budget, LONG_FORM_INTERNAL_PASS_TOKEN_CAP)
 
         return total_budget
 
@@ -1051,6 +1186,124 @@ class HybridRAGEngine:
             return normalized
         return normalized[-limit:].lstrip()
 
+    def _normalize_duplicate_block(self, text: str) -> str:
+        normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+        return normalized.strip(" ,.;:-")
+
+    def _strip_prompt_leakage(self, text: str) -> str:
+        cleaned_lines: list[str] = []
+        for line in (text or "").splitlines():
+            if PROMPT_LEAKAGE_HEADING_RE.match(line.strip()):
+                break
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
+
+    def _strip_continuation_overlap(self, base_text: str, continuation_text: str) -> str:
+        base_tail = self._continuation_tail(base_text, limit=2400)
+        continuation = (continuation_text or "").lstrip()
+        if not base_tail or not continuation:
+            return continuation
+
+        max_overlap = min(len(base_tail), len(continuation), 800)
+        for overlap in range(max_overlap, 59, -1):
+            if base_tail[-overlap:] == continuation[:overlap]:
+                return continuation[overlap:].lstrip()
+
+        return continuation
+
+    def _remove_redundant_continuation_blocks(self, base_text: str, continuation_text: str) -> str:
+        recent_blocks = [
+            self._normalize_duplicate_block(block)
+            for block in re.split(r"\n\s*\n", self._continuation_tail(base_text, limit=3200))
+            if self._normalize_duplicate_block(block)
+        ]
+
+        kept_blocks: list[str] = []
+        for block in re.split(r"\n\s*\n", (continuation_text or "").strip()):
+            stripped = block.strip()
+            normalized = self._normalize_duplicate_block(stripped)
+            if not normalized:
+                continue
+
+            duplicate = False
+            for existing in recent_blocks:
+                if (
+                    normalized == existing
+                    or normalized in existing
+                    or existing in normalized
+                    or SequenceMatcher(None, normalized, existing).ratio() >= 0.92
+                ):
+                    duplicate = True
+                    break
+
+            if duplicate:
+                continue
+
+            kept_blocks.append(stripped)
+            recent_blocks.append(normalized)
+
+        return "\n\n".join(kept_blocks).strip()
+
+    def _remove_length_meta_blocks(self, text: str) -> str:
+        kept_blocks: list[str] = []
+        for block in re.split(r"\n\s*\n", (text or "").strip()):
+            stripped = block.strip()
+            if not stripped:
+                continue
+            if LENGTH_META_PARAGRAPH_RE.search(stripped):
+                continue
+            kept_blocks.append(stripped)
+        return "\n\n".join(kept_blocks).strip()
+
+    def _deduplicate_repeated_paragraphs(self, text: str) -> str:
+        return self._remove_redundant_continuation_blocks("", text)
+
+    def _sanitize_continuation_text(self, base_text: str, continuation_text: str) -> str:
+        cleaned = self._clean_continuation_text(continuation_text)
+        cleaned = self._strip_prompt_leakage(cleaned)
+        cleaned = self._remove_length_meta_blocks(cleaned)
+        cleaned = self._strip_continuation_overlap(base_text, cleaned)
+        cleaned = self._remove_redundant_continuation_blocks(base_text, cleaned)
+        return cleaned.strip()
+
+    def _query_requests_math_rendering(self, query_text: str) -> bool:
+        return bool(MATH_RENDERING_REQUEST_RE.search(query_text or ""))
+
+    def _fit_context_for_generator(
+        self,
+        context: str,
+        *,
+        generator: Generator,
+    ) -> str:
+        if self._supports_large_long_form_generation(generator):
+            return context
+
+        normalized = (context or "").strip()
+        if len(normalized) <= LOCAL_CONTEXT_CHAR_BUDGET:
+            return normalized
+
+        parts = [part.strip() for part in normalized.split("\n\n---\n\n") if part.strip()]
+        if not parts:
+            return normalized[:LOCAL_CONTEXT_CHAR_BUDGET].rstrip()
+
+        kept_parts: list[str] = []
+        current_len = 0
+        separator_len = len("\n\n---\n\n")
+
+        for part in parts:
+            additional = len(part) if not kept_parts else separator_len + len(part)
+            if current_len + additional > LOCAL_CONTEXT_CHAR_BUDGET:
+                remaining = LOCAL_CONTEXT_CHAR_BUDGET - current_len
+                if not kept_parts and remaining > 120:
+                    kept_parts.append(part[:remaining].rstrip())
+                break
+
+            kept_parts.append(part)
+            current_len += additional
+
+        fitted = "\n\n---\n\n".join(kept_parts).strip()
+        return fitted or normalized[:LOCAL_CONTEXT_CHAR_BUDGET].rstrip()
+
     def _clean_continuation_text(self, text: str) -> str:
         lines = (text or "").strip().splitlines()
         cleaned_lines: list[str] = []
@@ -1058,11 +1311,15 @@ class HybridRAGEngine:
 
         for line in lines:
             stripped = line.strip()
+            if PROMPT_LEAKAGE_HEADING_RE.match(stripped):
+                break
             if skipping_meta and not stripped:
                 continue
             if skipping_meta and CONTINUATION_HEADING_RE.match(stripped):
                 continue
             if skipping_meta and stripped.lower().startswith("ecco la continuazione"):
+                continue
+            if skipping_meta and stripped.lower().startswith("continuo la risposta"):
                 continue
             skipping_meta = False
             cleaned_lines.append(line)
@@ -1070,12 +1327,16 @@ class HybridRAGEngine:
         return "\n".join(cleaned_lines).strip()
 
     def _clean_final_answer_text(self, text: str) -> str:
+        text = self._strip_prompt_leakage(text)
+        text = self._remove_length_meta_blocks(text)
+        text = self._deduplicate_repeated_paragraphs(text)
         lines = [
             line
             for line in (text or "").strip().splitlines()
             if not CONTINUATION_HEADING_RE.match(line.strip())
+            and not PROMPT_LEAKAGE_HEADING_RE.match(line.strip())
         ]
-        terminal_chars = {".", "!", "?", ":", ";", '"', "'", ")", "]", "}"}
+        terminal_chars = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
         while lines:
             stripped = lines[-1].strip()
             if not stripped:
@@ -1098,11 +1359,85 @@ class HybridRAGEngine:
 
         return "\n".join(lines).strip()
 
+    def _needs_sentence_completion(self, text: str) -> bool:
+        normalized = (text or "").rstrip()
+        if not normalized:
+            return False
+
+        last_line = normalized.splitlines()[-1].strip()
+        if not last_line:
+            return False
+        if CONTINUATION_HEADING_RE.match(last_line):
+            return False
+        if last_line.startswith(("#", "-", "*", "$")):
+            return False
+        if last_line[-1] in {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}:
+            return False
+
+        return len(last_line.split()) >= 3
+
+    def _clean_sentence_completion_text(self, text: str) -> str:
+        cleaned = self._clean_continuation_text(text).strip()
+        cleaned = cleaned.lstrip(" ,;:-")
+        if cleaned and cleaned[-1] not in {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}:
+            cleaned = f"{cleaned}."
+        return cleaned
+
+    def _merge_completion_suffix(self, base_text: str, suffix: str) -> str:
+        base = (base_text or "").rstrip()
+        extra = (suffix or "").lstrip()
+        if not base:
+            return extra
+        if not extra:
+            return base
+
+        if base.endswith((" ", "\n", "\t", "-", "/", "(", "[", "{", '"', "'")):
+            return f"{base}{extra}"
+        if re.match(r"^[,.;:!?)}\]»]", extra):
+            return f"{base}{extra}"
+        return f"{base} {extra}"
+
+    async def _complete_trailing_sentence_if_needed(
+        self,
+        rag_query: RAGQuery,
+        *,
+        generator: Generator,
+        context: str,
+        variables: dict[str, Any],
+        current_text: str,
+    ) -> GenerationResult | None:
+        if rag_query.mode != QueryMode.QA or not self._needs_sentence_completion(current_text):
+            return None
+
+        logger.info(
+            "Completing trailing sentence after long-form generation",
+            mode=rag_query.mode.value,
+            current_words=self._count_words(current_text),
+        )
+
+        completion_result = await generator.generate(
+            template=QA_SENTENCE_CLOSURE_PROMPT,
+            variables={
+                "query": variables.get("query", self._query_text_without_length_request(rag_query.text)),
+                "context": variables.get("context", context),
+                "current_answer_tail": self._continuation_tail(current_text, limit=1200),
+            },
+            temperature=min(rag_query.temperature, 0.2),
+            max_tokens=96,
+        )
+
+        cleaned_text = self._clean_sentence_completion_text(completion_result.text)
+        if not cleaned_text:
+            return None
+
+        return replace(completion_result, text=cleaned_text)
+
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
         length_target = self._extract_requested_length_target(rag_query.text)
         constraints = [
             "Rispondi direttamente alla domanda dell'utente senza preamboli meta.",
-            "Non limitarti a contare o commentare la lunghezza della tua risposta.",
+            "Non limitarti a contare o commentare il numero di parole della tua risposta.",
+            "Se percepisci di essere vicino al limite di output, chiudi sempre la frase o il concetto in corso prima di terminare.",
         ]
 
         if length_target:
@@ -1114,24 +1449,30 @@ class HybridRAGEngine:
                 length_target.target_words + 100,
                 int(length_target.target_words * 1.1),
             )
-            constraints.append(
-                f"L'utente ha richiesto circa {self._length_target_requested_label(length_target)}."
+            requested_label = (
+                f"{length_target.requested_value} righe"
+                if length_target.requested_unit == "lines"
+                else f"{length_target.requested_value} parole"
             )
+            constraints.extend([
+                f"L'utente ha richiesto circa {requested_label}.",
+                f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
+                f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
+                "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
+            ])
             if length_target.requested_unit == "lines":
-                constraints.extend([
-                    f"Tratta questo obiettivo come una risposta molto estesa, equivalente a circa {length_target.target_words} parole.",
-                    "Non discutere la fattibilita del numero di righe richiesto e non scusarti per la lunghezza: rispondi subito nel merito.",
-                    f"Scrivi una risposta completa di almeno {min_words} parole circa, usando tutto lo spazio disponibile prima di fermarti.",
-                    "Organizza la spiegazione in sezioni sostanziali, esempi e passaggi logici, senza riempitivi o ripetizioni.",
-                ])
-            else:
-                constraints.extend([
-                    f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
-                    f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
-                    "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
-                ])
+                constraints.append(
+                    "Interpreta la richiesta in righe come una risposta molto estesa e dettagliata, senza discutere la fattibilita del numero richiesto."
+                )
         else:
             constraints.append("Mantieni la risposta proporzionata alla richiesta.")
+
+        if self._query_requests_math_rendering(rag_query.text):
+            constraints.extend([
+                "Quando riporti formule o simboli matematici, riscrivili in notazione matematica leggibile e coerente.",
+                "Non copiare frammenti OCR corrotti, pseudo-LaTeX incompleto o formule palesemente spezzate dal contesto.",
+                "Se il contesto contiene una formula danneggiata, spiega il significato matematico corretto invece di inventare simboli.",
+            ])
 
         return "\n".join(f"- {constraint}" for constraint in constraints)
 
@@ -1151,22 +1492,21 @@ class HybridRAGEngine:
         if not length_target:
             return generation_result
 
-        minimum_words = self._minimum_acceptable_word_count(
-            length_target.target_words,
-            approximate=length_target.approximate,
-        )
-        current_text = generation_result.text.strip()
-        current_words = self._count_words(current_text)
-        if length_target.approximate:
-            logger.info(
-                "Skipping iterative extension for approximate requested length",
-                requested_unit=length_target.requested_unit,
-                requested_value=length_target.requested_value,
-                target_words=length_target.target_words,
-                current_words=current_words,
+        goal_words = (
+            length_target.target_words
+            if self._supports_large_long_form_generation(generator)
+            else self._minimum_acceptable_word_count(
+                length_target.target_words,
+                approximate=length_target.approximate,
             )
-            return generation_result
-        if current_words >= minimum_words:
+        )
+        current_text = self._deduplicate_repeated_paragraphs(
+            self._strip_prompt_leakage(generation_result.text)
+        ).strip()
+        if current_text != generation_result.text:
+            generation_result = replace(generation_result, text=current_text)
+        current_words = self._count_words(current_text)
+        if current_words >= goal_words:
             return generation_result
 
         logger.info(
@@ -1175,11 +1515,11 @@ class HybridRAGEngine:
             requested_value=length_target.requested_value,
             target_words=length_target.target_words,
             current_words=current_words,
-            minimum_words=minimum_words,
+            goal_words=goal_words,
         )
 
         for attempt in range(1, self._continuation_attempt_budget(length_target.target_words) + 1):
-            remaining_words = max(length_target.target_words - current_words, 0)
+            remaining_words = max(goal_words - current_words, 0)
             if remaining_words <= 0:
                 break
 
@@ -1189,16 +1529,20 @@ class HybridRAGEngine:
                     "query": variables.get("query", rag_query.text),
                     "context": variables.get("context", context),
                     "current_answer_tail": self._continuation_tail(current_text),
-                    "length_instruction": self._length_target_instruction(length_target),
+                    "target_words": length_target.target_words,
                 },
                 temperature=rag_query.temperature,
                 max_tokens=self._generation_pass_token_budget(
                     length_target,
+                    generator=generator,
                     current_words=current_words,
                 ),
             )
 
-            continuation_text = self._clean_continuation_text(continuation_result.text)
+            continuation_text = self._sanitize_continuation_text(
+                current_text,
+                continuation_result.text,
+            )
             if not continuation_text:
                 break
 
@@ -1221,7 +1565,7 @@ class HybridRAGEngine:
                 ) or generation_result.completion_tokens,
             )
 
-            if current_words >= minimum_words:
+            if current_words >= goal_words:
                 break
 
         return generation_result
@@ -1267,7 +1611,7 @@ class HybridRAGEngine:
         else:
             return "general_qa", {
                 "context": context,
-                "query": self._query_text_without_length_request(rag_query.text),
+                "query": rag_query.text,
             }
 
     # ──────────────────────────────────────────────
