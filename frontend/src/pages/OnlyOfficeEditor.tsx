@@ -30,7 +30,11 @@ interface EditorConfig {
 
 const onlyOfficeScriptLoaders = new Map<string, Promise<void>>();
 
-function loadOnlyOfficeApiScript(onlyofficeApiUrl: string): Promise<void> {
+export function resetOnlyOfficeScriptLoadersForTest(): void {
+    onlyOfficeScriptLoaders.clear();
+}
+
+export function loadOnlyOfficeApiScript(onlyofficeApiUrl: string): Promise<void> {
     if (window.DocsAPI) {
         return Promise.resolve();
     }

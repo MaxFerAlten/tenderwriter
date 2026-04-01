@@ -13,6 +13,14 @@ import {
     Clock
 } from 'lucide-react';
 import { ragApi, type RAGResponse } from '../api/client';
+import {
+    createSearchResultRevealState,
+    finalizeSearchResults,
+    noteInitialAnswerPainted,
+    revealStagedSearchResults,
+    stageSearchResults,
+    type SearchResultRevealTransition,
+} from './searchResultReveal';
 
 interface DisplayResult {
     text: string;
@@ -79,10 +87,8 @@ export default function RAGSearch() {
     const answerFlushTimerRef = useRef<number | null>(null);
     const streamCompletedRef = useRef(false);
     const drainWaitersRef = useRef<Array<() => void>>([]);
-    const pendingResultsRef = useRef<DisplayResult[] | null>(null);
     const resultsRevealFrameRef = useRef<number | null>(null);
-    const initialAnswerPaintedRef = useRef(false);
-    const sourcesRevealedRef = useRef(false);
+    const resultsRevealStateRef = useRef(createSearchResultRevealState<DisplayResult>());
 
     useEffect(() => {
         loadHistory();
@@ -94,12 +100,11 @@ export default function RAGSearch() {
     }, []);
 
     useEffect(() => {
-        if (!answer || initialAnswerPaintedRef.current) {
+        if (!answer) {
             return;
         }
 
-        initialAnswerPaintedRef.current = true;
-        scheduleSourcesReveal();
+        applyResultRevealTransition(noteInitialAnswerPainted(resultsRevealStateRef.current));
     }, [answer]);
 
     const loadHistory = async () => {
@@ -130,18 +135,31 @@ export default function RAGSearch() {
         waiters.forEach((resolve) => resolve());
     };
 
-    const flushPendingResults = () => {
-        if (!pendingResultsRef.current) {
-            return;
+    const applyResultRevealTransition = (
+        transition: SearchResultRevealTransition<DisplayResult>
+    ) => {
+        resultsRevealStateRef.current = transition.nextState;
+
+        if (transition.revealedResults !== null) {
+            setResults(transition.revealedResults);
         }
 
-        sourcesRevealedRef.current = true;
-        setResults(pendingResultsRef.current);
-        pendingResultsRef.current = null;
+        if (transition.shouldScheduleReveal) {
+            scheduleSourcesReveal();
+        }
+    };
+
+    const flushPendingResults = () => {
+        applyResultRevealTransition(
+            revealStagedSearchResults(resultsRevealStateRef.current)
+        );
     };
 
     const scheduleSourcesReveal = () => {
-        if (!pendingResultsRef.current || resultsRevealFrameRef.current !== null) {
+        if (
+            !resultsRevealStateRef.current.pendingResults
+            || resultsRevealFrameRef.current !== null
+        ) {
             return;
         }
 
@@ -152,11 +170,9 @@ export default function RAGSearch() {
     };
 
     const stageRetrievedSources = (nextResults: DisplayResult[]) => {
-        pendingResultsRef.current = nextResults;
-
-        if (sourcesRevealedRef.current || initialAnswerPaintedRef.current) {
-            scheduleSourcesReveal();
-        }
+        applyResultRevealTransition(
+            stageSearchResults(resultsRevealStateRef.current, nextResults)
+        );
     };
 
     const cancelSourcesReveal = () => {
@@ -165,9 +181,7 @@ export default function RAGSearch() {
             resultsRevealFrameRef.current = null;
         }
 
-        pendingResultsRef.current = null;
-        initialAnswerPaintedRef.current = false;
-        sourcesRevealedRef.current = false;
+        resultsRevealStateRef.current = createSearchResultRevealState<DisplayResult>();
     };
 
     const scheduleAnswerFlush = () => {
@@ -293,14 +307,9 @@ export default function RAGSearch() {
             await waitForAnswerDrain();
             const sourceData = await sourcePromise;
             if (!controller.signal.aborted) {
-                if (!initialAnswerPaintedRef.current) {
-                    sourcesRevealedRef.current = true;
-                    pendingResultsRef.current = null;
-                    setResults(sourceData);
-                } else {
-                    stageRetrievedSources(sourceData);
-                    scheduleSourcesReveal();
-                }
+                applyResultRevealTransition(
+                    finalizeSearchResults(resultsRevealStateRef.current, sourceData)
+                );
             }
             await loadHistory();
         } catch (err) {
