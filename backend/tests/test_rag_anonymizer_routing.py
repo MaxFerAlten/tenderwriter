@@ -1,7 +1,7 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -433,6 +433,69 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "session-stream",
         )
 
+    async def test_query_stream_deanonymizes_external_route_incrementally(self) -> None:
+        engine = self._build_engine()
+        engine._anonymize_prompt_variables = AsyncMock(
+            return_value=(
+                {
+                    "context": "[PERSONA_1] coordina il progetto.",
+                    "query": "Descrivi il ruolo di [PERSONA_1].",
+                },
+                "session-stream",
+            )
+        )
+        engine._deanonymize_text = AsyncMock(
+            side_effect=lambda text, _session: text.replace("[PERSONA_1]", "Mario Rossi")
+        )
+
+        external_generator = Mock()
+
+        async def fake_generate_stream(**_kwargs):
+            for token in (
+                "[PERSONA_1] coordina il progetto e definisce le milestone principali. ",
+                "Gestisce il team operativo e valida i deliverable conclusivi.",
+            ):
+                yield token
+
+        external_generator.generate_stream = fake_generate_stream
+        engine._get_external_generator = Mock(return_value=external_generator)
+
+        chunks: list[str] = []
+        with patch("app.rag.engine.settings.anonymizer_enabled", True):
+            async for item in engine.query_stream(
+                RAGQuery(
+                    text="Descrivi il ruolo di Mario Rossi.",
+                    mode=QueryMode.QA,
+                    external_target_url="https://gateway.example.com/v1",
+                    external_target_model="gpt-tender",
+                )
+            ):
+                chunks.append(item)
+
+        self.assertEqual(
+            chunks,
+            [
+                "Mario Rossi coordina il progetto e definisce le milestone principali.",
+                " Gestisce il team operativo e valida i deliverable conclusivi.",
+            ],
+        )
+        self.assertEqual(
+            "".join(chunks),
+            "Mario Rossi coordina il progetto e definisce le milestone principali. Gestisce il team operativo e valida i deliverable conclusivi.",
+        )
+        engine._deanonymize_text.assert_has_awaits(
+            [
+                call(
+                    "[PERSONA_1] coordina il progetto e definisce le milestone principali.",
+                    "session-stream",
+                ),
+                call(
+                    " Gestisce il team operativo e valida i deliverable conclusivi.",
+                    "session-stream",
+                ),
+            ]
+        )
+
     async def test_query_stream_passes_large_budget_to_external_generator_for_line_requests(self) -> None:
         engine = self._build_engine()
         captured_calls: list[dict] = []
@@ -473,6 +536,56 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "parlami del problema di assegnamento",
         )
         self.assertEqual(captured_calls[1]["max_tokens"], 4096)
+
+    async def test_query_stream_does_not_inject_blank_block_between_attempts(self) -> None:
+        engine = self._build_engine()
+        engine._continuation_attempt_budget = Mock(return_value=2)
+        engine._complete_trailing_sentence_if_needed = AsyncMock(return_value=None)
+        engine._anonymize_prompt_variables = AsyncMock(
+            return_value=(
+                {
+                    "context": "[PERSONA_1] coordina il progetto.",
+                    "query": "Descrivi il ruolo di [PERSONA_1].",
+                },
+                "session-multipass",
+            )
+        )
+        engine._deanonymize_text = AsyncMock(
+            side_effect=lambda text, _session: text.replace("[PERSONA_1]", "Mario Rossi")
+        )
+
+        external_generator = Mock(provider="openrouter")
+        call_count = 0
+
+        async def fake_generate_stream(**_kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield "[PERSONA_1] coordina il progetto."
+            else:
+                yield "Gestisce il team operativo."
+
+        external_generator.generate_stream = fake_generate_stream
+        engine._get_external_generator = Mock(return_value=external_generator)
+
+        with patch("app.rag.engine.settings.anonymizer_enabled", True):
+            output = await self._collect_stream(
+                engine.query_stream(
+                    RAGQuery(
+                        text="Descrivi il ruolo di Mario Rossi in 1000 righe",
+                        mode=QueryMode.QA,
+                        external_target_url="https://gateway.example.com/v1",
+                        external_target_model="gpt-tender",
+                        external_target_provider="openrouter",
+                    )
+                )
+            )
+
+        self.assertEqual(
+            output,
+            "Mario Rossi coordina il progetto. Gestisce il team operativo.",
+        )
+        self.assertNotIn("\n\n", output)
 
     async def test_anonymizer_circuit_open_short_circuits_requests(self) -> None:
         engine = self._build_engine()

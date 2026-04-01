@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const keycloakMock = vi.hoisted(() => ({
+    getKeycloakToken: vi.fn(),
+}));
+
+vi.mock('../auth/keycloak', () => keycloakMock);
+
 import {
+    authApi,
     kpiAdminApi,
     observabilityApi,
     prefetchTenderChatContext,
@@ -46,6 +53,7 @@ describe('kpiAdminApi', () => {
     beforeEach(() => {
         storage.clear();
         fetchMock.mockReset();
+        keycloakMock.getKeycloakToken.mockReset();
         vi.stubGlobal('fetch', fetchMock);
         vi.stubGlobal('localStorage', localStorageMock);
     });
@@ -54,6 +62,68 @@ describe('kpiAdminApi', () => {
         resetTenderChatContextCacheForTest();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
+    });
+
+    it('refreshes the bearer token for keycloak sessions before JSON requests', async () => {
+        localStorageMock.setItem('token', 'stale-keycloak-token');
+        localStorageMock.setItem('auth_session_kind', 'keycloak');
+        keycloakMock.getKeycloakToken.mockResolvedValue('fresh-keycloak-token');
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ id: 1, email: 'admin@test.local', name: 'Admin', role: 'admin', auth_source: 'keycloak' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await authApi.me();
+
+        expect(response.auth_source).toBe('keycloak');
+        expect(keycloakMock.getKeycloakToken).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/auth/me',
+            expect.objectContaining({
+                method: 'GET',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer fresh-keycloak-token',
+                }),
+            })
+        );
+    });
+
+    it('retries once after a 401 when a keycloak token can be refreshed', async () => {
+        localStorageMock.setItem('token', 'expired-keycloak-token');
+        localStorageMock.setItem('auth_session_kind', 'keycloak');
+        keycloakMock.getKeycloakToken
+            .mockResolvedValueOnce('expired-keycloak-token')
+            .mockResolvedValueOnce('fresh-keycloak-token');
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ detail: 'Token expired' }), {
+                    status: 401,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ id: 1, email: 'admin@test.local', name: 'Admin', role: 'admin', auth_source: 'keycloak' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+
+        const response = await authApi.me();
+
+        expect(response.email).toBe('admin@test.local');
+        expect(keycloakMock.getKeycloakToken).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/auth/me',
+            expect.objectContaining({
+                method: 'GET',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer fresh-keycloak-token',
+                }),
+            })
+        );
     });
 
     it('queries portfolio overview through the admin KPI BFF', async () => {

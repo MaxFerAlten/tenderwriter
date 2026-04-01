@@ -9,6 +9,7 @@ import docker
 
 
 SAFE_CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+NGINX_DEFAULT_CONF_PATH = "/etc/nginx/conf.d/default.conf"
 
 
 class DockerUnavailableError(RuntimeError):
@@ -92,7 +93,10 @@ class DockerOpsService:
         nginx_available = True
         nginx_reason: str | None = None
         try:
-            client.containers.get(self.frontend_container)
+            frontend_container = client.containers.get(self.frontend_container)
+            nginx_available, nginx_reason = self._frontend_supports_nginx_hot_reload(
+                frontend_container
+            )
         except docker.errors.NotFound:
             nginx_available = False
             nginx_reason = f"Frontend container '{self.frontend_container}' not found"
@@ -110,6 +114,24 @@ class DockerOpsService:
             "reason": None,
             "nginx_hot_reload_reason": nginx_reason,
         }
+
+    def _frontend_supports_nginx_hot_reload(
+        self,
+        frontend_container: Any,
+    ) -> tuple[bool, str | None]:
+        try:
+            exit_code, _output = frontend_container.exec_run(
+                f"sh -c \"test -f {NGINX_DEFAULT_CONF_PATH}\""
+            )
+        except Exception as exc:
+            return False, f"Unable to inspect frontend nginx config: {exc}"
+
+        if exit_code == 0:
+            return True, None
+        return (
+            False,
+            "Frontend container is running without an Nginx config file; hot reload is unavailable in this mode.",
+        )
 
     def list_containers(self) -> list[dict[str, Any]]:
         client = self._get_client()
@@ -186,10 +208,16 @@ class DockerOpsService:
         except Exception as exc:
             raise DockerUnavailableError(f"Unable to reach Docker API: {exc}") from exc
 
+        nginx_available, nginx_reason = self._frontend_supports_nginx_hot_reload(
+            frontend_container
+        )
+        if not nginx_available:
+            raise NginxReloadError(nginx_reason or "Frontend Nginx hot reload is unavailable.")
+
         commands = [
-            f"sed -i -E 's/proxy_read_timeout [0-9]+;/proxy_read_timeout {read_timeout};/' /etc/nginx/conf.d/default.conf",
-            f"sed -i -E 's/proxy_connect_timeout [0-9]+;/proxy_connect_timeout {connect_timeout};/' /etc/nginx/conf.d/default.conf",
-            f"sed -i -E 's/proxy_send_timeout [0-9]+;/proxy_send_timeout {send_timeout};/' /etc/nginx/conf.d/default.conf",
+            f"sed -i -E 's/proxy_read_timeout [0-9]+;/proxy_read_timeout {read_timeout};/' {NGINX_DEFAULT_CONF_PATH}",
+            f"sed -i -E 's/proxy_connect_timeout [0-9]+;/proxy_connect_timeout {connect_timeout};/' {NGINX_DEFAULT_CONF_PATH}",
+            f"sed -i -E 's/proxy_send_timeout [0-9]+;/proxy_send_timeout {send_timeout};/' {NGINX_DEFAULT_CONF_PATH}",
             "nginx -s reload",
         ]
         full_command = "sh -c \"" + " && ".join(commands) + "\""

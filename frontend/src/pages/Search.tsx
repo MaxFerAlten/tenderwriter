@@ -79,14 +79,28 @@ export default function RAGSearch() {
     const answerFlushTimerRef = useRef<number | null>(null);
     const streamCompletedRef = useRef(false);
     const drainWaitersRef = useRef<Array<() => void>>([]);
+    const pendingResultsRef = useRef<DisplayResult[] | null>(null);
+    const resultsRevealFrameRef = useRef<number | null>(null);
+    const initialAnswerPaintedRef = useRef(false);
+    const sourcesRevealedRef = useRef(false);
 
     useEffect(() => {
         loadHistory();
         return () => {
             streamControllerRef.current?.abort();
             cancelAnswerFlush();
+            cancelSourcesReveal();
         };
     }, []);
+
+    useEffect(() => {
+        if (!answer || initialAnswerPaintedRef.current) {
+            return;
+        }
+
+        initialAnswerPaintedRef.current = true;
+        scheduleSourcesReveal();
+    }, [answer]);
 
     const loadHistory = async () => {
         try {
@@ -100,6 +114,7 @@ export default function RAGSearch() {
     const loadHistoricalItem = (item: HistoryItem) => {
         streamControllerRef.current?.abort();
         cancelAnswerFlush();
+        cancelSourcesReveal();
         setQuery(item.query);
         setAnswer(item.response);
         setResults([]);
@@ -113,6 +128,46 @@ export default function RAGSearch() {
         const waiters = [...drainWaitersRef.current];
         drainWaitersRef.current = [];
         waiters.forEach((resolve) => resolve());
+    };
+
+    const flushPendingResults = () => {
+        if (!pendingResultsRef.current) {
+            return;
+        }
+
+        sourcesRevealedRef.current = true;
+        setResults(pendingResultsRef.current);
+        pendingResultsRef.current = null;
+    };
+
+    const scheduleSourcesReveal = () => {
+        if (!pendingResultsRef.current || resultsRevealFrameRef.current !== null) {
+            return;
+        }
+
+        resultsRevealFrameRef.current = window.requestAnimationFrame(() => {
+            resultsRevealFrameRef.current = null;
+            flushPendingResults();
+        });
+    };
+
+    const stageRetrievedSources = (nextResults: DisplayResult[]) => {
+        pendingResultsRef.current = nextResults;
+
+        if (sourcesRevealedRef.current || initialAnswerPaintedRef.current) {
+            scheduleSourcesReveal();
+        }
+    };
+
+    const cancelSourcesReveal = () => {
+        if (resultsRevealFrameRef.current !== null) {
+            window.cancelAnimationFrame(resultsRevealFrameRef.current);
+            resultsRevealFrameRef.current = null;
+        }
+
+        pendingResultsRef.current = null;
+        initialAnswerPaintedRef.current = false;
+        sourcesRevealedRef.current = false;
     };
 
     const scheduleAnswerFlush = () => {
@@ -184,6 +239,7 @@ export default function RAGSearch() {
         streamControllerRef.current?.abort();
         streamControllerRef.current = null;
         cancelAnswerFlush();
+        cancelSourcesReveal();
         setIsSearching(false);
     };
 
@@ -191,6 +247,7 @@ export default function RAGSearch() {
         if (!query.trim()) return;
         streamControllerRef.current?.abort();
         cancelAnswerFlush();
+        cancelSourcesReveal();
         const controller = new AbortController();
         streamControllerRef.current = controller;
 
@@ -213,6 +270,11 @@ export default function RAGSearch() {
                     metadata: s.metadata,
                 }))
             );
+            void sourcePromise.then((sourceData) => {
+                if (!controller.signal.aborted) {
+                    stageRetrievedSources(sourceData);
+                }
+            }).catch(() => undefined);
             void sourcePromise.catch(() => undefined);
 
             const streamPromise = ragApi.streamQuery({
@@ -230,14 +292,25 @@ export default function RAGSearch() {
             markAnswerStreamCompleted();
             await waitForAnswerDrain();
             const sourceData = await sourcePromise;
-            setResults(sourceData);
+            if (!controller.signal.aborted) {
+                if (!initialAnswerPaintedRef.current) {
+                    sourcesRevealedRef.current = true;
+                    pendingResultsRef.current = null;
+                    setResults(sourceData);
+                } else {
+                    stageRetrievedSources(sourceData);
+                    scheduleSourcesReveal();
+                }
+            }
             await loadHistory();
         } catch (err) {
             if (err instanceof DOMException && err.name === 'AbortError') {
                 cancelAnswerFlush();
+                cancelSourcesReveal();
                 return;
             }
             cancelAnswerFlush();
+            cancelSourcesReveal();
             controller.abort();
             const msg = err instanceof Error ? err.message : 'Search failed';
             setError(msg);
@@ -453,7 +526,7 @@ export default function RAGSearch() {
                         )}
 
                         {/* Source Documents */}
-                        {!isSearching && results.length > 0 && (
+                        {results.length > 0 && (
                             <>
                                 <h3 style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
                                     Retrieved Sources ({results.length})
@@ -508,7 +581,7 @@ export default function RAGSearch() {
                 )}
 
                 {/* Loading */}
-                {isSearching && !answer && (
+                {isSearching && !answer && results.length === 0 && (
                     <div className="loading-spinner" style={{ flexDirection: 'column', gap: '1rem' }}>
                         <div className="spinner" />
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>

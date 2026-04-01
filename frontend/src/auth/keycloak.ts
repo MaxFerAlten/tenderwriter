@@ -6,6 +6,7 @@
  */
 
 import Keycloak from 'keycloak-js';
+import { clearStoredAuthToken, setStoredAuthToken } from './storage';
 
 // Keycloak singleton — lazy initialized
 let _kc: Keycloak | null = null;
@@ -65,6 +66,7 @@ export async function initKeycloak(config?: Partial<KeycloakConfig>): Promise<bo
         });
 
         if (authenticated) {
+            _syncStoredToken(kc);
             // Schedule token refresh before expiry
             _scheduleTokenRefresh(kc);
         }
@@ -111,9 +113,10 @@ export async function getKeycloakToken(): Promise<string | null> {
     try {
         // Refresh if token expires within 30 seconds
         await kc.updateToken(30);
-        return kc.idToken || kc.token || null;
+        return _syncStoredToken(kc);
     } catch {
         console.warn('[keycloak] token refresh failed, redirecting to login');
+        clearStoredAuthToken();
         kc.login();
         return null;
     }
@@ -139,6 +142,14 @@ export function getKeycloakUserInfo(): { email: string; name: string } | null {
 
 let _refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+function _syncStoredToken(kc: Keycloak): string | null {
+    const token = kc.idToken || kc.token || null;
+    if (token) {
+        setStoredAuthToken(token);
+    }
+    return token;
+}
+
 function _scheduleTokenRefresh(kc: Keycloak): void {
     if (_refreshTimer) clearTimeout(_refreshTimer);
 
@@ -149,6 +160,7 @@ function _scheduleTokenRefresh(kc: Keycloak): void {
     _refreshTimer = setTimeout(async () => {
         try {
             await kc.updateToken(70);
+            _syncStoredToken(kc);
             _scheduleTokenRefresh(kc);
         } catch {
             console.warn('[keycloak] scheduled refresh failed');

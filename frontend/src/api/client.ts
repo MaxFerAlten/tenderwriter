@@ -3,6 +3,12 @@
  * Centralized HTTP client for backend communication.
  */
 
+import {
+    clearStoredAuthSession,
+    getStoredAuthToken,
+    getStoredSessionKind,
+} from '../auth/storage';
+
 const API_BASE = '/api';
 
 interface RequestOptions {
@@ -50,16 +56,75 @@ function extractSsePayload(rawEvent: string): string | null {
     return dataLines.join('\n');
 }
 
+async function tryRefreshKeycloakToken(): Promise<string | null> {
+    try {
+        const { getKeycloakToken } = await import('../auth/keycloak');
+        return await getKeycloakToken();
+    } catch {
+        return null;
+    }
+}
+
+async function resolveAuthToken(): Promise<string | null> {
+    const storedToken = getStoredAuthToken();
+    if (!storedToken) {
+        return null;
+    }
+    if (getStoredSessionKind() !== 'keycloak') {
+        return storedToken;
+    }
+    return (await tryRefreshKeycloakToken()) || storedToken;
+}
+
+async function fetchWithAuth(
+    path: string,
+    init: RequestInit,
+): Promise<Response> {
+    const token = await resolveAuthToken();
+    const baseHeaders = {
+        ...(init.headers as Record<string, string> | undefined),
+    };
+    const buildHeaders = (bearerToken: string | null) => ({
+        ...baseHeaders,
+        ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+    });
+
+    let response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers: buildHeaders(token),
+    });
+
+    if (response.status !== 401) {
+        return response;
+    }
+
+    const sessionKind = getStoredSessionKind();
+    if (!token || sessionKind === 'legacy') {
+        return response;
+    }
+
+    const refreshedToken = await tryRefreshKeycloakToken();
+    if (!refreshedToken) {
+        if (sessionKind === 'keycloak') {
+            clearStoredAuthSession();
+        }
+        return response;
+    }
+
+    response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers: buildHeaders(refreshedToken),
+    });
+    return response;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, headers = {} } = options;
-
-    const token = localStorage.getItem('token');
 
     const config: RequestInit = {
         method,
         headers: {
             'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...headers,
         },
     };
@@ -68,7 +133,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         config.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${API_BASE}${path}`, config);
+    const response = await fetchWithAuth(path, config);
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
@@ -87,13 +152,11 @@ async function streamRequest(
     body: unknown,
     options: StreamRequestOptions = {},
 ): Promise<void> {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetchWithAuth(path, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(body),
         signal: options.signal,
@@ -215,11 +278,11 @@ export const tenderApi = {
     uploadDocument: async (id: number, file: File) => {
         const formData = new FormData();
         formData.append('file', file);
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/tenders/${id}/import`, {
+        const token = await resolveAuthToken();
+        const response = await fetchWithAuth(`/tenders/${id}/import`, {
             method: 'POST',
             body: formData,
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
             // non settiamo il Content-Type qui, fetch lo fa in automatico con il boundary per multipart/form-data
         });
         if (!response.ok) {
@@ -267,48 +330,51 @@ export const chatApi = {
                 formData.append('text', params.text.trim());
             }
 
-            const token = localStorage.getItem('token');
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${API_BASE}/tenders/${tenderId}/chat/attachments`);
+            void resolveAuthToken().then((token) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `${API_BASE}/tenders/${tenderId}/chat/attachments`);
 
-            if (token) {
-                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-            }
+                if (token) {
+                    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                }
 
-            xhr.upload.onprogress = (event) => {
-                if (!params.onProgress || !event.lengthComputable) return;
-                const percent = Math.round((event.loaded / event.total) * 100);
-                params.onProgress(percent);
-            };
+                xhr.upload.onprogress = (event) => {
+                    if (!params.onProgress || !event.lengthComputable) return;
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    params.onProgress(percent);
+                };
 
-            xhr.onerror = () => reject(new Error('Attachment upload failed'));
+                xhr.onerror = () => reject(new Error('Attachment upload failed'));
 
-            xhr.onload = () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    try {
-                        resolve(JSON.parse(xhr.responseText) as ChatMessage);
-                    } catch {
-                        reject(new Error('Invalid attachment upload response'));
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            resolve(JSON.parse(xhr.responseText) as ChatMessage);
+                        } catch {
+                            reject(new Error('Invalid attachment upload response'));
+                        }
+                        return;
                     }
-                    return;
-                }
 
-                try {
-                    const err = JSON.parse(xhr.responseText);
-                    reject(new Error(err.detail || `HTTP ${xhr.status}`));
-                } catch {
-                    reject(new Error(`HTTP ${xhr.status}`));
-                }
-            };
+                    try {
+                        const err = JSON.parse(xhr.responseText);
+                        reject(new Error(err.detail || `HTTP ${xhr.status}`));
+                    } catch {
+                        reject(new Error(`HTTP ${xhr.status}`));
+                    }
+                };
 
-            xhr.send(formData);
+                xhr.send(formData);
+            }).catch((error: unknown) => {
+                reject(error instanceof Error ? error : new Error('Attachment upload failed'));
+            });
         });
     },
     downloadAttachment: async (tenderId: number, attachment: ChatAttachment) => {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/tenders/${tenderId}/chat/attachments/${attachment.id}/download`, {
+        const token = await resolveAuthToken();
+        const response = await fetchWithAuth(`/tenders/${tenderId}/chat/attachments/${attachment.id}/download`, {
             method: 'GET',
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
 
         if (!response.ok) {
@@ -327,10 +393,10 @@ export const chatApi = {
         window.URL.revokeObjectURL(url);
     },
     exportRetrospective: async (tenderId: number) => {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/tenders/${tenderId}/chat/retrospective/export`, {
+        const token = await resolveAuthToken();
+        const response = await fetchWithAuth(`/tenders/${tenderId}/chat/retrospective/export`, {
             method: 'GET',
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
 
         if (!response.ok) {

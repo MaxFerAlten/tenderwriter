@@ -8,6 +8,12 @@ import {
     getKeycloakUserInfo,
     type KeycloakConfig,
 } from '../auth/keycloak';
+import {
+    clearStoredAuthSession,
+    getStoredAuthToken,
+    setStoredAuthToken,
+    setStoredSessionKind,
+} from '../auth/storage';
 import { getAuthRuntimeConfig, type AuthMode, type AuthRuntimeConfig } from '../config/runtime';
 
 type SessionKind = 'legacy' | 'keycloak' | null;
@@ -38,10 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // ── Stored session: validate the token already present in localStorage ──
     const initStoredSession = useCallback(async (): Promise<SessionKind> => {
-        const token = localStorage.getItem('token');
+        const token = getStoredAuthToken();
         if (!token) {
             setUser(null);
             setSessionKind(null);
+            clearStoredAuthSession();
             return null;
         }
 
@@ -50,9 +57,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUser(userData);
             const resolvedKind = resolveSessionKind(userData);
             setSessionKind(resolvedKind);
+            if (resolvedKind) {
+                setStoredSessionKind(resolvedKind);
+            }
             return resolvedKind;
         } catch {
-            localStorage.removeItem('token');
+            clearStoredAuthSession();
             setUser(null);
             setSessionKind(null);
             return null;
@@ -72,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setKeycloakConfig(resolvedConfig);
 
         if (options?.clearLegacyToken) {
-            localStorage.removeItem('token');
+            clearStoredAuthSession();
             setUser(null);
             setSessionKind(null);
         }
@@ -85,12 +95,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             const token = await getKeycloakToken();
             if (!token) {
-                localStorage.removeItem('token');
+                clearStoredAuthSession();
                 setSessionKind(null);
                 return false;
             }
 
-            localStorage.setItem('token', token);
+            setStoredAuthToken(token);
             try {
                 const userData = await authApi.me();
                 setUser(userData);
@@ -112,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             setSessionKind('keycloak');
+            setStoredSessionKind('keycloak');
             return true;
         } catch (err) {
             console.error('[auth] keycloak init failed:', err);
@@ -167,7 +178,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // ── Legacy login (email/password) ──
     const login = useCallback((token: string, userData: User) => {
-        localStorage.setItem('token', token);
+        setStoredAuthToken(token);
+        setStoredSessionKind('legacy');
         setUser(userData);
         setSessionKind('legacy');
     }, []);
@@ -183,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Call server-side logout for audit logging
         try {
-            const token = localStorage.getItem('token');
+            const token = getStoredAuthToken();
             if (token) {
                 await fetch('/api/auth/logout', {
                     method: 'POST',
@@ -194,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Best-effort — don't block logout on server failure
         }
 
-        localStorage.removeItem('token');
+        clearStoredAuthSession();
         setUser(null);
         setSessionKind(null);
 
@@ -208,15 +220,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (authMode === 'keycloak' || sessionKind === 'keycloak') {
             const token = await getKeycloakToken();
             if (token) {
-                // Keep localStorage in sync for API client
-                localStorage.setItem('token', token);
+                setStoredAuthToken(token);
             } else {
-                localStorage.removeItem('token');
+                clearStoredAuthSession();
                 setSessionKind(null);
             }
             return token;
         }
-        return localStorage.getItem('token');
+        return getStoredAuthToken();
     }, [authMode, sessionKind]);
 
     return (

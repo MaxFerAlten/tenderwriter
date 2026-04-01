@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("OPS_AGENT_TOKEN", "ops-agent-token-123")
 
-from app.docker_ops import ContainerAccessError, DockerOpsService
+from app.docker_ops import ContainerAccessError, DockerOpsService, NginxReloadError
 from app.main import app
 
 
@@ -85,6 +85,33 @@ class DockerOpsServiceTests(unittest.TestCase):
         self.assertIn("proxy_read_timeout 30;", command)
         self.assertIn("proxy_connect_timeout 31;", command)
         self.assertIn("proxy_send_timeout 32;", command)
+
+    def test_capabilities_disable_nginx_hot_reload_when_conf_is_missing(self) -> None:
+        frontend = _FakeContainer(name="tw-frontend")
+        frontend.exec_run = Mock(return_value=(1, b""))
+        client = _FakeDockerClient({"tw-frontend": frontend})
+        service = DockerOpsService(allowed_prefix="tw-", frontend_container="tw-frontend", client=client)
+
+        result = service.capabilities()
+
+        self.assertTrue(result["available"])
+        self.assertFalse(result["nginx_hot_reload"])
+        self.assertIn("hot reload is unavailable", result["nginx_hot_reload_reason"])
+
+    def test_reload_frontend_raises_when_nginx_conf_is_missing(self) -> None:
+        frontend = _FakeContainer(name="tw-frontend")
+
+        def _exec_run(command: str):
+            if "test -f" in command:
+                return 1, b""
+            return 0, b""
+
+        frontend.exec_run = Mock(side_effect=_exec_run)
+        client = _FakeDockerClient({"tw-frontend": frontend})
+        service = DockerOpsService(allowed_prefix="tw-", frontend_container="tw-frontend", client=client)
+
+        with self.assertRaises(NginxReloadError):
+            service.reload_frontend_nginx(read_timeout=30, connect_timeout=31, send_timeout=32)
 
 
 class OpsAgentApiTests(unittest.TestCase):

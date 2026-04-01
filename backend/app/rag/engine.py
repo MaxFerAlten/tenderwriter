@@ -60,6 +60,8 @@ LENGTH_META_PARAGRAPH_RE = re.compile(
 APPROX_WORDS_PER_LINE = 8
 LONG_FORM_INTERNAL_PASS_TOKEN_CAP = 512
 LOCAL_CONTEXT_CHAR_BUDGET = 4500
+DEANONYMIZED_STREAM_FLUSH_CHARS = 96
+DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS = 220
 
 QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
 - Devi rispondere nella STESSA LINGUA della domanda dell'utente.
@@ -631,10 +633,12 @@ class HybridRAGEngine:
                 current_words=self._count_words(current_text),
             )
 
-            buffered_tokens: list[str] = []
+            raw_pass_text = ""
+            emitted_visible_text = current_text
+            deanonymized_flush_candidate = ""
             if deanonymize_session_id:
                 logger.info(
-                    "RAG stream buffered for deanonymization",
+                    "RAG stream incremental deanonymization enabled",
                     route_key=rag_query.route_key,
                     tender_id=rag_query.tender_id,
                     llm_route=llm_route.value,
@@ -645,29 +649,70 @@ class HybridRAGEngine:
                     max_tokens=max_tokens,
                 )
 
-            if attempt > 1 and current_text:
-                yield "\n\n"
-
+            first_token_in_attempt = True
             async for token in generator.generate_stream(
                 template=active_template,
                 variables=active_variables,
                 temperature=rag_query.temperature,
                 max_tokens=max_tokens,
             ):
-                buffered_tokens.append(token)
+                raw_pass_text += token
                 if not deanonymize_session_id:
-                    yield token
+                    if first_token_in_attempt and current_text:
+                        joined_token = self._merge_completion_suffix(current_text, token)
+                        token = self._stream_sanitized_delta(current_text, joined_token)
+                    if token:
+                        yield token
+                    first_token_in_attempt = False
+                    continue
 
-            pass_text = self._sanitize_continuation_text(current_text, "".join(buffered_tokens))
+                deanonymized_flush_candidate += token
+                if not self._should_flush_deanonymized_stream_chunk(
+                    deanonymized_flush_candidate
+                ):
+                    continue
+
+                visible_pass_text = self._sanitize_continuation_text(
+                    current_text,
+                    raw_pass_text,
+                )
+                visible_full_text = self._merge_completion_suffix(
+                    current_text,
+                    visible_pass_text,
+                )
+                visible_delta = self._stream_sanitized_delta(
+                    emitted_visible_text,
+                    visible_full_text,
+                )
+                if visible_delta:
+                    restored = await self._deanonymize_text(
+                        visible_delta,
+                        deanonymize_session_id,
+                    )
+                    if restored:
+                        yield restored
+                    emitted_visible_text = visible_full_text
+                deanonymized_flush_candidate = ""
+
+            pass_text = self._sanitize_continuation_text(current_text, raw_pass_text)
             if not pass_text:
                 break
 
+            merged_pass_text = self._merge_completion_suffix(current_text, pass_text)
             if deanonymize_session_id:
-                restored = await self._deanonymize_text(pass_text, deanonymize_session_id)
-                if restored:
-                    yield restored
+                visible_delta = self._stream_sanitized_delta(
+                    emitted_visible_text,
+                    merged_pass_text,
+                )
+                if visible_delta:
+                    restored = await self._deanonymize_text(
+                        visible_delta,
+                        deanonymize_session_id,
+                    )
+                    if restored:
+                        yield restored
 
-            current_text = f"{current_text}\n\n{pass_text}".strip() if current_text else pass_text
+            current_text = merged_pass_text
 
             if not (rag_query.mode == QueryMode.QA and length_target and target_goal_words):
                 break
@@ -716,6 +761,38 @@ class HybridRAGEngine:
         if not session_id:
             return None
         return f"{session_id[:8]}..."
+
+    def _should_flush_deanonymized_stream_chunk(self, text: str) -> bool:
+        stripped = (text or "").rstrip()
+        if not stripped:
+            return False
+        if self._has_unclosed_placeholder(stripped):
+            return False
+        if len(stripped) >= DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS:
+            return True
+        if len(stripped) < DEANONYMIZED_STREAM_FLUSH_CHARS:
+            return False
+        last_char = stripped[-1]
+        if last_char in ".!?:;\n":
+            return True
+        if last_char in ",)]}\"'":
+            return True
+        return last_char.isspace()
+
+    def _has_unclosed_placeholder(self, text: str) -> bool:
+        last_open = (text or "").rfind("[")
+        if last_open < 0:
+            return False
+        return (text or "").rfind("]") < last_open
+
+    def _stream_sanitized_delta(self, emitted_text: str, sanitized_text: str) -> str:
+        if not sanitized_text:
+            return ""
+        if not emitted_text:
+            return sanitized_text
+        if sanitized_text.startswith(emitted_text):
+            return sanitized_text[len(emitted_text) :]
+        return self._strip_continuation_overlap(emitted_text, sanitized_text)
 
     def _anonymizer_circuit_is_open(self) -> bool:
         return time.monotonic() < self._anonymizer_circuit_open_until
