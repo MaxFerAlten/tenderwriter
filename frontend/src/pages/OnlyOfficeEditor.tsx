@@ -28,6 +28,67 @@ interface EditorConfig {
     onlyoffice_url: string;
 }
 
+const onlyOfficeScriptLoaders = new Map<string, Promise<void>>();
+
+function loadOnlyOfficeApiScript(onlyofficeApiUrl: string): Promise<void> {
+    if (window.DocsAPI) {
+        return Promise.resolve();
+    }
+
+    const src = `${onlyofficeApiUrl}/web-apps/apps/api/documents/api.js`;
+    const existingLoader = onlyOfficeScriptLoaders.get(src);
+    if (existingLoader) {
+        return existingLoader;
+    }
+
+    const loader = new Promise<void>((resolve, reject) => {
+        const handleLoad = () => {
+            if (window.DocsAPI) {
+                resolve();
+                return;
+            }
+
+            reject(
+                new Error(
+                    `OnlyOffice API loaded but DocsAPI is unavailable at ${onlyofficeApiUrl}`
+                )
+            );
+        };
+
+        const handleError = () => {
+            reject(
+                new Error(
+                    `Cannot load OnlyOffice. Verify the server is running at ${onlyofficeApiUrl}`
+                )
+            );
+        };
+
+        const existingScript = document.querySelector<HTMLScriptElement>(
+            `script[src="${src}"], script[data-onlyoffice-api="true"]`
+        );
+
+        if (existingScript) {
+            existingScript.addEventListener('load', handleLoad, { once: true });
+            existingScript.addEventListener('error', handleError, { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.setAttribute('data-onlyoffice-api', 'true');
+        script.async = true;
+        script.addEventListener('load', handleLoad, { once: true });
+        script.addEventListener('error', handleError, { once: true });
+        document.head.appendChild(script);
+    }).catch((error) => {
+        onlyOfficeScriptLoaders.delete(src);
+        throw error;
+    });
+
+    onlyOfficeScriptLoaders.set(src, loader);
+    return loader;
+}
+
 export default function OnlyOfficeEditor({
     mode = 'proposal',
     proposalId,
@@ -41,9 +102,9 @@ export default function OnlyOfficeEditor({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const editorRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const initRunRef = useRef(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [scriptLoaded, setScriptLoaded] = useState(false);
 
     const editorContainerId = useMemo(() => {
         if (mode === 'create') return `onlyoffice-editor-create-${Math.random().toString(36).substring(7)}`;
@@ -51,39 +112,18 @@ export default function OnlyOfficeEditor({
         return `onlyoffice-editor-${proposalId}-${sectionId}`;
     }, [mode, libraryBlockId, proposalId, sectionId]);
 
-    // Load OnlyOffice API script
-    useEffect(() => {
-        const existingScript = document.querySelector(
-            'script[data-onlyoffice-api]'
-        );
-        if (existingScript) {
-            setScriptLoaded(true);
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = `${onlyofficeApiUrl}/web-apps/apps/api/documents/api.js`;
-        script.setAttribute('data-onlyoffice-api', 'true');
-        script.async = true;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        script.onload = () => setScriptLoaded(true);
-script.onerror = () => {
-            setError(
-                'Cannot load OnlyOffice. Verify the server is running at ' +
-                onlyofficeApiUrl
-            );
-            setLoading(false);
-        };
-        document.head.appendChild(script);
-    }, [onlyofficeApiUrl]);
-
     // Initialize editor when script is loaded
     const initEditor = useCallback(async () => {
-        if (!scriptLoaded || !window.DocsAPI) return;
+        const runId = ++initRunRef.current;
 
         try {
             setLoading(true);
             setError(null);
+
+            await loadOnlyOfficeApiScript(onlyofficeApiUrl);
+            if (runId !== initRunRef.current || !window.DocsAPI) {
+                return;
+            }
 
             // Fetch document config from backend
             const token = localStorage.getItem('token');
@@ -107,6 +147,10 @@ script.onerror = () => {
                     .json()
                     .catch(() => ({ detail: 'Unknown error' }));
 
+                if (runId !== initRunRef.current) {
+                    return;
+                }
+
                 let errorMsg = err.detail;
                 if (Array.isArray(err.detail)) {
                     errorMsg = err.detail.map((e: any) => `${e.loc?.join('.') || ''}: ${e.msg}`).join(', ');
@@ -118,6 +162,9 @@ script.onerror = () => {
             }
 
             const config: EditorConfig = await response.json();
+            if (runId !== initRunRef.current) {
+                return;
+            }
 
             if (onConfigLoaded) {
                 onConfigLoaded(config);
@@ -137,6 +184,8 @@ script.onerror = () => {
             const container = document.getElementById(editorContainerId);
             if (container) {
                 container.innerHTML = '';
+            } else {
+                throw new Error('OnlyOffice editor container not found');
             }
 
             // Initialize OnlyOffice editor
@@ -172,6 +221,10 @@ script.onerror = () => {
                 }
             );
         } catch (err) {
+            if (runId !== initRunRef.current) {
+                return;
+            }
+
             setError(
                 err instanceof Error
                     ? err.message
@@ -179,12 +232,22 @@ script.onerror = () => {
             );
             setLoading(false);
         }
-    }, [scriptLoaded, mode, proposalId, sectionId, libraryBlockId, editorContainerId, onDocumentStateChange]);
+    }, [
+        mode,
+        proposalId,
+        sectionId,
+        libraryBlockId,
+        editorContainerId,
+        onConfigLoaded,
+        onDocumentStateChange,
+        onlyofficeApiUrl,
+    ]);
 
     useEffect(() => {
-        initEditor();
+        void initEditor();
 
         return () => {
+            initRunRef.current += 1;
             if (editorRef.current) {
                 try {
                     editorRef.current.destroyEditor();
