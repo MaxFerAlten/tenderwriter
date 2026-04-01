@@ -397,6 +397,7 @@ services:
     environment:
       MM_LOGIN_REDIRECT_MODE: ${MM_LOGIN_REDIRECT_MODE:-off}
       VITE_API_TARGET: http://backend:8000
+      VITE_MM_TARGET: http://mattermost:8065
       VITE_AUTH_MODE: ${AUTH_PROVIDER:-legacy}
       VITE_KC_URL: ${KEYCLOAK_URL:-http://localhost:8180}
       VITE_KC_REALM: ${KEYCLOAK_REALM:-tenderwriter}
