@@ -161,8 +161,7 @@ Provide a helpful, accurate answer based on the available context.
 If the context doesn't contain enough information, say so clearly.
 
 RICORDA: Rispondi nella STESSA LINGUA della domanda sopra!
-
-## Answer (in the same language as the question)
+Inizia direttamente con la risposta finale, senza copiare intestazioni o sezioni del prompt.
 """,
 }
 

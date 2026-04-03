@@ -8,13 +8,14 @@ All endpoints are protected with JWT auth and granular RBAC.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from minio import Minio
 from pydantic import BaseModel
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -118,6 +119,55 @@ class TenderListResponse(BaseModel):
 
 
 # ── Helpers ──
+
+
+_TITLE_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_tender_title(title: str) -> str:
+    return _TITLE_WHITESPACE_RE.sub(" ", (title or "").strip())
+
+
+def _tender_title_lookup_key(title: str) -> str:
+    return _normalize_tender_title(title).lower()
+
+
+async def _ensure_unique_tender_title(
+    db: AsyncSession,
+    title: str,
+    *,
+    exclude_tender_id: int | None = None,
+) -> str:
+    normalized_title = _normalize_tender_title(title)
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="Tender title is required")
+
+    lookup_key = normalized_title.lower()
+
+    # Serialize competing writes for the same logical title without requiring
+    # a schema migration that could fail on databases already containing duplicates.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lookup_key))"),
+        {"lookup_key": lookup_key},
+    )
+
+    normalized_db_title = func.lower(
+        func.regexp_replace(
+            func.btrim(Tender.title),
+            r"\s+",
+            " ",
+            "g",
+        )
+    )
+    query = select(Tender.id).where(normalized_db_title == lookup_key)
+    if exclude_tender_id is not None:
+        query = query.where(Tender.id != exclude_tender_id)
+
+    existing_tender_id = (await db.execute(query.limit(1))).scalar_one_or_none()
+    if existing_tender_id is not None:
+        raise HTTPException(status_code=409, detail="A tender with this title already exists.")
+
+    return normalized_title
 
 
 async def check_tender_access(
@@ -271,8 +321,9 @@ async def create_tender(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new tender. The creator is automatically set to the current user."""
+    normalized_title = await _ensure_unique_tender_title(db, data.title)
     tender = Tender(
-        title=data.title,
+        title=normalized_title,
         client=data.client,
         description=data.description,
         deadline=data.deadline,
@@ -344,6 +395,17 @@ async def update_tender(
     previous_status = tender.status
 
     update_data = data.model_dump(exclude_unset=True)
+    if "title" in update_data:
+        normalized_title = _normalize_tender_title(update_data["title"] or "")
+        if _tender_title_lookup_key(normalized_title) == _tender_title_lookup_key(tender.title):
+            update_data["title"] = normalized_title
+        else:
+            update_data["title"] = await _ensure_unique_tender_title(
+                db,
+                update_data["title"],
+                exclude_tender_id=tender_id,
+            )
+
     for key, value in update_data.items():
         setattr(tender, key, value)
 

@@ -45,10 +45,152 @@ CONTINUATION_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
     re.IGNORECASE,
 )
+PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = (
+    r"(?:draft ending|(?:task|compito)(?=\s*:|$)|retrieved context|user question|response constraints|istruzioni importanti|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?)"
+)
+PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = r"(?:answer(?:\s*\([^)]*\))?)"
 PROMPT_LEAKAGE_HEADING_RE = re.compile(
-    r"^\s*#{1,6}\s*(?:draft ending|task|retrieved context|user question|response constraints|istruzioni importanti)\b.*$",
+    rf"^\s*(?:(?:#{{1,6}}\s*)(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN})(?:\s|:|$)).*$",
     re.IGNORECASE,
 )
+PROMPT_LEAKAGE_INLINE_RE = re.compile(
+    rf"\s+(?:#{{1,6}}\s*(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:compito|task|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?|retrieved context|user question|response constraints|istruzioni importanti)\s*:).*$",
+    re.IGNORECASE,
+)
+PROMPT_LEAKAGE_INSTRUCTION_RES = (
+    re.compile(
+        r"^scrivi solo il seguito naturale della risposta, iniziando direttamente dal contenuto mancante\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^continua solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto\. inizia direttamente con il testo mancante\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^provide a helpful, accurate answer based on the available context\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^if the context doesn't contain enough information, say so clearly\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^ricorda: rispondi nella stessa lingua della domanda sopra!?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^inizia direttamente con la risposta finale, senza copiare intestazioni o sezioni del prompt\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^ora continua direttamente dal punto in cui la risposta si e interrotta\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^ora completa solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^inizia direttamente con il testo mancante\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- devi rispondere nella stessa lingua della domanda dell'utente\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- stai continuando una risposta gia iniziata\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- devi completare solo la frase o il concetto finale rimasto interrotto\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- non ricominciare dall'inizio\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- non ripetere (?:sezioni o frasi gia scritte|il testo gia scritto)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- non commentare il numero di parole\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'^- non scrivere titoli o frasi come "continuazione della risposta"\.?$',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- non citare o copiare etichette interne del prompt\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- aggiungi solo contenuto nuovo, sostanziale e coerente con quanto gia scritto\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- non iniziare un nuovo paragrafo, una nuova sezione o un nuovo argomento\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- scrivi al massimo 60 parole\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^- chiudi con una frase completa e coerente\.?$",
+        re.IGNORECASE,
+    ),
+)
+EXPANDED_EXPLANATION_QUERY_RE = re.compile(
+    r"\b(?:riassum\w*|spiega\w*|descriv\w*|sintetizza\w*|summari[sz]\w*|explain\w*|describe\w*)\b",
+    re.IGNORECASE,
+)
+TERMINAL_SENTENCE_CHARS = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
+INCOMPLETE_SENTENCE_END_TOKENS = {
+    "a",
+    "ad",
+    "al",
+    "alla",
+    "allo",
+    "an",
+    "and",
+    "as",
+    "con",
+    "da",
+    "de",
+    "del",
+    "della",
+    "di",
+    "e",
+    "for",
+    "fra",
+    "from",
+    "il",
+    "in",
+    "into",
+    "la",
+    "le",
+    "lo",
+    "nel",
+    "nella",
+    "of",
+    "o",
+    "on",
+    "or",
+    "per",
+    "su",
+    "the",
+    "to",
+    "tra",
+    "un",
+    "una",
+    "uno",
+    "verso",
+    "with",
+    "y",
+}
 MATH_RENDERING_REQUEST_RE = re.compile(
     r"\b(?:latex|la\s*tex|formula|formule|equation|equazioni|matematica|matematiche|simboli matematici|math)\b",
     re.IGNORECASE,
@@ -83,7 +225,7 @@ CONTESTO RECUPERATO:
 PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
 {current_answer_tail}
 
-COMPITO:
+Ora continua direttamente dal punto in cui la risposta si e interrotta.
 Scrivi solo il seguito naturale della risposta, iniziando direttamente dal contenuto mancante.
 """
 
@@ -105,8 +247,8 @@ CONTESTO RECUPERATO:
 PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
 {current_answer_tail}
 
-COMPITO:
-Continua solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto. Inizia direttamente con il testo mancante.
+Ora completa solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto.
+Inizia direttamente con il testo mancante.
 """
 
 
@@ -533,7 +675,7 @@ class HybridRAGEngine:
         if trailing_completion:
             generation_result = replace(
                 generation_result,
-                text=self._merge_completion_suffix(
+                text=self._merge_sentence_completion_suffix(
                     generation_result.text,
                     trailing_completion.text,
                 ),
@@ -1268,11 +1410,26 @@ class HybridRAGEngine:
         return normalized.strip(" ,.;:-")
 
     def _strip_prompt_leakage(self, text: str) -> str:
+        cleaned = (text or "").strip()
         cleaned_lines: list[str] = []
-        for line in (text or "").splitlines():
-            if PROMPT_LEAKAGE_HEADING_RE.match(line.strip()):
-                break
-            cleaned_lines.append(line)
+        for line in cleaned.splitlines():
+            candidate = line.rstrip()
+            inline_match = PROMPT_LEAKAGE_INLINE_RE.search(candidate)
+            if inline_match:
+                candidate = candidate[:inline_match.start()].rstrip()
+
+            stripped = candidate.strip()
+            if not stripped:
+                if cleaned_lines and cleaned_lines[-1]:
+                    cleaned_lines.append("")
+                continue
+
+            if PROMPT_LEAKAGE_HEADING_RE.match(stripped):
+                continue
+            if any(pattern.match(stripped) for pattern in PROMPT_LEAKAGE_INSTRUCTION_RES):
+                continue
+
+            cleaned_lines.append(candidate)
         return "\n".join(cleaned_lines).strip()
 
     def _strip_continuation_overlap(self, base_text: str, continuation_text: str) -> str:
@@ -1413,7 +1570,6 @@ class HybridRAGEngine:
             if not CONTINUATION_HEADING_RE.match(line.strip())
             and not PROMPT_LEAKAGE_HEADING_RE.match(line.strip())
         ]
-        terminal_chars = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
         while lines:
             stripped = lines[-1].strip()
             if not stripped:
@@ -1426,7 +1582,7 @@ class HybridRAGEngine:
                 continue
 
             if (
-                stripped[-1] not in terminal_chars
+                stripped[-1] not in TERMINAL_SENTENCE_CHARS
                 and not stripped.startswith(("-", "*", "$"))
             ):
                 lines.pop()
@@ -1435,6 +1591,26 @@ class HybridRAGEngine:
             break
 
         return "\n".join(lines).strip()
+
+    def _ends_with_incomplete_sentence_fragment(self, text: str) -> bool:
+        normalized = (text or "").rstrip()
+        if not normalized:
+            return False
+
+        last_line = normalized.splitlines()[-1].strip()
+        if (
+            not last_line
+            or CONTINUATION_HEADING_RE.match(last_line)
+            or last_line.startswith(("#", "-", "*", "$"))
+        ):
+            return False
+
+        trimmed = last_line.rstrip("".join(TERMINAL_SENTENCE_CHARS))
+        words = WORD_RE.findall(trimmed.lower())
+        if len(words) < 3:
+            return False
+
+        return words[-1] in INCOMPLETE_SENTENCE_END_TOKENS
 
     def _needs_sentence_completion(self, text: str) -> bool:
         normalized = (text or "").rstrip()
@@ -1448,15 +1624,17 @@ class HybridRAGEngine:
             return False
         if last_line.startswith(("#", "-", "*", "$")):
             return False
-        if last_line[-1] in {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}:
-            return False
+        if last_line[-1] in TERMINAL_SENTENCE_CHARS:
+            return self._ends_with_incomplete_sentence_fragment(normalized)
 
         return len(last_line.split()) >= 3
 
     def _clean_sentence_completion_text(self, text: str) -> str:
         cleaned = self._clean_continuation_text(text).strip()
+        cleaned = self._strip_prompt_leakage(cleaned)
+        cleaned = self._remove_length_meta_blocks(cleaned)
         cleaned = cleaned.lstrip(" ,;:-")
-        if cleaned and cleaned[-1] not in {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}:
+        if cleaned and cleaned[-1] not in TERMINAL_SENTENCE_CHARS:
             cleaned = f"{cleaned}."
         return cleaned
 
@@ -1473,6 +1651,12 @@ class HybridRAGEngine:
         if re.match(r"^[,.;:!?)}\]»]", extra):
             return f"{base}{extra}"
         return f"{base} {extra}"
+
+    def _merge_sentence_completion_suffix(self, base_text: str, suffix: str) -> str:
+        base = (base_text or "").rstrip()
+        if self._ends_with_incomplete_sentence_fragment(base):
+            base = base.rstrip("".join(TERMINAL_SENTENCE_CHARS)).rstrip()
+        return self._merge_completion_suffix(base, suffix)
 
     async def _complete_trailing_sentence_if_needed(
         self,
@@ -1509,6 +1693,9 @@ class HybridRAGEngine:
 
         return replace(completion_result, text=cleaned_text)
 
+    def _query_requests_expanded_explanation(self, query_text: str) -> bool:
+        return bool(EXPANDED_EXPLANATION_QUERY_RE.search(query_text or ""))
+
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
         length_target = self._extract_requested_length_target(rag_query.text)
         constraints = [
@@ -1543,6 +1730,10 @@ class HybridRAGEngine:
                 )
         else:
             constraints.append("Mantieni la risposta proporzionata alla richiesta.")
+            if self._query_requests_expanded_explanation(rag_query.text):
+                constraints.append(
+                    "Se il contesto lo consente, sviluppa una risposta un po' piu completa del minimo, coprendo definizione, contesto e punti chiave invece di fermarti a una sola frase breve."
+                )
 
         if self._query_requests_math_rendering(rag_query.text):
             constraints.extend([

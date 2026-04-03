@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.api.auth import get_current_user, UserResponse
 from app.config import settings
@@ -63,6 +63,7 @@ class RAGQueryRequest(BaseModel):
     top_k: int | None = None
     temperature: float = 0.3
     stream: bool = False
+    save_history: bool = True
     route_key: str = "tender"
     tender_id: int | None = None
 
@@ -104,6 +105,10 @@ class RAGResponse(BaseModel):
     mode: str
     llm_route: str | None = None
     anonymized: bool = False
+
+
+def _should_save_search_history(data: RAGQueryRequest) -> bool:
+    return bool(data.save_history)
 
 
 async def _audit_rag_result(
@@ -189,23 +194,24 @@ async def rag_query(
 
             # Save history when stream completes
             try:
-                history = SearchHistory(
-                    user_id=current_user.id,
-                    query=data.query,
-                    response=full_response
-                )
-                db.add(history)
-                await db.commit()
+                if _should_save_search_history(data):
+                    history = SearchHistory(
+                        user_id=current_user.id,
+                        query=data.query,
+                        response=full_response
+                    )
+                    db.add(history)
                 await _audit_rag_result(
-                db=db,
-                action="rag_query_stream",
-                current_user=current_user,
-                rag_query=rag_query,
-                policy=policy,
-                llm_route=None,
-                anonymized=policy.mode == "external_anonymized",
-                payload={"mode": mode.value, "stream": True, "policy": policy.as_dict()},
-            )
+                    db=db,
+                    action="rag_query_stream",
+                    current_user=current_user,
+                    rag_query=rag_query,
+                    policy=policy,
+                    llm_route=None,
+                    anonymized=policy.mode == "external_anonymized",
+                    payload={"mode": mode.value, "stream": True, "policy": policy.as_dict()},
+                )
+                await db.commit()
             except Exception:
                 import structlog
                 structlog.get_logger().warning(
@@ -223,12 +229,13 @@ async def rag_query(
     result = await engine.query(rag_query)
 
     # Save to history
-    history = SearchHistory(
-        user_id=current_user.id,
-        query=data.query,
-        response=result.answer
-    )
-    db.add(history)
+    if _should_save_search_history(data):
+        history = SearchHistory(
+            user_id=current_user.id,
+            query=data.query,
+            response=result.answer
+        )
+        db.add(history)
     await _audit_rag_result(
         db=db,
         action="rag_query",
@@ -279,6 +286,19 @@ async def get_search_history(
         }
         for h in history
     ]
+
+
+@router.delete("/history")
+async def clear_search_history(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete the current user's search history."""
+    result = await db.execute(
+        delete(SearchHistory).where(SearchHistory.user_id == current_user.id)
+    )
+    await db.commit()
+    return {"deleted": int(result.rowcount or 0)}
 
 
 @router.post("/generate-section", response_model=RAGResponse)

@@ -717,6 +717,80 @@ describe('ragApi streaming', () => {
 
         expect(tokens).toEqual([' Prima riga\nseconda riga', ' ']);
     });
+
+    it('passes save_history=false through JSON queries used for technical source fetches', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ answer: '', sources: [], mode: 'search' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        await ragApi.query({
+            query: 'assignment',
+            mode: 'search',
+            save_history: false,
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/rag/query',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    query: 'assignment',
+                    mode: 'search',
+                    save_history: false,
+                }),
+            })
+        );
+    });
+
+    it('passes abort signals through JSON RAG queries', async () => {
+        const controller = new AbortController();
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ answer: 'ok', sources: [], mode: 'qa' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        await ragApi.query(
+            {
+                query: 'assignment',
+                mode: 'qa',
+            },
+            {
+                signal: controller.signal,
+            }
+        );
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/rag/query',
+            expect.objectContaining({
+                method: 'POST',
+                signal: controller.signal,
+            })
+        );
+    });
+
+    it('clears the search history through the RAG endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ deleted: 3 }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await ragApi.clearHistory();
+
+        expect(response.deleted).toBe(3);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/rag/history',
+            expect.objectContaining({
+                method: 'DELETE',
+            })
+        );
+    });
 });
 
 describe('observabilityApi', () => {

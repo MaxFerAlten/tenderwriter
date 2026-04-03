@@ -35,6 +35,14 @@ function getDaysUntil(dateStr: string | null): number | null {
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+function cleanTenderTitle(title: string): string {
+    return title.trim().replace(/\s+/g, ' ');
+}
+
+function tenderTitleLookupKey(title: string): string {
+    return cleanTenderTitle(title).toLowerCase();
+}
+
 function TenderCard({ tender, index, onUpload, onCreateProposal, onEditProposal, onSubmit, onOpenChat, onWarmChat, onOpenFullChat }: { tender: Tender; index: number; onUpload: (id: number, file: File) => Promise<void>; onCreateProposal: (tenderId: number | null) => void; onEditProposal: (proposalId: number) => void; onSubmit: (id: number) => Promise<void>; onOpenChat: (id: number) => void; onWarmChat: (id: number) => void; onOpenFullChat: (id: number) => void }) {
     const days = getDaysUntil(tender.deadline);
     const isUrgent = days !== null && days <= 7 && days > 0;
@@ -236,6 +244,7 @@ export default function Dashboard() {
     const [showNewTender, setShowNewTender] = useState(false);
     const [form, setForm] = useState<TenderCreate>({ ...EMPTY_FORM });
     const [creating, setCreating] = useState(false);
+    const [newTenderError, setNewTenderError] = useState<string | null>(null);
 
     // Proposal creation state
     const [showNewProposal, setShowNewProposal] = useState<number | null>(null);
@@ -261,21 +270,44 @@ export default function Dashboard() {
         loadTenders();
     }, [loadTenders]);
 
+    const closeNewTenderModal = useCallback(() => {
+        setShowNewTender(false);
+        setForm({ ...EMPTY_FORM });
+        setNewTenderError(null);
+    }, []);
+
+    const openNewTenderModal = useCallback(() => {
+        setShowNewTender(true);
+        setForm({ ...EMPTY_FORM });
+        setNewTenderError(null);
+    }, []);
+
+    const normalizedFormTitle = cleanTenderTitle(form.title);
+    const duplicateTitleError = normalizedFormTitle
+        && tenders.some((tender) => tenderTitleLookupKey(tender.title) === tenderTitleLookupKey(normalizedFormTitle))
+        ? 'A tender with this title already exists.'
+        : null;
+
     const handleCreate = async () => {
-        if (!form.title.trim()) return;
+        if (!normalizedFormTitle) return;
+        if (duplicateTitleError) {
+            setNewTenderError(duplicateTitleError);
+            return;
+        }
+
         try {
             setCreating(true);
-            const payload: TenderCreate = { title: form.title };
+            setNewTenderError(null);
+            const payload: TenderCreate = { title: normalizedFormTitle };
             if (form.client) payload.client = form.client;
             if (form.description) payload.description = form.description;
             if (form.deadline) payload.deadline = new Date(form.deadline).toISOString();
             if (form.category) payload.category = form.category;
             await tenderApi.create(payload);
-            setForm({ ...EMPTY_FORM });
-            setShowNewTender(false);
+            closeNewTenderModal();
             await loadTenders();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to create tender');
+            setNewTenderError(err instanceof Error ? err.message : 'Failed to create tender');
         } finally {
             setCreating(false);
         }
@@ -395,7 +427,13 @@ export default function Dashboard() {
                 </div>
                 <button
                     className="btn btn-primary"
-                    onClick={() => setShowNewTender(!showNewTender)}
+                    onClick={() => {
+                        if (showNewTender) {
+                            closeNewTenderModal();
+                            return;
+                        }
+                        openNewTenderModal();
+                    }}
                 >
                     <Plus size={18} />
                     New Tender
@@ -579,7 +617,7 @@ export default function Dashboard() {
                                 <h3 style={{ margin: 0 }}>Create New Tender</h3>
                                 <button
                                     className="btn btn-icon btn-ghost"
-                                    onClick={() => setShowNewTender(false)}
+                                    onClick={closeNewTenderModal}
                                 >
                                     <X size={20} />
                                 </button>
@@ -596,9 +634,17 @@ export default function Dashboard() {
                                             className="form-input"
                                             placeholder="e.g., Highway Bridge Rehabilitation"
                                             value={form.title}
-                                            onChange={(e) => setForm({ ...form, title: e.target.value })}
+                                            onChange={(e) => {
+                                                setForm({ ...form, title: e.target.value });
+                                                setNewTenderError(null);
+                                            }}
                                             autoFocus
                                         />
+                                        {(duplicateTitleError || newTenderError) && (
+                                            <div style={{ marginTop: '0.45rem', fontSize: '0.82rem', color: '#f87171' }}>
+                                                {duplicateTitleError || newTenderError}
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="form-group">
                                         <label className="form-label">Client</label>
@@ -648,13 +694,13 @@ export default function Dashboard() {
                             </div>
 
                             <div className="modal-footer">
-                                <button className="btn btn-ghost" onClick={() => setShowNewTender(false)}>
+                                <button className="btn btn-ghost" onClick={closeNewTenderModal}>
                                     Cancel
                                 </button>
                                 <button
                                     className="btn btn-primary"
                                     onClick={handleCreate}
-                                    disabled={creating || !form.title.trim()}
+                                    disabled={creating || !normalizedFormTitle || Boolean(duplicateTitleError)}
                                 >
                                     {creating ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
                                     {creating ? 'Creating...' : 'Create Tender'}

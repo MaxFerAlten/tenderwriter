@@ -262,6 +262,24 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
                 "Il problema di assegnamento si collega anche al trasporto."
             )
         )
+        self.assertTrue(
+            engine._needs_sentence_completion(
+                "Il problema di assegnamento puo essere visto come un."
+            )
+        )
+
+    def test_merge_sentence_completion_suffix_removes_suspicious_terminal_punctuation(self) -> None:
+        engine = self._build_engine()
+
+        merged = engine._merge_sentence_completion_suffix(
+            "Il problema di assegnamento puo essere visto come un.",
+            "caso particolare del trasporto ottimo.",
+        )
+
+        self.assertEqual(
+            merged,
+            "Il problema di assegnamento puo essere visto come un caso particolare del trasporto ottimo.",
+        )
 
     async def test_complete_trailing_sentence_if_needed_appends_short_closure(self) -> None:
         engine = self._build_engine()
@@ -317,6 +335,33 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "Primo blocco.\n\nInoltre, il fornitore puo scegliere i prezzi f e g.\n\nConclusione finale.",
         )
 
+    def test_clean_final_answer_text_removes_inline_answer_prompt_leakage_and_keeps_following_text(self) -> None:
+        engine = self._build_engine()
+
+        cleaned = engine._clean_final_answer_text(
+            "Il problema di assegnamento e un problema classico. ## Answer (in the same language as the question)\n"
+            "Approfondimento utile."
+        )
+
+        self.assertEqual(
+            cleaned,
+            "Il problema di assegnamento e un problema classico.\nApprofondimento utile.",
+        )
+
+    def test_clean_final_answer_text_removes_compito_prompt_leakage_and_keeps_following_text(self) -> None:
+        engine = self._build_engine()
+
+        cleaned = engine._clean_final_answer_text(
+            "Il problema di assegnamento e un problema classico.\nCOMPITO:\n"
+            "Continua solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto. Inizia direttamente con il testo mancante.\n"
+            "Approfondimento finale."
+        )
+
+        self.assertEqual(
+            cleaned,
+            "Il problema di assegnamento e un problema classico.\nApprofondimento finale.",
+        )
+
     def test_remove_length_meta_blocks_filters_word_count_chatter(self) -> None:
         engine = self._build_engine()
 
@@ -327,6 +372,18 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(cleaned, "Spiegazione utile.\n\nConclusione utile.")
+
+    def test_summary_queries_get_fuller_default_response_constraints(self) -> None:
+        engine = self._build_engine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text="riassumimi il problema di assegnamento",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("sviluppa una risposta un po' piu completa del minimo", constraints)
 
     def test_math_rendering_constraints_are_added_when_requested(self) -> None:
         engine = self._build_engine()

@@ -71,10 +71,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./models:/models
+      - "D:/tender/models:/models"
       - llama_tender_cache:/root/.cache/llama.cpp
     entrypoint: [ "/app/llama-server" ]
-    command: [ "-m", "/models/qwen2.5-3b-instruct-q4_k_m.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "4096", "-t", "16", "--n-predict", "512", "-b", "512" ]
+    command: [ "-m", "/models/gemma-3n-E4B-it-Q4_K_M.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "20", "--n-predict", "1024", "-b", "1024" ]
     networks:
       - default
 

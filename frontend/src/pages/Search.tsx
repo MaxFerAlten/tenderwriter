@@ -10,7 +10,9 @@ import {
     Network,
     AlertCircle,
     History,
-    Clock
+    Clock,
+    Trash2,
+    Loader2,
 } from 'lucide-react';
 import { ragApi, type RAGResponse } from '../api/client';
 import {
@@ -21,6 +23,8 @@ import {
     stageSearchResults,
     type SearchResultRevealTransition,
 } from './searchResultReveal';
+import { sanitizeSearchAnswer } from './searchAnswerSanitizer';
+import { collapseDuplicateSearchHistory } from './searchHistoryUtils';
 
 interface DisplayResult {
     text: string;
@@ -82,7 +86,9 @@ export default function RAGSearch() {
     const [hasSearched, setHasSearched] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [history, setHistory] = useState<HistoryItem[]>([]);
+    const [isClearingHistory, setIsClearingHistory] = useState(false);
     const streamControllerRef = useRef<AbortController | null>(null);
+    const rawAnswerRef = useRef('');
     const pendingTokensRef = useRef<string[]>([]);
     const answerFlushTimerRef = useRef<number | null>(null);
     const streamCompletedRef = useRef(false);
@@ -100,7 +106,8 @@ export default function RAGSearch() {
     }, []);
 
     useEffect(() => {
-        if (!answer) {
+        const visibleAnswer = sanitizeSearchAnswer(answer);
+        if (!visibleAnswer) {
             return;
         }
 
@@ -110,7 +117,7 @@ export default function RAGSearch() {
     const loadHistory = async () => {
         try {
             const data = await ragApi.getHistory();
-            setHistory(data);
+            setHistory(collapseDuplicateSearchHistory(data));
         } catch (e) {
             console.error('Failed to load history', e);
         }
@@ -121,18 +128,33 @@ export default function RAGSearch() {
         cancelAnswerFlush();
         cancelSourcesReveal();
         setQuery(item.query);
-        setAnswer(item.response);
+        rawAnswerRef.current = item.response;
+        setAnswer(sanitizeSearchAnswer(item.response));
         setResults([]);
         setHasSearched(true);
         setError(null);
         setIsSearching(false);
     };
 
-    const resolveDrainWaiters = () => {
-        if (drainWaitersRef.current.length === 0) return;
-        const waiters = [...drainWaitersRef.current];
-        drainWaitersRef.current = [];
-        waiters.forEach((resolve) => resolve());
+    const handleClearHistory = async () => {
+        if (history.length === 0 || isClearingHistory) {
+            return;
+        }
+
+        if (!window.confirm('Azzerare tutta la cronologia delle ricerche?')) {
+            return;
+        }
+
+        try {
+            setIsClearingHistory(true);
+            setError(null);
+            await ragApi.clearHistory();
+            setHistory([]);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to clear search history');
+        } finally {
+            setIsClearingHistory(false);
+        }
     };
 
     const applyResultRevealTransition = (
@@ -184,6 +206,13 @@ export default function RAGSearch() {
         resultsRevealStateRef.current = createSearchResultRevealState<DisplayResult>();
     };
 
+    const resolveDrainWaiters = () => {
+        if (drainWaitersRef.current.length === 0) return;
+        const waiters = [...drainWaitersRef.current];
+        drainWaitersRef.current = [];
+        waiters.forEach((resolve) => resolve());
+    };
+
     const scheduleAnswerFlush = () => {
         if (answerFlushTimerRef.current !== null) return;
         answerFlushTimerRef.current = window.setTimeout(() => {
@@ -205,7 +234,8 @@ export default function RAGSearch() {
 
             const nextChunk = pendingTokensRef.current.splice(0, chunkTokenCount).join('');
             if (nextChunk) {
-                setAnswer((current) => current + nextChunk);
+                rawAnswerRef.current += nextChunk;
+                setAnswer(sanitizeSearchAnswer(rawAnswerRef.current));
             }
 
             if (pendingTokensRef.current.length > 0 || !streamCompletedRef.current) {
@@ -269,6 +299,7 @@ export default function RAGSearch() {
         setHasSearched(true);
         setError(null);
         setResults([]);
+        rawAnswerRef.current = '';
         setAnswer('');
 
         try {
@@ -276,6 +307,9 @@ export default function RAGSearch() {
                 query,
                 mode: 'search',
                 temperature: 0.3,
+                save_history: false,
+            }, {
+                signal: controller.signal,
             }).then((sourceData: RAGResponse) =>
                 sourceData.sources.map((s) => ({
                     text: s.text,
@@ -347,13 +381,27 @@ export default function RAGSearch() {
         return sources;
     };
 
+    const visibleAnswer = sanitizeSearchAnswer(answer);
+
     return (
         <div className="animate-in" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '2rem', height: '100%' }}>
             {/* Sidebar History */}
             <div style={{ borderRight: '1px solid var(--border-color)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', color: 'var(--text-primary)' }}>
-                    <History size={18} />
-                    <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Cronologia</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1.5rem', color: 'var(--text-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <History size={18} />
+                        <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Cronologia</h3>
+                    </div>
+                    <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={handleClearHistory}
+                        disabled={history.length === 0 || isClearingHistory}
+                        title="Azzera cronologia"
+                        style={{ gap: '0.35rem', opacity: history.length === 0 ? 0.55 : 1 }}
+                    >
+                        {isClearingHistory ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                        {isClearingHistory ? 'Pulisco...' : 'Azzera'}
+                    </button>
                 </div>
 
                 {history.length === 0 ? (
@@ -483,10 +531,10 @@ export default function RAGSearch() {
                 )}
 
                 {/* Results */}
-                {hasSearched && !error && (isSearching || answer || results.length > 0) && (
+                {hasSearched && !error && (isSearching || visibleAnswer || results.length > 0) && (
                     <div style={{ display: 'grid', gap: '1.5rem' }}>
                         {/* AI Answer */}
-                        {(answer || isSearching) && (
+                        {(visibleAnswer || isSearching) && (
                             <motion.div
                                 className="card"
                                 initial={{ opacity: 0, y: 10 }}
@@ -513,7 +561,7 @@ export default function RAGSearch() {
                                 <div
                                     style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}
                                     dangerouslySetInnerHTML={{
-                                        __html: answer
+                                        __html: visibleAnswer
                                             .replace(/\*\*(.*?)\*\*/g, '<strong style="color: var(--text-primary)">$1</strong>')
                                     }}
                                 />
@@ -526,7 +574,7 @@ export default function RAGSearch() {
                         )}
 
                         {/* No answer and no results */}
-                        {!isSearching && !answer && results.length === 0 && (
+                        {!isSearching && !visibleAnswer && results.length === 0 && (
                             <div className="empty-state" style={{ padding: '2rem 0' }}>
                                 <SearchIcon size={48} />
                                 <h3>No results found</h3>

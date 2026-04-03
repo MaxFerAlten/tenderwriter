@@ -15,6 +15,7 @@ interface RequestOptions {
     method?: string;
     body?: unknown;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
 }
 
 interface StreamRequestOptions {
@@ -119,7 +120,7 @@ async function fetchWithAuth(
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = 'GET', body, headers = {} } = options;
+    const { method = 'GET', body, headers = {}, signal } = options;
 
     const config: RequestInit = {
         method,
@@ -127,6 +128,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
             'Content-Type': 'application/json',
             ...headers,
         },
+        signal,
     };
 
     if (body) {
@@ -682,11 +684,12 @@ export const contentApi = {
 // ── RAG ──
 
 export const ragApi = {
-    query: (data: RAGQueryRequest) =>
-        request<RAGResponse>('/rag/query', { method: 'POST', body: data }),
+    query: (data: RAGQueryRequest, options: Pick<RequestOptions, 'signal'> = {}) =>
+        request<RAGResponse>('/rag/query', { method: 'POST', body: data, signal: options.signal }),
     streamQuery: (data: RAGQueryRequest, options?: StreamRequestOptions) =>
         streamRequest('/rag/query', { ...data, stream: true }, options),
     getHistory: () => request<{ id: number, query: string, response: string, created_at: string }[]>('/rag/history'),
+    clearHistory: () => request<{ deleted: number }>('/rag/history', { method: 'DELETE' }),
     generateSection: (data: GenerateSectionRequest) =>
         request<RAGResponse>('/rag/generate-section', { method: 'POST', body: data }),
     complianceCheck: (data: ComplianceCheckRequest) =>
@@ -1258,6 +1261,7 @@ export interface RAGQueryRequest {
     top_k?: number;
     temperature?: number;
     stream?: boolean;
+    save_history?: boolean;
 }
 
 export interface GenerateSectionRequest {
