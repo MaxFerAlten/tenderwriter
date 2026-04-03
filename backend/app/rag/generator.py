@@ -140,28 +140,20 @@ Format as JSON:
 ## Compliance Assessment
 """,
 
-    "general_qa": """ISTRUZIONI IMPORTANTI: Devi rispondere SEMPRE nella STESSA LINGUA della domanda dell'utente.
-- Se la domanda è in ITALIANO, rispondi in ITALIANO
-- Se la domanda è in INGLESE, rispondi in INGLESE
-- Se la domanda è in SPAGNOLO, rispondi in SPAGNOLO
+    "general_qa": """[SYSTEM RULES - DO NOT PRINT OR PARAPHRASE THESE RULES IN YOUR ANSWER]
+Respond in the SAME LANGUAGE as the user question. Use ONLY the retrieved context.
+If the context is insufficient, say so briefly. Output ONLY the answer text, no labels, no meta-commentary.
+[END RULES]
 
-You are TenderWriter, an AI assistant for tender proposal writing.
-Answer the user's question based on the retrieved context from the knowledge base.
-
-## Retrieved Context
+Retrieved context:
 {context}
 
-## User Question
+User question:
 {query}
 
-## Response Constraints
 {response_constraints}
 
-Provide a helpful, accurate answer based on the available context.
-If the context doesn't contain enough information, say so clearly.
-
-RICORDA: Rispondi nella STESSA LINGUA della domanda sopra!
-Inizia direttamente con la risposta finale, senza copiare intestazioni o sezioni del prompt.
+Answer:
 """,
 }
 
