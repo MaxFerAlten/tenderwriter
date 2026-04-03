@@ -535,20 +535,16 @@ const Settings: FC = () => {
             }
         }
 
-        // 4) Apply nginx hot-reload (best-effort)
-        if (user?.role === 'admin') {
-            if (systemCapabilities?.nginx_hot_reload.available) {
-                try {
-                    await systemApi.updateNginx({
-                        read_timeout: readTimeout,
-                        connect_timeout: connectTimeout,
-                        send_timeout: sendTimeout,
-                    });
-                } catch (err) {
-                    warnings.push(err instanceof Error ? `Timeout salvati, ma non applicati live: ${err.message}` : 'Timeout salvati, ma hot-reload Nginx non disponibile.');
-                }
-            } else {
-                warnings.push(systemCapabilities?.nginx_hot_reload.reason || 'Timeout salvati, ma hot-reload Nginx non disponibile in questo ambiente.');
+        // 4) Apply nginx hot-reload (best-effort, only when available)
+        if (user?.role === 'admin' && systemCapabilities?.nginx_hot_reload.available) {
+            try {
+                await systemApi.updateNginx({
+                    read_timeout: readTimeout,
+                    connect_timeout: connectTimeout,
+                    send_timeout: sendTimeout,
+                });
+            } catch (err) {
+                warnings.push(err instanceof Error ? `Timeout salvati, ma non applicati live: ${err.message}` : 'Timeout salvati, ma hot-reload Nginx non disponibile.');
             }
         }
 
