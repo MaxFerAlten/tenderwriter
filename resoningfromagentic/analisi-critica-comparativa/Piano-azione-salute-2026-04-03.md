@@ -18,7 +18,7 @@ Le criticita' principali emerse dal report sono:
 
 - Runtime RAG non affidabile: dense 12/12, sparse 0/12, graph 0/12.
 - Latenza LLM molto alta: circa 60-167 secondi per query QA.
-- Sicurezza applicativa esposta: Docker socket nel backend, credenziali hardcoded, SSRF, endpoint OnlyOffice senza auth, XSS.
+- Sicurezza applicativa esposta: servizi privilegiati con Docker socket, credenziali hardcoded, SSRF, endpoint OnlyOffice senza auth, XSS.
 - Schema management fragile: migrazioni raw SQL all'avvio nel backend principale.
 - Testing presente ma non governato: niente CI, niente coverage imposta, niente contract test.
 - Repo hygiene debole: artefatti di reasoning nel main path, tag Docker `latest`, script operativi nel package applicativo.
@@ -58,7 +58,7 @@ Ridurre il rischio di incidente reale e ristabilire il controllo sul comportamen
 ### Azioni
 
 1. Congelare merge non critici e aprire una board "remediation".
-2. Rimuovere il mount di `/var/run/docker.sock` dal backend e instradare tutto verso `ops-agent`.
+2. Mantenere il mount di `/var/run/docker.sock` fuori dal backend, confinandolo ai soli servizi privilegiati strettamente necessari e verificando se `mattermost-bootstrap` possa evitarlo.
 3. Ruotare tutte le credenziali hardcoded e sostituire i placeholder sensibili.
 4. Disabilitare o proteggere immediatamente l'endpoint OnlyOffice `files/{docKey}` con autenticazione.
 5. Applicare il fix SSRF nell'anonymizer o, se non immediato, disabilitare temporaneamente i path vulnerabili.
@@ -85,7 +85,7 @@ Ridurre il rischio di incidente reale e ristabilire il controllo sul comportamen
 ### Rischi
 
 - Le fix rapide sul routing LLM potrebbero rivelare limiti del modello locale.
-- La rimozione del Docker socket puo' rompere il monitoraggio se `ops-agent` non copre tutti i casi d'uso.
+- Un hardening troppo aggressivo dei servizi privilegiati puo' rompere monitoraggio o bootstrap se `ops-agent` e `mattermost-bootstrap` non vengono riesaminati con test operativi.
 
 ## Fase 1 — Stabilizzazione di Sprint (Settimana 1-2)
 
@@ -243,7 +243,7 @@ Ridurre entropia del repository e migliorare la leggibilita' del production path
 
 ### P0
 
-- Docker socket fuori dal backend.
+- Docker socket confermato fuori dal backend e confinato ai soli servizi privilegiati necessari.
 - Rotazione secrets e rimozione hardcoded.
 - Fix SSRF.
 - Protezione endpoint OnlyOffice.
@@ -297,6 +297,6 @@ Ridurre entropia del repository e migliorare la leggibilita' del production path
 
 Aprire immediatamente un `Remediation Sprint` con tre stream paralleli:
 
-- `Security`: Docker socket, secrets, SSRF, OnlyOffice auth.
+- `Security`: servizi privilegiati con Docker socket, secrets, SSRF, OnlyOffice auth.
 - `RAG Runtime`: GraphRetriever, BM25 reload, route LLM, benchmark.
 - `Engineering Guardrails`: CI, coverage, migration strategy, audit route auth.

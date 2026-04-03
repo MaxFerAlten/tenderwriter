@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 
 import httpx
+from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -20,66 +21,66 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.models import (
-    AttendanceRecord,
-    AttendanceStatus,
-    CallSession,
-    ComplianceGate,
-    ComplianceGateStatus,
-    ComplianceStatus,
-    ContributionRequest,
-    ContributionRequestStatus,
-    ContributionUnit,
-    ContributionUnitStatus,
-    KpiDomainEvent,
-    KpiEventDeliveryStatus,
-    Proposal,
-    ProposalSection,
-    ProposalStatus,
-    ReviewCycle,
-    ReviewCycleStatus,
-    ReworkAction,
-    ReworkStatus,
-    SectionStatus,
-    Tender,
-    TenderRequirement,
-    TenderStatus,
-)
-from app.services.kpi_reason_engine import (
-    build_bid_plan_event_payload,
-    build_bid_team_assigned_event_payload,
-    build_clarification_event_payload,
-    build_compliance_gate_rework_requested_event_payload,
-    build_contribution_assignment_confirmed_event_payload,
-    build_coordination_risk_raised_event_payload,
-    build_draft_integrated_ready_event_payload,
-    build_rework_reescalated_to_coordination_event_payload,
-    build_submission_status_event_payload,
-    build_tender_decision_event_payload,
-    build_terminal_lifecycle_event_payload,
-    build_tender_stopped_at_gate_event_payload,
-    KpiClientResult,
-    KpiReasonEngineClient,
-    apply_delivery_result,
-    build_call_attendance_recorded_event_payload,
-    build_call_scheduled_event_payload,
-    build_compliance_gate_decision_event_payload,
-    build_compliance_gate_opened_event_payload,
-    build_contribution_due_date_set_event_payload,
-    build_contribution_received_event_payload,
-    build_contribution_request_created_event_payload,
-    build_contribution_review_completed_event_payload,
-    build_domain_event_payload,
-    build_proposal_section_updated_event_payload,
-    build_requirements_extracted_event_payload,
-    build_review_cycle_started_event_payload,
-    build_rework_requested_event_payload,
-    build_rework_resolved_event_payload,
-    build_tender_created_event_payload,
-    build_tender_document_ingested_event_payload,
-    build_tender_sync_payload,
-    select_primary_proposal,
-)
+_MODELS_MODULE = load_models_test_module()
+_KPI_MODULE = load_service_test_module("app.services.kpi_reason_engine")
+
+AttendanceRecord = _MODELS_MODULE.AttendanceRecord
+AttendanceStatus = _MODELS_MODULE.AttendanceStatus
+CallSession = _MODELS_MODULE.CallSession
+ComplianceGate = _MODELS_MODULE.ComplianceGate
+ComplianceGateStatus = _MODELS_MODULE.ComplianceGateStatus
+ComplianceStatus = _MODELS_MODULE.ComplianceStatus
+ContributionRequest = _MODELS_MODULE.ContributionRequest
+ContributionRequestStatus = _MODELS_MODULE.ContributionRequestStatus
+ContributionUnit = _MODELS_MODULE.ContributionUnit
+ContributionUnitStatus = _MODELS_MODULE.ContributionUnitStatus
+KpiDomainEvent = _MODELS_MODULE.KpiDomainEvent
+KpiEventDeliveryStatus = _MODELS_MODULE.KpiEventDeliveryStatus
+Proposal = _MODELS_MODULE.Proposal
+ProposalSection = _MODELS_MODULE.ProposalSection
+ProposalStatus = _MODELS_MODULE.ProposalStatus
+ReviewCycle = _MODELS_MODULE.ReviewCycle
+ReviewCycleStatus = _MODELS_MODULE.ReviewCycleStatus
+ReworkAction = _MODELS_MODULE.ReworkAction
+ReworkStatus = _MODELS_MODULE.ReworkStatus
+SectionStatus = _MODELS_MODULE.SectionStatus
+Tender = _MODELS_MODULE.Tender
+TenderRequirement = _MODELS_MODULE.TenderRequirement
+TenderStatus = _MODELS_MODULE.TenderStatus
+
+build_bid_plan_event_payload = _KPI_MODULE.build_bid_plan_event_payload
+build_bid_team_assigned_event_payload = _KPI_MODULE.build_bid_team_assigned_event_payload
+build_clarification_event_payload = _KPI_MODULE.build_clarification_event_payload
+build_compliance_gate_rework_requested_event_payload = _KPI_MODULE.build_compliance_gate_rework_requested_event_payload
+build_contribution_assignment_confirmed_event_payload = _KPI_MODULE.build_contribution_assignment_confirmed_event_payload
+build_coordination_risk_raised_event_payload = _KPI_MODULE.build_coordination_risk_raised_event_payload
+build_draft_integrated_ready_event_payload = _KPI_MODULE.build_draft_integrated_ready_event_payload
+build_rework_reescalated_to_coordination_event_payload = _KPI_MODULE.build_rework_reescalated_to_coordination_event_payload
+build_submission_status_event_payload = _KPI_MODULE.build_submission_status_event_payload
+build_tender_decision_event_payload = _KPI_MODULE.build_tender_decision_event_payload
+build_terminal_lifecycle_event_payload = _KPI_MODULE.build_terminal_lifecycle_event_payload
+build_tender_stopped_at_gate_event_payload = _KPI_MODULE.build_tender_stopped_at_gate_event_payload
+KpiClientResult = _KPI_MODULE.KpiClientResult
+KpiReasonEngineClient = _KPI_MODULE.KpiReasonEngineClient
+apply_delivery_result = _KPI_MODULE.apply_delivery_result
+build_call_attendance_recorded_event_payload = _KPI_MODULE.build_call_attendance_recorded_event_payload
+build_call_scheduled_event_payload = _KPI_MODULE.build_call_scheduled_event_payload
+build_compliance_gate_decision_event_payload = _KPI_MODULE.build_compliance_gate_decision_event_payload
+build_compliance_gate_opened_event_payload = _KPI_MODULE.build_compliance_gate_opened_event_payload
+build_contribution_due_date_set_event_payload = _KPI_MODULE.build_contribution_due_date_set_event_payload
+build_contribution_received_event_payload = _KPI_MODULE.build_contribution_received_event_payload
+build_contribution_request_created_event_payload = _KPI_MODULE.build_contribution_request_created_event_payload
+build_contribution_review_completed_event_payload = _KPI_MODULE.build_contribution_review_completed_event_payload
+build_domain_event_payload = _KPI_MODULE.build_domain_event_payload
+build_proposal_section_updated_event_payload = _KPI_MODULE.build_proposal_section_updated_event_payload
+build_requirements_extracted_event_payload = _KPI_MODULE.build_requirements_extracted_event_payload
+build_review_cycle_started_event_payload = _KPI_MODULE.build_review_cycle_started_event_payload
+build_rework_requested_event_payload = _KPI_MODULE.build_rework_requested_event_payload
+build_rework_resolved_event_payload = _KPI_MODULE.build_rework_resolved_event_payload
+build_tender_created_event_payload = _KPI_MODULE.build_tender_created_event_payload
+build_tender_document_ingested_event_payload = _KPI_MODULE.build_tender_document_ingested_event_payload
+build_tender_sync_payload = _KPI_MODULE.build_tender_sync_payload
+select_primary_proposal = _KPI_MODULE.select_primary_proposal
 
 
 class TenderSyncPayloadTests(unittest.TestCase):

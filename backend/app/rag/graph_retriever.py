@@ -252,6 +252,10 @@ class GraphRetriever:
         member_results = await self._search_team_members(query, top_k, filters)
         results.extend(member_results)
 
+        # Search requirements (tender requirements stored in graph)
+        requirement_results = await self._search_requirements(query, top_k, filters)
+        results.extend(requirement_results)
+
         # Sort by score and take top_k
         results.sort(key=lambda r: r.score, reverse=True)
         results = results[:top_k]
@@ -266,13 +270,16 @@ class GraphRetriever:
         filters: dict | None,
     ) -> list[GraphSearchResult]:
         """Search for projects matching the query."""
-        # Use CONTAINS for simple text matching
-        # In production, consider Neo4j full-text indexes
+        keywords = [w.lower() for w in query.split() if len(w) > 3]
+        if not keywords:
+            keywords = [query.lower()]
+
         cypher = """
         MATCH (p:Project)
-        WHERE toLower(p.name) CONTAINS toLower($query)
-           OR toLower(p.description) CONTAINS toLower($query)
-           OR toLower(p.category) CONTAINS toLower($query)
+        WHERE any(kw IN $keywords WHERE 
+               toLower(p.name) CONTAINS kw
+               OR toLower(p.description) CONTAINS kw
+               OR toLower(p.category) CONTAINS kw)
         OPTIONAL MATCH (p)-[:FOR_CLIENT]->(c:Client)
         OPTIONAL MATCH (p)-[:HAS_CATEGORY]->(cat:Category)
         OPTIONAL MATCH (t:TeamMember)-[r:DELIVERED]->(p)
@@ -280,12 +287,12 @@ class GraphRetriever:
         RETURN p, c, cat,
                collect(DISTINCT {name: t.name, role: r.role}) AS team,
                collect(DISTINCT cert.name) AS certifications
-        LIMIT $top_k
+        LIMIT $limit
         """
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
+            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
             records = await cursor.data()
 
             for record in records:
@@ -337,22 +344,27 @@ class GraphRetriever:
         filters: dict | None,
     ) -> list[GraphSearchResult]:
         """Search for team members matching the query."""
+        keywords = [w.lower() for w in query.split() if len(w) > 3]
+        if not keywords:
+            keywords = [query.lower()]
+
         cypher = """
         MATCH (t:TeamMember)
-        WHERE toLower(t.name) CONTAINS toLower($query)
-           OR toLower(t.title) CONTAINS toLower($query)
-           OR ANY(skill IN t.skills WHERE toLower(skill) CONTAINS toLower($query))
+        WHERE any(kw IN $keywords WHERE 
+               toLower(t.name) CONTAINS kw
+               OR toLower(t.title) CONTAINS kw
+               OR ANY(skill IN t.skills WHERE toLower(skill) CONTAINS kw))
         OPTIONAL MATCH (t)-[:HOLDS]->(cert:Certification)
         OPTIONAL MATCH (t)-[r:DELIVERED]->(p:Project)
         RETURN t,
                collect(DISTINCT cert.name) AS certifications,
                collect(DISTINCT {name: p.name, role: r.role}) AS projects
-        LIMIT $top_k
+        LIMIT $limit
         """
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
+            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
             records = await cursor.data()
 
             for record in records:
@@ -388,6 +400,60 @@ class GraphRetriever:
                     metadata={"source": "knowledge_graph", "entity_id": member.get("id")},
                     entity_type="TeamMember",
                     relationships=[r for r in relationships if r.get("target")],
+                ))
+
+        return results
+
+    async def _search_requirements(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict | None,
+    ) -> list[GraphSearchResult]:
+        """Search for tender requirements matching the query."""
+        keywords = [w.lower() for w in query.split() if len(w) > 3]
+        if not keywords:
+            keywords = [query.lower()]
+
+        cypher = """
+        MATCH (r:Requirement)
+        WHERE any(kw IN $keywords WHERE 
+               toLower(r.text) CONTAINS kw
+               OR toLower(r.category) CONTAINS kw)
+        OPTIONAL MATCH (t:Tender)-[:HAS_REQUIREMENT]->(r)
+        RETURN r, t
+        LIMIT $limit
+        """
+
+        results: list[GraphSearchResult] = []
+        async with self._driver.session() as session:
+            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
+            records = await cursor.data()
+
+            for record in records:
+                req = record["r"]
+                tender = record.get("t")
+
+                text_parts = [
+                    f"Requirement: {req.get('text', 'N/A')}",
+                    f"Category: {req.get('category', 'N/A')}",
+                    f"Priority: {req.get('priority', 'N/A')}",
+                ]
+                if tender:
+                    text_parts.append(f"Tender: {tender.get('title', tender.get('id', 'N/A'))}")
+
+                results.append(GraphSearchResult(
+                    text="\n".join(text_parts),
+                    score=0.85,
+                    metadata={
+                        "source": "knowledge_graph",
+                        "entity_id": req.get("id"),
+                        "tender_id": req.get("tender_id"),
+                    },
+                    entity_type="Requirement",
+                    relationships=[
+                        {"type": "BELONGS_TO_TENDER", "target": tender.get("title") if tender else None}
+                    ],
                 ))
 
         return results

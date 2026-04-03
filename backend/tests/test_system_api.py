@@ -1,8 +1,9 @@
 """API-level tests for the system admin proxy backed by ops-agent."""
 
 import os
+import sys
 import unittest
-from types import SimpleNamespace
+from importlib import import_module
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import FastAPI
@@ -21,11 +22,38 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.api.auth import UserResponse, get_current_user
-from app.api.system import router
-from app.db.database import get_db
-from app.models.app_settings import AppSettings
 from app.services.ops_agent import OpsAgentClientResult
+
+
+class _FakeUserResponse:
+    def __init__(self, **kwargs) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+_SYSTEM_TEST_MODULE = None
+
+
+def _load_system_module():
+    global _SYSTEM_TEST_MODULE
+    if _SYSTEM_TEST_MODULE is not None:
+        return _SYSTEM_TEST_MODULE
+
+    fake_auth = import_module("types").ModuleType("app.api.auth")
+
+    async def _fake_get_current_user():
+        return _FakeUserResponse(id=1, email="admin@test.local", name="Admin", role="admin")
+
+    fake_auth.UserResponse = _FakeUserResponse
+    fake_auth.get_current_user = _fake_get_current_user
+
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=Mock(name="engine")),
+        patch.dict(sys.modules, {"app.api.auth": fake_auth}),
+    ):
+        sys.modules.pop("app.api.system", None)
+        _SYSTEM_TEST_MODULE = import_module("app.api.system")
+        return _SYSTEM_TEST_MODULE
 
 
 class _ScalarResult:
@@ -45,8 +73,6 @@ class _FakeDb:
         self.execute = AsyncMock(side_effect=self._execute)
 
     def _add(self, row):
-        if not isinstance(row, AppSettings):
-            row = AppSettings(data=getattr(row, "data", {}))
         self.row = row
 
     async def _execute(self, _stmt):
@@ -115,16 +141,18 @@ class _MockOpsAgentClient:
 class SystemApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls.system_module = _load_system_module()
+        cls.AppSettings = cls.system_module.AppSettings
         app = FastAPI()
-        app.include_router(router, prefix="/system")
-        app.dependency_overrides[get_current_user] = lambda: UserResponse(
+        app.include_router(cls.system_module.router, prefix="/system")
+        app.dependency_overrides[cls.system_module.get_current_user] = lambda: _FakeUserResponse(
             id=1,
             email="admin@test.local",
             name="Admin",
             role="admin",
         )
         cls.db = _FakeDb()
-        app.dependency_overrides[get_db] = lambda: cls.db
+        app.dependency_overrides[cls.system_module.get_db] = lambda: cls.db
         cls.client = TestClient(app)
 
     def test_capabilities_degrade_cleanly_when_ops_agent_is_unavailable(self) -> None:
@@ -136,7 +164,7 @@ class SystemApiTests(unittest.TestCase):
                 error_message="Ops agent token is not configured.",
             )
         )
-        with patch("app.api.system.OpsAgentClient", return_value=mock_client):
+        with patch.object(self.system_module, "OpsAgentClient", return_value=mock_client):
             response = self.client.get("/system/capabilities")
 
         self.assertEqual(response.status_code, 200)
@@ -147,7 +175,7 @@ class SystemApiTests(unittest.TestCase):
 
     def test_containers_endpoint_proxies_allowlisted_payload(self) -> None:
         mock_client = _MockOpsAgentClient()
-        with patch("app.api.system.OpsAgentClient", return_value=mock_client):
+        with patch.object(self.system_module, "OpsAgentClient", return_value=mock_client):
             response = self.client.get("/system/containers")
 
         self.assertEqual(response.status_code, 200)
@@ -162,13 +190,14 @@ class SystemApiTests(unittest.TestCase):
                 error_message="Container 'tw-missing' not found",
             )
         )
-        with patch("app.api.system.OpsAgentClient", return_value=mock_client):
+        with patch.object(self.system_module, "OpsAgentClient", return_value=mock_client):
             response = self.client.get("/system/logs/missing")
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Container 'tw-missing' not found")
 
     def test_app_settings_persist_independently_from_live_nginx_apply(self) -> None:
+        self.db.row = self.AppSettings(data={})
         mock_client = _MockOpsAgentClient(
             nginx_result=OpsAgentClientResult(
                 delivered=False,
@@ -177,7 +206,7 @@ class SystemApiTests(unittest.TestCase):
                 error_message="Ops agent unavailable",
             )
         )
-        with patch("app.api.system.OpsAgentClient", return_value=mock_client):
+        with patch.object(self.system_module, "OpsAgentClient", return_value=mock_client):
             save_response = self.client.put(
                 "/system/app-settings",
                 json={

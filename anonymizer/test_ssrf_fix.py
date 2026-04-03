@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import patch
-from app import _is_allowed_target_url
+
+from anonymizer._test_support import load_anonymizer_app_module
+
+
+_is_allowed_target_url = load_anonymizer_app_module()._is_allowed_target_url
 
 def test_bug_04_ssrf_anonymizer_blocks_internal_dns():
     """Verify that internal hostnames that resolve to private IPs are blocked."""
@@ -20,3 +23,11 @@ def test_bug_04_ssrf_anonymizer_blocks_internal_dns():
         # and bypass the check. Now it resolves the hostname first.
         assert _is_allowed_target_url("http://postgres:5432") is False
         mock_dns.assert_called_with("postgres") # This proves BUG-04 is fixed!
+
+
+def test_anonymizer_blocks_explicit_private_ip_targets():
+    """Direct private IPs should never be accepted as relay destinations."""
+
+    assert _is_allowed_target_url("http://10.0.0.5") is False
+    assert _is_allowed_target_url("http://172.16.0.10") is False
+    assert _is_allowed_target_url("http://192.168.1.7") is False

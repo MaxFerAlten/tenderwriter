@@ -1,6 +1,6 @@
 import os
 import unittest
-from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -13,8 +13,9 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.models import AIGatewayTarget, AppSettings
-from app.privacy_policy import resolve_effective_privacy_policy
+with patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=Mock(name="engine")):
+    from app.models import AIGatewayTarget, AppSettings
+    from app.privacy_policy import resolve_effective_privacy_policy
 
 
 class _ScalarResult:

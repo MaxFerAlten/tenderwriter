@@ -27,6 +27,11 @@ class RerankedResult:
     original_score: float
     metadata: dict
     sources: list[str]
+    source_scores: dict[str, float] = None
+
+    def __post_init__(self):
+        if self.source_scores is None:
+            self.source_scores = {}
 
 
 class Reranker:
@@ -92,6 +97,7 @@ class Reranker:
                     original_score=result.get("score", 0.0),
                     metadata=result.get("metadata", {}),
                     sources=result.get("sources", []),
+                    source_scores=result.get("source_scores", {}),
                 )
             )
 

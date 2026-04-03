@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+from test_module_loaders import load_tenders_test_modules
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -17,19 +18,26 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.api.tenders import (
-    TenderClarificationUpdate,
-    TenderGateLifecycleRequest,
-    TenderOutcomeRecordRequest,
-    _requirement_to_response,
-    _tender_to_response,
-    close_tender_clarification,
-    draft_tender_clarification_response,
-    record_structured_outcome,
-    stop_tender_at_gate,
-    submit_tender_clarification_response,
-)
-from app.models import ComplianceStatus, ProposalSection, SectionStatus, Tender, TenderRequirement, TenderStatus
+_TENDERS_MODULES = load_tenders_test_modules()
+_TENDERS_MODULE = _TENDERS_MODULES.tenders
+
+TenderClarificationUpdate = _TENDERS_MODULES.tenders.TenderClarificationUpdate
+TenderGateLifecycleRequest = _TENDERS_MODULES.tenders.TenderGateLifecycleRequest
+TenderOutcomeRecordRequest = _TENDERS_MODULES.tenders.TenderOutcomeRecordRequest
+_requirement_to_response = _TENDERS_MODULES.tenders._requirement_to_response
+_tender_to_response = _TENDERS_MODULES.tenders._tender_to_response
+close_tender_clarification = _TENDERS_MODULES.tenders.close_tender_clarification
+draft_tender_clarification_response = _TENDERS_MODULES.tenders.draft_tender_clarification_response
+record_structured_outcome = _TENDERS_MODULES.tenders.record_structured_outcome
+stop_tender_at_gate = _TENDERS_MODULES.tenders.stop_tender_at_gate
+submit_tender_clarification_response = _TENDERS_MODULES.tenders.submit_tender_clarification_response
+
+ComplianceStatus = _TENDERS_MODULES.models.ComplianceStatus
+ProposalSection = _TENDERS_MODULES.models.ProposalSection
+SectionStatus = _TENDERS_MODULES.models.SectionStatus
+Tender = _TENDERS_MODULES.models.Tender
+TenderRequirement = _TENDERS_MODULES.models.TenderRequirement
+TenderStatus = _TENDERS_MODULES.models.TenderStatus
 
 
 class TenderRequirementResponseTests(unittest.TestCase):
@@ -117,8 +125,8 @@ class TenderClarificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             with self.subTest(route=route.__name__):
                 with (
-                    patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
-                    patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+                    patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+                    patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
                 ):
                     with self.assertRaises(HTTPException) as exc:
                         await route(
@@ -144,8 +152,8 @@ class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         data = TenderOutcomeRecordRequest(outcome="no_bid", reason_code="strategic_fit")
 
         with (
-            patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
-            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
         ):
             with self.assertRaises(HTTPException) as exc:
                 await record_structured_outcome(
@@ -173,8 +181,8 @@ class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
-            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
         ):
             response = await stop_tender_at_gate(
                 tender_id=13,

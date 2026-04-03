@@ -100,6 +100,8 @@ class RAGSourceResponse(BaseModel):
     text: str
     score: float
     metadata: dict
+    retriever_sources: list[str] = []
+    source_scores: dict[str, float] = {}
 
 
 class RAGResponse(BaseModel):
@@ -261,6 +263,8 @@ async def rag_query(
                 text=s["text"],
                 score=s.get("score", 0),
                 metadata=s.get("metadata", {}),
+                retriever_sources=s.get("retriever_sources", []),
+                source_scores=s.get("source_scores", {}),
             )
             for s in result.sources
         ],
@@ -366,6 +370,8 @@ async def generate_section(
                 text=s["text"],
                 score=s.get("score", 0),
                 metadata=s.get("metadata", {}),
+                retriever_sources=s.get("retriever_sources", []),
+                source_scores=s.get("source_scores", {}),
             )
             for s in result.sources
         ],

@@ -3,7 +3,7 @@
 Questo piano d'azione affronta le criticità di livello P0 (Sicurezza e Runtime RAG) evidenziate nell'analisi architetturale di `Analisi-salute-2026-04-03.md`.
 
 ## Goal Description
-L'obiettivo è stabilizzare la piattaforma affrontando immediatamente i problemi che invalidano la pipeline Hybrid RAG (degradata a Dense-only) e che espongono l'infrastruttura a vulnerabilità critiche (accesso root tramite Docker socket, SSRF, endpoint aperti).
+L'obiettivo è stabilizzare la piattaforma affrontando immediatamente i problemi che invalidano la pipeline Hybrid RAG (degradata a Dense-only) e che espongono l'infrastruttura a vulnerabilità critiche (servizi privilegiati con accesso host-level tramite Docker socket, SSRF, endpoint aperti).
 
 ## User Review Required
 > [!IMPORTANT]
@@ -19,7 +19,7 @@ L'obiettivo è stabilizzare la piattaforma affrontando immediatamente i problemi
 Le seguenti correzioni mirano a isolare l'ambiente backend e rimuovere l'esposizione di informazioni sensibili.
 
 #### [MODIFY] `docker-compose.yml`
-- **Rimozione Mount Socket**: Rimuovere il mount `/var/run/docker.sock` dal container `tw-backend`.
+- **Confinamento Mount Socket**: Mantenere il mount `/var/run/docker.sock` fuori da `tw-backend` e limitarlo ai soli servizi privilegiati strettamente necessari.
 - **Rotazione Secrets**: Sostituire password hardcoded (`DefaultPg2024Pass`, `DefaultNEO4J2024Pass`, `DefaultMinIO2024Pass`, `DefaultMM2024Pass`, `CHANGEME-mattermost-client-secret`) con variabili d'ambiente fornite esternamente (es. tramite un file `.env` validato o script di pre-avvio).
 
 #### [MODIFY] Codice Backend (Route e Servizi operativi)

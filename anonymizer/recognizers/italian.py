@@ -105,8 +105,40 @@ class CIGRecognizer(RegexRecognizer):
     pattern = re.compile(r"\b[0-9A-F]{10}\b", re.IGNORECASE)
 
 
+class PersonNameRecognizer(RegexRecognizer):
+    entity_type = "PERSON"
+    source = "regex:person_name"
+    score = 0.55
+    pattern = re.compile(
+        r"\b[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ']{1,30}(?:\s+[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ']{1,30}){1,3}\b"
+    )
+    _blocked_tokens = {
+        "Cf",
+        "Piva",
+        "Iban",
+        "Cig",
+        "Spa",
+        "Srl",
+        "Via",
+        "Viale",
+        "Piazza",
+        "Corso",
+    }
+
+    def is_valid(self, value: str) -> bool:
+        tokens = [token.strip() for token in value.split() if token.strip()]
+        if len(tokens) < 2 or len(tokens) > 4:
+            return False
+        if any(any(char.isdigit() for char in token) for token in tokens):
+            return False
+        if any(token in self._blocked_tokens for token in tokens):
+            return False
+        return True
+
+
 def get_structured_recognizers(mask_cig: bool = False) -> list[RegexRecognizer]:
     recognizers: list[RegexRecognizer] = [
+        PersonNameRecognizer(),
         CodiceFiscaleRecognizer(),
         PartitaIvaRecognizer(),
         IBANRecognizer(),

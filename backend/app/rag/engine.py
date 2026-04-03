@@ -423,6 +423,10 @@ class HybridRAGEngine:
 
                 # Sparse retriever (BM25)
                 self.sparse_retriever = SparseRetriever()
+                try:
+                    self._bootstrap_sparse_retriever()
+                except Exception as e:
+                    logger.warning("Sparse retriever bootstrap failed", error=str(e))
 
                 # Graph retriever (Neo4j)
                 self.graph_retriever = GraphRetriever()
@@ -449,6 +453,25 @@ class HybridRAGEngine:
             except Exception:
                 self._initialization_task = None
                 raise
+
+    def _bootstrap_sparse_retriever(self) -> None:
+        """
+        Rebuild the in-memory BM25 index from persisted dense-retriever payloads.
+
+        Dense payloads already contain the chunk text and metadata required for
+        sparse retrieval, so we can restore BM25 state after a restart without
+        adding a second persistence layer.
+        """
+        if self.sparse_retriever is None:
+            return
+
+        if self.dense_retriever is None or getattr(self.dense_retriever, "client", None) is None:
+            logger.warning("Skipping sparse retriever bootstrap because dense storage is unavailable")
+            return
+
+        texts, metadatas = self.dense_retriever.load_persisted_chunks(collection="documents")
+        self.sparse_retriever.build_index(texts, metadatas)
+        logger.info("Sparse retriever bootstrapped", chunks=len(texts))
 
     async def _retrieve_context_and_sources(
         self,
@@ -520,7 +543,7 @@ class HybridRAGEngine:
         if fused:
             try:
                 fused_dicts = [
-                    {"text": f.text, "score": f.score, "metadata": f.metadata, "sources": f.sources}
+                    {"text": f.text, "score": f.score, "metadata": f.metadata, "sources": f.sources, "source_scores": f.source_scores}
                     for f in fused
                 ]
                 reranked = self.reranker.rerank(
@@ -537,11 +560,15 @@ class HybridRAGEngine:
         for r in reranked:
             text = r.text if hasattr(r, "text") else r.get("text", "")
             metadata = r.metadata if hasattr(r, "metadata") else r.get("metadata", {})
+            retriever_sources = r.sources if hasattr(r, "sources") else r.get("sources", [])
+            source_scores = r.source_scores if hasattr(r, "source_scores") else r.get("source_scores", {})
             context_texts.append(text)
             sources.append({
                 "text": text[:200] + "..." if len(text) > 200 else text,
                 "score": r.score if hasattr(r, "score") else r.get("score", 0),
                 "metadata": metadata,
+                "retriever_sources": retriever_sources,
+                "source_scores": source_scores,
             })
 
         return RetrievedContext(

@@ -126,6 +126,63 @@ class DenseRetriever:
 
         return point_ids
 
+    def load_persisted_chunks(
+        self,
+        collection: str = "documents",
+        batch_size: int = 256,
+    ) -> tuple[list[str], list[dict]]:
+        """
+        Load persisted chunk payloads from Qdrant.
+
+        This is used to rebuild the sparse BM25 index after a process restart
+        without requiring a full re-ingestion pass.
+        """
+        if self.client is None:
+            raise RuntimeError("Dense retriever is not initialized")
+
+        full_name = f"{self.collection_prefix}{collection}"
+        texts: list[str] = []
+        metadatas: list[dict] = []
+        next_offset = None
+
+        while True:
+            response = self.client.scroll(
+                collection_name=full_name,
+                limit=batch_size,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            if isinstance(response, tuple):
+                points, next_offset = response
+            else:
+                points = getattr(response, "points", None)
+                next_offset = getattr(response, "next_page_offset", None)
+                if points is None:
+                    points = getattr(response, "result", None)
+
+            points = points or []
+
+            for point in points:
+                payload = getattr(point, "payload", None) or {}
+                text = payload.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+
+                texts.append(text)
+                metadatas.append({k: v for k, v in payload.items() if k != "text"})
+
+            if next_offset is None:
+                break
+
+        logger.info(
+            "Loaded persisted chunk payloads from Qdrant",
+            collection=full_name,
+            count=len(texts),
+        )
+        return texts, metadatas
+
     def search(
         self,
         query: str,

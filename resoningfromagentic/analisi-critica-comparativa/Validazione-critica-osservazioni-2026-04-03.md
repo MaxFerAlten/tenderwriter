@@ -25,18 +25,18 @@ docker-compose.yml:582 POSTGRES_PASSWORD: ${MM_DBPASS:-DefaultMM2024Pass}
 
 ---
 
-### 1.2 Docker Socket Montato nel Backend
+### 1.2 Docker Socket Attribuito al Backend con Perimetro Errato
 
-**Osservazione**: `/var/run/docker.sock` montato nel container `tw-backend`.
+**Osservazione**: `/var/run/docker.sock` attribuito al container `tw-backend`.
 
-**Stato: ✅ CONFERMATA**
+**Stato: ⚠️ PARZIALMENTE CONFERMATA**
 
 ```
 docker-compose.yml:251  - /var/run/docker.sock:/var/run/docker.sock
 docker-compose.yml:674  - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-**Validazione**: Il mount è presente in due servizi. L'osservazione è corretta. La documentazione dell'ops-agent indica che "This service is the only TenderWriter component allowed to access docker.sock", ma il mount è ancora presente nel backend.
+**Validazione**: Il mount è presente in due servizi, ma non nel backend. Le linee mostrate appartengono a `ops-agent` e `mattermost-bootstrap`; il service `backend` non monta `docker.sock`. Quindi il rischio di sicurezza è reale, ma il perimetro documentale iniziale era errato.
 
 ---
 
@@ -228,7 +228,7 @@ Esistono due servizi llama-server (`tw-llama-tender` e `tw-llama-opencode`) e un
 | Osservazione | Stato | Note |
 |-------------|-------|------|
 | Credenziali hardcoded | ✅ Confermata | Presenti in docker-compose.yml e frontend |
-| Docker socket mount | ✅ Confermata | Presente in 2 servizi |
+| Docker socket mount | ⚠️ Parzialmente confermata | Presente in 2 servizi privilegiati, non nel backend |
 | CHANGEME placeholder | ⚠️ Parziale | Non trovato, ma rischio reale |
 | SSRF anonymizer | ✅ Fix in corso | Test esistente |
 | Sparse/Graph a zero | ✅ Confermata | Corpus vuoto |
@@ -256,7 +256,7 @@ L'analisi architetturale contenuta nei documenti è **generalmente accurata** ma
 - Alcuni bug menzionati (BUG-01, BUG-03) non sono verificabili nell'attuale codebase
 
 **Conclusioni:**
-1. Le criticità di sicurezza P0 (Docker socket, credenziali hardcoded) sono reali e urgenti
+1. Le criticità di sicurezza P0 (servizi privilegiati con Docker socket, credenziali hardcoded) sono reali e urgenti
 2. Il problema dell'Hybrid RAG è operativo (corpus vuoto), non un bug di codice
 3. La maggior parte delle route API è correttamente protetta
 4. Il routing LLM verso external_anonymized è una scelta di design con implicazioni di latenza

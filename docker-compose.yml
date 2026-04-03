@@ -273,6 +273,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      DB_SCHEMA_BOOTSTRAP_MODE: ${DB_SCHEMA_BOOTSTRAP_MODE:-alembic}
       QDRANT_HOST: ${QDRANT_HOST}
       QDRANT_PORT: ${QDRANT_PORT}
       NEO4J_URI: ${NEO4J_URI}
@@ -321,13 +322,15 @@ services:
       ANONYMIZER_ENABLED: ${ANONYMIZER_ENABLED:-false}
       ANONYMIZER_URL: ${ANONYMIZER_URL:-http://tw-anonymizer:8090}
       ANONYMIZER_TIMEOUT: ${ANONYMIZER_TIMEOUT:-8}
-      ANONYMIZER_ADMIN_TOKEN: ${ANONYMIZER_ADMIN_TOKEN:-}
+      ANONYMIZER_ADMIN_TOKEN: ${ANONYMIZER_ADMIN_TOKEN:-tw-anonymizer-admin-token-change-me}
       EXTERNAL_LLM_URL: ${EXTERNAL_LLM_URL:-}
       EXTERNAL_LLM_MODEL: ${EXTERNAL_LLM_MODEL:-}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
+      - ./backend/migrations:/app/migrations
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 10s
@@ -472,6 +475,7 @@ services:
     environment:
       ANONYMIZER_REDIS_URL: ${ANONYMIZER_REDIS_URL:-redis://redis:6379/1}
       ANONYMIZER_NER_BACKEND: ${ANONYMIZER_NER_BACKEND:-presidio_spacy}
+      ANONYMIZER_ADMIN_TOKEN: ${ANONYMIZER_ADMIN_TOKEN:-tw-anonymizer-admin-token-change-me}
     ports:
       - "8090:8090"
 

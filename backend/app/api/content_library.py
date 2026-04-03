@@ -14,10 +14,11 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_user
 from app.db.database import get_db
 from app.models import ContentBlock
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── Schemas ──
@@ -57,6 +58,11 @@ class ContentBlockListResponse(BaseModel):
     total: int
 
 
+def _escape_ilike_search(term: str) -> str:
+    """Escape SQL wildcard characters for literal ILIKE matching."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ── Routes ──
 
 
@@ -77,9 +83,10 @@ async def list_content_blocks(
     if tag:
         query = query.where(ContentBlock.tags.any(tag))
     if search:
+        escaped_search = _escape_ilike_search(search)
         query = query.where(
-            ContentBlock.title.ilike(f"%{search}%")
-            | ContentBlock.content.ilike(f"%{search}%")
+            ContentBlock.title.ilike(f"%{escaped_search}%", escape="\\")
+            | ContentBlock.content.ilike(f"%{escaped_search}%", escape="\\")
         )
 
     count_query = select(func.count()).select_from(query.subquery())

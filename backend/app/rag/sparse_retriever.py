@@ -2,8 +2,8 @@
 TenderWriter — Sparse Retriever (BM25 Keyword Search)
 
 Performs keyword-based retrieval using the BM25 algorithm.
-Chunks and their BM25 tokens are stored in PostgreSQL for persistence.
-The BM25 index is rebuilt on startup and incrementally updated.
+Chunk texts and metadata are restored from persisted dense-retriever payloads
+on startup, then the in-memory BM25 index is rebuilt and incrementally updated.
 """
 
 from __future__ import annotations

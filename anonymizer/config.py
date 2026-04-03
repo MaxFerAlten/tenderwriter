@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8090
     redis_url: str = "memory://"
-    admin_token: str = ""
+    admin_token: str = "tw-anonymizer-admin-token-change-me"
     ner_backend: str = "presidio_spacy"
     default_ttl_seconds: int = 3600
     default_strategy: str = "redaction"

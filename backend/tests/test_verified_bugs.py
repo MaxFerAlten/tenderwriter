@@ -6,7 +6,15 @@ All tests are synchronous to avoid pytest-asyncio dependency.
 """
 import ast
 import json
+from pathlib import Path
 import pytest
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read_backend_source(relative_path: str) -> str:
+    return (_BACKEND_ROOT / relative_path).read_text(encoding="utf-8")
 
 
 # ── Bug 1: int(user_id) ValueError in legacy.py ──
@@ -18,8 +26,7 @@ def test_bug_legacy_int_valueerror():
     Before fix: ValueError propagates as 500.
     After fix: caught and returns HTTPException 401.
     """
-    with open("app/auth/legacy.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/auth/legacy.py")
 
     # The fix should wrap int(user_id) in a try/except ValueError
     # or use a safe conversion. We check that ValueError is handled.
@@ -52,8 +59,7 @@ def test_bug_onlyoffice_redis_json_loads():
 
     We verify the code has error handling around json.loads in get_session_metadata.
     """
-    with open("app/api/onlyoffice.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/api/onlyoffice.py")
 
     # Extract the get_session_metadata function body
     func_start = source.index("async def get_session_metadata")
@@ -126,8 +132,7 @@ def test_bug_pipeline_json_extraction_mixed():
     assert _extract_first_json_object(broken_for_old) == {"valid": True}
 
     # Verify pipeline.py uses the new function (not find/rfind)
-    with open("app/ingestion/pipeline.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/ingestion/pipeline.py")
     assert "_extract_first_json_object" in source, "pipeline.py should use _extract_first_json_object"
     # The old fragile pattern should be gone from _extract_and_graph
     extract_section = source[source.index("_extract_and_graph"):]
@@ -138,8 +143,7 @@ def test_bug_pipeline_json_extraction_mixed():
 
 def test_bug_main_traceback_print():
     """main.py:72-73 — startup errors go to stdout instead of structured logger."""
-    with open("app/main.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/main.py")
 
     tree = ast.parse(source)
 
@@ -158,12 +162,15 @@ def test_bug_main_traceback_print():
 
 def test_bug_rag_stream_history_no_try_except():
     """rag.py:108-115 — db.commit() failure in stream generator should be caught."""
-    with open("app/api/rag.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/api/rag.py")
 
     # Extract the stream_generator portion
     stream_start = source.index("async def stream_generator")
-    stream_end = source.index('yield "data: [DONE]', stream_start)
+    stream_end = source.find('yield _encode_sse_data("[DONE]")', stream_start)
+    if stream_end == -1:
+        stream_end = source.find("return StreamingResponse", stream_start)
+    if stream_end == -1:
+        stream_end = len(source)
     stream_body = source[stream_start:stream_end]
 
     # There should be error handling around the db operations

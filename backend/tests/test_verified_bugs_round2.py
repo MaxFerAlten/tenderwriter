@@ -3,15 +3,22 @@ Tests for bugs 7, 10, 13, 15 from codebase analysis.
 """
 import ast
 import json
+from pathlib import Path
 import pytest
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read_backend_source(relative_path: str) -> str:
+    return (_BACKEND_ROOT / relative_path).read_text(encoding="utf-8")
 
 
 # ── Bug 7: Tender update missing FOR UPDATE ──
 
 def test_bug7_tender_update_uses_for_update():
     """tenders.py — update_tender should use SELECT FOR UPDATE to prevent race conditions."""
-    with open("app/api/tenders.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/api/tenders.py")
 
     # Find the update_tender function
     func_start = source.index("async def update_tender")
@@ -30,8 +37,7 @@ def test_bug7_tender_update_uses_for_update():
 
 def test_bug10_qdrant_dimension_validation():
     """dense_retriever.py — _ensure_collection should validate dimension of existing collections."""
-    with open("app/rag/dense_retriever.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/rag/dense_retriever.py")
 
     func_start = source.index("def _ensure_collection")
     next_func = source.find("\n    def ", func_start + 1)
@@ -52,8 +58,7 @@ def test_bug10_qdrant_dimension_validation():
 
 def test_bug13_section_content_normalized():
     """proposals.py — section content should be normalized to dict before saving to JSONB."""
-    with open("app/api/proposals.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/api/proposals.py")
 
     # Check that the code handles str→dict conversion when saving section content.
     # The DB column is JSONB (expects dict for TipTap format), but the schema accepts str.
@@ -75,8 +80,7 @@ def test_bug13_section_content_normalized():
 
 def test_bug15_minio_uses_executor():
     """onlyoffice.py — MinIO sync operations should use run_in_executor to avoid blocking event loop."""
-    with open("app/api/onlyoffice.py", "r") as f:
-        source = f.read()
+    source = _read_backend_source("app/api/onlyoffice.py")
 
     # Find the MinioDocumentStore class
     class_start = source.index("class MinioDocumentStore")

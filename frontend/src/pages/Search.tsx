@@ -45,6 +45,7 @@ interface DisplayResult {
     text: string;
     score: number;
     sources: string[];
+    source_scores: Record<string, number>;
     metadata: Record<string, unknown>;
 }
 
@@ -67,7 +68,7 @@ function normalizeMatchScore(score: number): number {
     return Math.max(0, Math.min(1, normalized));
 }
 
-function SourceBadge({ source }: { source: string }) {
+function SourceBadge({ source, pct }: { source: string; pct?: number }) {
     const config: Record<string, { icon: typeof FileText; label: string; color: string }> = {
         dense: { icon: Database, label: 'Vector', color: 'var(--accent-blue)' },
         sparse: { icon: FileText, label: 'BM25', color: 'var(--accent-amber)' },
@@ -88,7 +89,7 @@ function SourceBadge({ source }: { source: string }) {
             color: c.color,
         }}>
             <c.icon size={10} />
-            {c.label}
+            {c.label}{pct !== undefined ? ` ${pct}%` : ''}
         </span>
     );
 }
@@ -386,7 +387,8 @@ export default function RAGSearch() {
                 sourceData.sources.map((s) => ({
                     text: s.text,
                     score: normalizeMatchScore(s.score),
-                    sources: inferSources(s.metadata),
+                    sources: s.retriever_sources?.length ? s.retriever_sources : inferSources(s.metadata),
+                    source_scores: s.source_scores ?? {},
                     metadata: s.metadata,
                 }))
             );
@@ -1008,9 +1010,15 @@ export default function RAGSearch() {
                                     >
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                                             <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                                {result.sources.map((s) => (
-                                                    <SourceBadge key={s} source={s} />
-                                                ))}
+                                                {(() => {
+                                                    const total = Object.values(result.source_scores).reduce((a, b) => a + b, 0);
+                                                    return result.sources.map((s) => {
+                                                        const pct = total > 0 && result.source_scores[s]
+                                                            ? Math.round((result.source_scores[s] / total) * 100)
+                                                            : undefined;
+                                                        return <SourceBadge key={s} source={s} pct={pct} />;
+                                                    });
+                                                })()}
                                             </div>
                                             <span style={{
                                                 fontSize: '0.75rem',

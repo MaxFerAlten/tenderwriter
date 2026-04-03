@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+from test_module_loaders import load_tenders_test_modules
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -17,15 +18,18 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.api.tenders import (
-    TenderCreate,
-    TenderUpdate,
-    _ensure_unique_tender_title,
-    _normalize_tender_title,
-    create_tender,
-    update_tender,
-)
-from app.models import Tender, TenderStatus
+_TENDERS_MODULES = load_tenders_test_modules()
+_TENDERS_MODULE = _TENDERS_MODULES.tenders
+
+TenderCreate = _TENDERS_MODULES.tenders.TenderCreate
+TenderUpdate = _TENDERS_MODULES.tenders.TenderUpdate
+_ensure_unique_tender_title = _TENDERS_MODULES.tenders._ensure_unique_tender_title
+_normalize_tender_title = _TENDERS_MODULES.tenders._normalize_tender_title
+create_tender = _TENDERS_MODULES.tenders.create_tender
+update_tender = _TENDERS_MODULES.tenders.update_tender
+
+Tender = _TENDERS_MODULES.models.Tender
+TenderStatus = _TENDERS_MODULES.models.TenderStatus
 
 
 class _ScalarResult:
@@ -117,10 +121,10 @@ class TenderTitleUniquenessTests(unittest.IsolatedAsyncioTestCase):
         db = _CreateTenderSession()
 
         with (
-            patch("app.api.tenders._ensure_unique_tender_title", AsyncMock(return_value="Tender Unico")) as unique_mock,
-            patch("app.api.tenders.ensure_official_chat_room", AsyncMock()),
-            patch("app.api.tenders.sync_chat_members_from_tender_permissions", AsyncMock()),
-            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "_ensure_unique_tender_title", AsyncMock(return_value="Tender Unico")) as unique_mock,
+            patch.object(_TENDERS_MODULE, "ensure_official_chat_room", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "sync_chat_members_from_tender_permissions", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()),
         ):
             response = await create_tender(
                 data=TenderCreate(title="  Tender   Unico  "),
@@ -141,14 +145,14 @@ class TenderTitleUniquenessTests(unittest.IsolatedAsyncioTestCase):
         db = _UpdateTenderSession(tender)
 
         with (
-            patch("app.api.tenders.check_tender_access", AsyncMock(return_value=tender)),
-            patch("app.api.tenders._ensure_unique_tender_title", AsyncMock(return_value="Nuovo titolo")) as unique_mock,
-            patch("app.api.tenders.sync_requirement_compliance_and_gate", AsyncMock(return_value=[])),
-            patch("app.api.tenders.ensure_official_chat_room", AsyncMock()),
-            patch("app.api.tenders.sync_chat_members_from_tender_permissions", AsyncMock()),
-            patch("app.api.tenders.publish_tender_sync", AsyncMock()),
-            patch("app.api.tenders.publish_domain_event", AsyncMock()),
-            patch("app.api.tenders.sync_tender_and_publish_event", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(_TENDERS_MODULE, "_ensure_unique_tender_title", AsyncMock(return_value="Nuovo titolo")) as unique_mock,
+            patch.object(_TENDERS_MODULE, "sync_requirement_compliance_and_gate", AsyncMock(return_value=[])),
+            patch.object(_TENDERS_MODULE, "ensure_official_chat_room", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "sync_chat_members_from_tender_permissions", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "publish_tender_sync", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "publish_domain_event", AsyncMock()),
+            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()),
         ):
             response = await update_tender(
                 tender_id=13,

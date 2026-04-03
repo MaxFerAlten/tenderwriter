@@ -452,7 +452,19 @@ async def _proxy_request(
 import time
 
 _cache = {}
+_cache_locks = {}
 _CACHE_TTL = 5.0
+
+
+def _get_cached_dynamic_targets(route_kind: str, now: float):
+    cached = _cache.get(route_kind)
+    if not cached:
+        return None
+
+    cached_time, cached_data = cached
+    if now - cached_time < _CACHE_TTL:
+        return cached_data
+    return None
 
 def _make_app(route_kind: str) -> FastAPI:
     """Factory to build a FastAPI app bound to a specific route."""
@@ -470,24 +482,28 @@ def _make_app(route_kind: str) -> FastAPI:
         """Compose the ordered list of upstream targets for this route."""
         now = time.time()
         cands = []
-        
+
         # Try fetching dynamic config from backend
-        dynamic_targets_raw = None
-        if route_kind in _cache:
-            cached_time, cached_data = _cache[route_kind]
-            if now - cached_time < _CACHE_TTL:
-                dynamic_targets_raw = cached_data
-                
+        dynamic_targets_raw = _get_cached_dynamic_targets(route_kind, now)
+
         if dynamic_targets_raw is None:
-            try:
-                # 2 second timeout to not block the gateway for too long
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    resp = await client.get(f"http://tw-backend:8000/api/gateway/active-targets?route={route_kind}")
-                    if resp.status_code == 200:
-                        dynamic_targets_raw = resp.json()
-                        _cache[route_kind] = (now, dynamic_targets_raw)
-            except Exception:
-                pass
+            cache_lock = _cache_locks.setdefault(route_kind, asyncio.Lock())
+            async with cache_lock:
+                now = time.time()
+                dynamic_targets_raw = _get_cached_dynamic_targets(route_kind, now)
+
+                if dynamic_targets_raw is None:
+                    try:
+                        # 2 second timeout to not block the gateway for too long
+                        async with httpx.AsyncClient(timeout=2.0) as client:
+                            resp = await client.get(
+                                f"http://tw-backend:8000/api/gateway/active-targets?route={route_kind}"
+                            )
+                            if resp.status_code == 200:
+                                dynamic_targets_raw = resp.json()
+                                _cache[route_kind] = (time.time(), dynamic_targets_raw)
+                    except Exception:
+                        pass
 
         if dynamic_targets_raw:
             for t in dynamic_targets_raw:

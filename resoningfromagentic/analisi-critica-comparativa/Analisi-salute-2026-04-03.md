@@ -84,13 +84,13 @@ Questa è l'area più critica. Dal bug report interno del progetto emergono **5
 |---|---|---|---|
 |BUG-04|SSRF nell'anonymizer|Critica|Documentato [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |BUG-05|Nessuna autenticazione su endpoint `files/{docKey}` OnlyOffice|Critica|Documentato [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
-|BUG-17|Docker socket montato nel backend (`/var/run/docker.sock`) = root sull'host|Critica|Documentato, scelto intenzionalmente [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
+|BUG-17|Docker socket montato solo in servizi privilegiati (`ops-agent`, `mattermost-bootstrap`), non nel backend|Critica|Rischio reale ma claim iniziale sul backend non confermato; verificato su `docker-compose.yml` e in [verifica-kiro-2026-04-03.md](/D:/tender/tenderwriter/resoningfromagentic/analisi-critica-comparativa/verifica-kiro-2026-04-03.md)|
 |—|MD5 per document keys (input prevedibile: ID sequenziali + timestamp)|Alta|Documentato [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |—|Password hardcoded nel `docker-compose.yml`: `DefaultPg2024Pass`, `DefaultNEO4J2024Pass`, `DefaultMinIO2024Pass`, `DefaultMM2024Pass`|Alta|Visibile in chiaro [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |—|Mattermost client secret placeholder `CHANGEME-mattermost-client-secret`|Alta|Visibile in chiaro [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |—|Credenziali admin default `admin/admin` attivabili da env|Media|Documentato [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 
-Il Docker socket montato nel backend è la vulnerabilità più grave in termini architetturali: se il backend viene compromesso, l'attaccante ottiene accesso root all'intera infrastruttura host. La scelta è stata documentata e motivata ("soluzione più elegante per il System Monitor"), ma non è accettabile in ambienti non isolati.[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
+Il rischio sul Docker socket resta architetturalmente grave, ma il perimetro corretto non è il backend applicativo: oggi il mount è confinato a `ops-agent` e `mattermost-bootstrap`. Se uno di quei servizi privilegiati viene compromesso, l'attaccante può comunque ottenere accesso host-level; quindi il tema resta P0, ma come problema di confinamento dei servizi privilegiati, non come esposizione diretta di `tw-backend`.
 
 ---
 
@@ -195,7 +195,7 @@ La presenza di un servizio anonymizer dedicato con riconoscitori italiani person
 
 ## Priorità di remediation
 
-1. **[IMMEDIATO — Sicurezza]** Rimuovere il Docker socket dal backend e isolarlo in `ops-agent` che già esiste per questo scopo; ruotare tutte le credenziali hardcoded e introdurre un vault (Doppler, HashiCorp Vault, o `.env` non versionato con validazione Pydantic).[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
+1. **[IMMEDIATO — Sicurezza]** Mantenere il Docker socket fuori dal backend, confinarlo ai soli servizi privilegiati strettamente necessari e verificare se `mattermost-bootstrap` possa evitarlo o restare ulteriormente isolato; ruotare tutte le credenziali hardcoded e introdurre un vault (Doppler, HashiCorp Vault, o `.env` non versionato con validazione Pydantic).
     
 2. **[SPRINT CORRENTE — Bug critici]** Chiudere BUG-01 (commit mancante), BUG-04 (SSRF), BUG-05 (auth OnlyOffice), BUG-03 (XSS) — sono già documentati, il costo di fix è basso, l'impatto in produzione è alto.[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
     
@@ -267,14 +267,14 @@ Il route LLM usato in tutti e tre i casi è `external_anonymized`, non il llama
 |---|---|---|---|
 |BUG-04|SSRF nell'anonymizer|Critica|Bug list interna [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |BUG-05|Endpoint `files/{docKey}` OnlyOffice senza autenticazione|Critica|Bug list interna [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
-|Infra|Docker socket `/var/run/docker.sock` montato nel backend|Critica|Scelta documentata [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
+|Infra|Docker socket presente solo in servizi privilegiati (`ops-agent`, `mattermost-bootstrap`), non nel backend|Critica|Rischio reale ma claim iniziale sul backend non confermato|
 |Infra|Password hardcoded in `docker-compose.yml`: `DefaultPg2024Pass`, `DefaultNEO4J2024Pass`, `DefaultMinIO2024Pass`, `DefaultMM2024Pass`|Alta|Visibili in chiaro [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |Infra|`CHANGEME-mattermost-client-secret` nel compose|Alta|Visibile in chiaro [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |BUG-03|XSS in generazione PDF|Alta|Bug list interna [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |Auth|MD5 per document keys con input prevedibile (ID sequenziali + timestamp)|Alta|Code review [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 |Auth|Credenziali `admin/admin` abilitabili da env senza rotazione forzata|Media|Documentato [](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)|
 
-Il Docker socket è la vulnerabilità più grave dal punto di vista architetturale: se il container `tw-backend` viene compromesso, l'attaccante acquisisce accesso root all'host. La motivazione ("soluzione più elegante per il System Monitor") è comprensibile ma non è una giustificazione architetturale — `ops-agent` esiste già per questo scopo e va utilizzato come proxy privilegiato.[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
+Il Docker socket resta la vulnerabilità architetturale più grave, ma non perché sia montato nel backend: il rischio vero è che esistano servizi privilegiati con accesso host-level. `ops-agent` è un pattern sensato se resta strettamente confinato e allowlisted; `mattermost-bootstrap` va trattato come mount eccezionale e da riesaminare separatamente.
 
 ---
 
@@ -380,7 +380,7 @@ La cartella `resoningfromagentic/` (con typo) contiene decine di sottocartelle
 |Architettura generale|7/10|🟢|16 servizi con responsabilità distinte, gateway con fallback, auth pluggable|
 |**Affidabilità runtime RAG**|**2/10**|**🔴**|**Sparse: 0/12 run; Graph: 0/12 run; Dense-only de facto**|
 |**Latenza LLM**|**3/10**|**🔴**|**110–167s per query QA; route external invece di locale**|
-|**Sicurezza applicativa**|**3.5/10**|**🔴**|**Docker socket, credenziali hardcoded, SSRF, XSS, auth gaps**|
+|**Sicurezza applicativa**|**3.5/10**|**🔴**|**Servizi privilegiati con Docker socket, credenziali hardcoded, SSRF, XSS, auth gaps**|
 |**Schema management**|**3/10**|**🔴**|**ALTER TABLE imperativo; nessun Alembic nel backend principale**|
 |Qualità del codice|6/10|🟡|Circuit breaker, lazy init buoni; BUG-01/03/08/09 aperti|
 |Testing|6/10|🟡|Ampio ma senza CI, senza coverage imposta, E2E non automatizzati|
@@ -409,7 +409,7 @@ La cartella `resoningfromagentic/` (con typo) contiene decine di sottocartelle
     
 2. **Aggiungere `Depends(get_current_user)`** sulle route della Content Library e verificare sistematicamente tutti i router per guardie mancanti.[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
     
-3. **Rimuovere Docker socket dal backend** e dirottare le chiamate privilegiate all'`ops-agent` che già esiste per questo scopo.[](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/130566781/2da7dd46-eb29-4e8e-b9c5-31e992c2f99d/my-output-fix.md)
+3. **Mantenere Docker socket fuori dal backend** e confinare i mount ai soli servizi privilegiati che ne hanno davvero bisogno, verificando in particolare se `mattermost-bootstrap` possa essere ulteriormente ridotto o eliminato.
     
 
 **Medio termine — debito tecnico strutturale:**

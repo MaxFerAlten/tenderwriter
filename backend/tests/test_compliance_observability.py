@@ -3,6 +3,7 @@
 import os
 import unittest
 from datetime import datetime, timezone
+from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -15,11 +16,17 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.models import ComplianceGateStatus, ComplianceStatus, ProposalSection, SectionStatus, TenderRequirement
-from app.services.compliance_observability import (
-    determine_auto_gate_target_status,
-    derive_requirement_compliance_status,
-)
+_MODELS_MODULE = load_models_test_module()
+_COMPLIANCE_MODULE = load_service_test_module("app.services.compliance_observability")
+
+ComplianceGateStatus = _MODELS_MODULE.ComplianceGateStatus
+ComplianceStatus = _MODELS_MODULE.ComplianceStatus
+ProposalSection = _MODELS_MODULE.ProposalSection
+SectionStatus = _MODELS_MODULE.SectionStatus
+TenderRequirement = _MODELS_MODULE.TenderRequirement
+
+determine_auto_gate_target_status = _COMPLIANCE_MODULE.determine_auto_gate_target_status
+derive_requirement_compliance_status = _COMPLIANCE_MODULE.derive_requirement_compliance_status
 
 
 class RequirementComplianceMappingTests(unittest.TestCase):

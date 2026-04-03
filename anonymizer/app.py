@@ -72,15 +72,8 @@ def _is_allowed_target_url(target_url: str) -> bool:
     except (ValueError, socket.gaierror):
         return False
 
-    return not any(
-        [
-            address.is_loopback,
-            address.is_link_local,
-            address.is_multicast,
-            address.is_reserved,
-            address.is_unspecified,
-        ]
-    )
+    # Relay targets must resolve to globally routable addresses only.
+    return address.is_global
 
 
 def _mask_session_token(session_id: str | None) -> str | None:

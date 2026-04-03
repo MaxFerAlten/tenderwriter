@@ -1289,7 +1289,7 @@ export interface ComplianceCheckRequest {
 
 export interface RAGResponse {
     answer: string;
-    sources: { text: string; score: number; metadata: Record<string, unknown> }[];
+    sources: { text: string; score: number; metadata: Record<string, unknown>; retriever_sources: string[]; source_scores: Record<string, number> }[];
     mode: string;
 }
 

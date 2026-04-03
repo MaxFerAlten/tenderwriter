@@ -7,10 +7,14 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-import app as anonymizer_app
-from config import Settings
-from engine import AnonymizerEngine, Detection
-from vault import RedisVault
+from anonymizer._test_support import import_local_module, load_anonymizer_app_module
+
+anonymizer_app = load_anonymizer_app_module()
+Settings = import_local_module("config").Settings
+_engine_module = import_local_module("engine")
+AnonymizerEngine = _engine_module.AnonymizerEngine
+Detection = _engine_module.Detection
+RedisVault = import_local_module("vault").RedisVault
 
 ADMIN_HEADERS = {"x-anonymizer-admin-token": "tw-anonymizer-admin-token-change-me"}
 

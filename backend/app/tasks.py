@@ -140,7 +140,7 @@ def export_proposal_pdf_task(self, proposal_id: int):
     """
     try:
         from weasyprint import HTML
-        from jinja2 import Template
+        from jinja2 import Environment, select_autoescape
         
         async def run():
             async_session = get_async_session()
@@ -189,7 +189,9 @@ def export_proposal_pdf_task(self, proposal_id: int):
                 </html>
                 """
                 
-                template = Template(template_str)
+                template = Environment(
+                    autoescape=select_autoescape(default=True, default_for_string=True)
+                ).from_string(template_str)
                 rendered_sections = [
                     {
                         "title": section.title,

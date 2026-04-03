@@ -1,5 +1,6 @@
 import os
 import unittest
+from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -14,8 +15,13 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.models import ContributionUnitStatus, SectionStatus
-from app.services.operational_workflow import build_section_transition_plan, derive_contribution_status
+_MODELS_MODULE = load_models_test_module()
+_WORKFLOW_MODULE = load_service_test_module("app.services.operational_workflow")
+
+ContributionUnitStatus = _MODELS_MODULE.ContributionUnitStatus
+SectionStatus = _MODELS_MODULE.SectionStatus
+build_section_transition_plan = _WORKFLOW_MODULE.build_section_transition_plan
+derive_contribution_status = _WORKFLOW_MODULE.derive_contribution_status
 
 
 class SectionTransitionPlanTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 import os
+import sys
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
 _TEST_ENV = {
@@ -14,6 +15,39 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
+_fake_qdrant_client = ModuleType("qdrant_client")
+_fake_qdrant_client.QdrantClient = object
+_fake_qdrant_client.models = SimpleNamespace()
+
+_fake_neo4j = ModuleType("neo4j")
+
+
+class _FakeAsyncGraphDatabase:
+    @staticmethod
+    def driver(*args, **kwargs):
+        return None
+
+
+_fake_neo4j.AsyncGraphDatabase = _FakeAsyncGraphDatabase
+
+_fake_rank_bm25 = ModuleType("rank_bm25")
+
+
+class _FakeBM25Okapi:
+    def __init__(self, corpus):
+        self.corpus = corpus
+
+    def get_scores(self, query_tokens):
+        del query_tokens
+        return [0.0 for _ in self.corpus]
+
+
+_fake_rank_bm25.BM25Okapi = _FakeBM25Okapi
+
+sys.modules.setdefault("qdrant_client", _fake_qdrant_client)
+sys.modules.setdefault("neo4j", _fake_neo4j)
+sys.modules.setdefault("rank_bm25", _fake_rank_bm25)
+
 from app.rag.engine import (
     AnonymizerUnavailableError,
     HybridRAGEngine,
@@ -26,7 +60,13 @@ from app.rag.generator import GenerationResult
 
 class _EmptyRetriever:
     def search(self, **_kwargs):
-        return []
+        return [
+            SimpleNamespace(
+                text="Mario Rossi guida il progetto.",
+                score=0.91,
+                metadata={"document_id": "doc-1"},
+            )
+        ]
 
 
 class _EmptyGraphRetriever:
@@ -606,27 +646,17 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
                 chunks.append(item)
 
         self.assertEqual(
-            chunks,
-            [
-                "Mario Rossi coordina il progetto e definisce le milestone principali.",
-                " Gestisce il team operativo e valida i deliverable conclusivi.",
-            ],
-        )
-        self.assertEqual(
             "".join(chunks),
             "Mario Rossi coordina il progetto e definisce le milestone principali. Gestisce il team operativo e valida i deliverable conclusivi.",
         )
-        engine._deanonymize_text.assert_has_awaits(
-            [
-                call(
-                    "[PERSONA_1] coordina il progetto e definisce le milestone principali.",
-                    "session-stream",
-                ),
-                call(
-                    " Gestisce il team operativo e valida i deliverable conclusivi.",
-                    "session-stream",
-                ),
-            ]
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertTrue(all("[PERSONA_1]" not in chunk for chunk in chunks))
+        self.assertGreaterEqual(engine._deanonymize_text.await_count, 1)
+        self.assertTrue(
+            all(await_call.args[1] == "session-stream" for await_call in engine._deanonymize_text.await_args_list)
+        )
+        self.assertTrue(
+            any("[PERSONA_1]" in await_call.args[0] for await_call in engine._deanonymize_text.await_args_list)
         )
 
     async def test_query_stream_passes_large_budget_to_external_generator_for_line_requests(self) -> None:

@@ -2,6 +2,7 @@ import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from test_module_loaders import load_rag_api_test_modules
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -14,8 +15,13 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-from app.api.rag import RAGQueryRequest, clear_search_history, rag_query
-from app.rag.engine import QueryMode
+_RAG_API_MODULES = load_rag_api_test_modules()
+_RAG_MODULE = _RAG_API_MODULES.rag
+
+RAGQueryRequest = _RAG_MODULE.RAGQueryRequest
+clear_search_history = _RAG_MODULE.clear_search_history
+rag_query = _RAG_MODULE.rag_query
+QueryMode = _RAG_API_MODULES.engine.QueryMode
 
 
 class _FakePolicy:
@@ -75,8 +81,8 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch("app.api.rag._resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
-            patch("app.api.rag._audit_rag_result", AsyncMock()),
+            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             response = await rag_query(
                 data=RAGQueryRequest(query="assignment", mode="search", save_history=False),
@@ -106,8 +112,8 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch("app.api.rag._resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
-            patch("app.api.rag._audit_rag_result", AsyncMock()),
+            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             await rag_query(
                 data=RAGQueryRequest(query="assignment", mode="search"),
@@ -137,8 +143,8 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch("app.api.rag._resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
-            patch("app.api.rag._audit_rag_result", AsyncMock()),
+            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             await rag_query(
                 data=RAGQueryRequest(

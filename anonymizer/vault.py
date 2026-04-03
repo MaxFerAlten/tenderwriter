@@ -52,6 +52,13 @@ class RedisVault:
         ttl_seconds: int | None = None,
     ) -> None:
         ttl = self.default_ttl_seconds if ttl_seconds is None else ttl_seconds
+        if ttl <= 0:
+            if self._redis is not None:
+                await self._redis.delete(f"session:{session_id}")
+                return
+            async with self._lock:
+                self._memory_sessions.pop(session_id, None)
+            return
         payload = {
             "mapping": mapping,
             "metadata": metadata or {},
@@ -73,7 +80,7 @@ class RedisVault:
             if item is None:
                 return None
             expires_at, payload = item
-            if expires_at < time.time():
+            if expires_at <= time.time():
                 self._memory_sessions.pop(session_id, None)
                 return None
             return payload

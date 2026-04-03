@@ -2,6 +2,7 @@
 TenderWriter — Database Connection & Session Management
 """
 
+import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -38,33 +39,24 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Create all tables on startup (dev only — use Alembic in production)."""
-    logger.info("Initializing database metadata")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        
-        # Simple migrations for newly added columns if table already existed
-        try:
-            from sqlalchemy import text
-            logger.info("Checking for missing compatibility columns")
-            # Add is_active if missing
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
-            # Add is_verified if missing
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE"))
-            # Add gateway target connection method if missing
-            await conn.execute(
-                text(
-                    "ALTER TABLE ai_gateway_targets "
-                    "ADD COLUMN IF NOT EXISTS connection_method VARCHAR(50) DEFAULT 'llama_cpp'"
-                )
+    """Initialize schema according to the configured bootstrap mode."""
+    bootstrap_mode = str(getattr(settings, "db_schema_bootstrap_mode", "alembic")).strip().lower()
+
+    if bootstrap_mode in {"alembic", "metadata_compat"}:
+        if bootstrap_mode == "metadata_compat":
+            logger.warning(
+                "DB_SCHEMA_BOOTSTRAP_MODE=metadata_compat is deprecated; delegating to Alembic migrations"
             )
-            # Add gateway target API key if missing
-            await conn.execute(
-                text("ALTER TABLE ai_gateway_targets ADD COLUMN IF NOT EXISTS api_key TEXT")
-            )
-            logger.info("Database schema compatibility check completed")
-        except Exception as e:
-            logger.warning("Database compatibility migration skipped", error=str(e))
+        else:
+            logger.info("Initializing database schema via Alembic migrations")
+
+        from app.db.migrations import run_migrations
+        await asyncio.to_thread(run_migrations, database_url=settings.database_url)
+        return
+
+    raise RuntimeError(
+        f"Unsupported DB_SCHEMA_BOOTSTRAP_MODE: {settings.db_schema_bootstrap_mode!r}"
+    )
 
 
 async def close_db():

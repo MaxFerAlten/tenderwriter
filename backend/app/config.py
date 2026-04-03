@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # --- PostgreSQL ---
     database_url: str = ""
+    db_schema_bootstrap_mode: str = "alembic"  # alembic | metadata_compat
 
     # --- Qdrant ---
     qdrant_host: str = "localhost"
@@ -72,7 +73,7 @@ class Settings(BaseSettings):
     anonymizer_enabled: bool = False
     anonymizer_url: str = "http://tw-anonymizer:8090"
     anonymizer_timeout: float = 8.0
-    anonymizer_admin_token: str = ""
+    anonymizer_admin_token: str = "tw-anonymizer-admin-token-change-me"
     anonymizer_max_retries: int = 2
     anonymizer_circuit_breaker_threshold: int = 3
     anonymizer_circuit_open_seconds: float = 30.0
@@ -125,7 +126,7 @@ class Settings(BaseSettings):
     rag_rrf_k: int = 60
     rag_dense_weight: float = 0.4
     rag_sparse_weight: float = 0.3
-    rag_graph_weight: float = 0.3
+    rag_graph_weight: float = 1.5
 
     # --- Chunking ---
     chunk_min_size: int = 200

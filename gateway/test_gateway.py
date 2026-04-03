@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import httpx
 import importlib
 import pytest
@@ -459,3 +460,55 @@ async def test_llama_explicit_chat_endpoint_uses_openai_compatible_payload(monke
     assert not seen["url"].endswith("/completion")
     assert seen["body"]["model"] == "qwen3.5-4b-claude-4.6-opus-reasoning-distilled"
     assert seen["body"]["messages"][0]["content"] == "Riassumi in 100 parole."
+
+
+@pytest.mark.asyncio
+async def test_dynamic_target_cache_coalesces_concurrent_backend_fetches(monkeypatch):
+    import gateway.app as gateway_app
+    gateway_app = importlib.reload(gateway_app)
+
+    app = gateway_app.create_app_tender()
+    health_endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/health")
+
+    release = asyncio.Event()
+    backend_fetches = 0
+
+    class _FakeDynamicResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [
+                {
+                    "base_url": "http://dynamic-target",
+                    "provider": "llama",
+                    "model_name": "dynamic-model",
+                    "use_anonymizer": False,
+                    "timeout_ms": 30000,
+                }
+            ]
+
+    class PatchedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            nonlocal backend_fetches
+            backend_fetches += 1
+            if backend_fetches == 1:
+                asyncio.get_running_loop().call_later(0.05, release.set)
+            await release.wait()
+            return _FakeDynamicResponse()
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", PatchedAsyncClient)
+
+    responses = await asyncio.gather(*(health_endpoint() for _ in range(5)))
+
+    assert backend_fetches == 1
+    assert all(response["dynamic_candidates"] == 1 for response in responses)

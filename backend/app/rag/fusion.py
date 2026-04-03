@@ -10,7 +10,7 @@ retrieval methods.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import structlog
 
@@ -26,6 +26,7 @@ class FusedResult:
     score: float
     metadata: dict
     sources: list[str]  # Which retrievers contributed this result
+    source_scores: dict[str, float] = field(default_factory=dict)  # Per-retriever RRF score contribution
 
 
 class RankFusion:
@@ -110,15 +111,23 @@ class RankFusion:
                         "score": 0.0,
                         "metadata": result.get("metadata", {}),
                         "sources": [],
+                        "source_scores": {},
                     }
 
                 score_map[key]["score"] += rrf_score
+                score_map[key]["source_scores"][source_name] = (
+                    score_map[key]["source_scores"].get(source_name, 0.0) + rrf_score
+                )
                 if source_name not in score_map[key]["sources"]:
                     score_map[key]["sources"].append(source_name)
 
                 # Merge metadata from multiple sources
+                # Priority: graph > sparse > dense for 'source' field to show correct retriever badge
                 for mk, mv in result.get("metadata", {}).items():
-                    if mk not in score_map[key]["metadata"]:
+                    # Always set 'source' if it's from graph, otherwise only set if not already set
+                    if mk == "source" and source_name == "graph":
+                        score_map[key]["metadata"][mk] = mv
+                    elif mk not in score_map[key]["metadata"]:
                         score_map[key]["metadata"][mk] = mv
 
         # Sort by fused score
@@ -134,6 +143,7 @@ class RankFusion:
                 score=r["score"],
                 metadata=r["metadata"],
                 sources=r["sources"],
+                source_scores=r.get("source_scores", {}),
             )
             for r in sorted_results
         ]
@@ -145,5 +155,15 @@ class RankFusion:
             graph=len(graph_results),
             fused=len(fused),
         )
+
+        # Debug: log sources for each fused result
+        for r in fused[:3]:  # Log first 3 for debugging
+            logger.debug(
+                "Fused result sources",
+                sources=r.sources,
+                source_scores=r.source_scores,
+                metadata_source=r.metadata.get("source", "unknown"),
+                text_preview=r.text[:50],
+            )
 
         return fused
