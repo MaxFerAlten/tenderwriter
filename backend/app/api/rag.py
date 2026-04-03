@@ -61,9 +61,12 @@ class RAGQueryRequest(BaseModel):
     mode: str = "qa"
     filters: dict = {}
     top_k: int | None = None
+    retrieval_top_k: int | None = None
     temperature: float = 0.3
     stream: bool = False
     save_history: bool = True
+    retrievers: dict[str, bool] = {}
+    fusion_weights: dict[str, float] = {}
     route_key: str = "tender"
     tender_id: int | None = None
 
@@ -172,7 +175,10 @@ async def rag_query(
         mode=mode,
         filters=data.filters,
         top_k=data.top_k,
+        retrieval_top_k=data.retrieval_top_k,
         temperature=data.temperature,
+        retrievers=data.retrievers,
+        fusion_weights=data.fusion_weights,
         anonymizer_enabled_override=policy.anonymizer_enabled,
         route_key=policy.route_key,
         tender_id=policy.tender_id,

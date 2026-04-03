@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
     Search as SearchIcon,
     Sparkles,
@@ -13,6 +13,9 @@ import {
     Clock,
     Trash2,
     Loader2,
+    SlidersHorizontal,
+    RotateCcw,
+    X,
 } from 'lucide-react';
 import { ragApi, type RAGResponse } from '../api/client';
 import {
@@ -25,6 +28,18 @@ import {
 } from './searchResultReveal';
 import { sanitizeSearchAnswer } from './searchAnswerSanitizer';
 import { collapseDuplicateSearchHistory } from './searchHistoryUtils';
+import {
+    buildRagSearchPayload,
+    cloneSearchSettings,
+    DEFAULT_SEARCH_SETTINGS,
+    getSearchPresetConfig,
+    getSearchSettingsSummary,
+    normalizeSearchSettings,
+    toggleRetriever,
+    type RetrieverKey,
+    type SearchPreset,
+    type SearchSettingsState,
+} from './searchSettings';
 
 interface DisplayResult {
     text: string;
@@ -78,6 +93,28 @@ function SourceBadge({ source }: { source: string }) {
     );
 }
 
+const SEARCH_PRESET_DETAILS: Array<{
+    key: Exclude<SearchPreset, 'custom'>;
+    title: string;
+    description: string;
+}> = [
+    {
+        key: 'balanced',
+        title: 'Balanced',
+        description: 'Matches the current HybridRAG behavior with an even mix of precision and coverage.',
+    },
+    {
+        key: 'precise',
+        title: 'Precise',
+        description: 'Lowers temperature and favors tighter, more stable vector/BM25 matches.',
+    },
+    {
+        key: 'exploratory',
+        title: 'Exploratory',
+        description: 'Broadens retrieved context and gives more influence to the knowledge graph.',
+    },
+];
+
 export default function RAGSearch() {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<DisplayResult[]>([]);
@@ -87,6 +124,9 @@ export default function RAGSearch() {
     const [error, setError] = useState<string | null>(null);
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [isClearingHistory, setIsClearingHistory] = useState(false);
+    const [searchSettings, setSearchSettings] = useState<SearchSettingsState>(() => cloneSearchSettings(DEFAULT_SEARCH_SETTINGS));
+    const [draftSearchSettings, setDraftSearchSettings] = useState<SearchSettingsState>(() => cloneSearchSettings(DEFAULT_SEARCH_SETTINGS));
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
     const streamControllerRef = useRef<AbortController | null>(null);
     const rawAnswerRef = useRef('');
     const pendingTokensRef = useRef<string[]>([]);
@@ -155,6 +195,34 @@ export default function RAGSearch() {
         } finally {
             setIsClearingHistory(false);
         }
+    };
+
+    const openSettingsModal = () => {
+        setDraftSearchSettings(cloneSearchSettings(searchSettings));
+        setShowSettingsModal(true);
+    };
+
+    const closeSettingsModal = () => {
+        setShowSettingsModal(false);
+    };
+
+    const applySettings = () => {
+        setSearchSettings(normalizeSearchSettings(draftSearchSettings));
+        setShowSettingsModal(false);
+    };
+
+    const applyPresetToDraft = (preset: Exclude<SearchPreset, 'custom'>) => {
+        setDraftSearchSettings((current) => ({
+            ...getSearchPresetConfig(preset),
+            saveHistory: current.saveHistory,
+        }));
+    };
+
+    const updateDraftRetriever = (key: RetrieverKey) => {
+        setDraftSearchSettings((current) => ({
+            ...toggleRetriever(current, key),
+            preset: 'custom',
+        }));
     };
 
     const applyResultRevealTransition = (
@@ -292,6 +360,7 @@ export default function RAGSearch() {
         streamControllerRef.current?.abort();
         cancelAnswerFlush();
         cancelSourcesReveal();
+        const effectiveSettings = normalizeSearchSettings(searchSettings);
         const controller = new AbortController();
         streamControllerRef.current = controller;
 
@@ -303,11 +372,14 @@ export default function RAGSearch() {
         setAnswer('');
 
         try {
-            const sourcePromise: Promise<DisplayResult[]> = ragApi.query({
+            const sourceRequest = buildRagSearchPayload(
                 query,
-                mode: 'search',
-                temperature: 0.3,
-                save_history: false,
+                'search',
+                effectiveSettings,
+                { save_history: false }
+            );
+            const sourcePromise: Promise<DisplayResult[]> = ragApi.query({
+                ...sourceRequest,
             }, {
                 signal: controller.signal,
             }).then((sourceData: RAGResponse) =>
@@ -325,11 +397,9 @@ export default function RAGSearch() {
             }).catch(() => undefined);
             void sourcePromise.catch(() => undefined);
 
-            const streamPromise = ragApi.streamQuery({
-                query,
-                mode: 'qa',
-                temperature: 0.3,
-            }, {
+            const streamPromise = ragApi.streamQuery(
+                buildRagSearchPayload(query, 'qa', effectiveSettings),
+                {
                 signal: controller.signal,
                 onToken: (token) => {
                     queueAnswerToken(token);
@@ -382,6 +452,7 @@ export default function RAGSearch() {
     };
 
     const visibleAnswer = sanitizeSearchAnswer(answer);
+    const searchSettingsSummary = getSearchSettingsSummary(searchSettings);
 
     return (
         <div className="animate-in" style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '2rem', height: '100%' }}>
@@ -453,46 +524,74 @@ export default function RAGSearch() {
                 </div>
 
                 {/* Search Bar */}
-                <div style={{ position: 'relative', marginBottom: '2rem' }}>
-                    <SearchIcon
-                        size={20}
-                        style={{
-                            position: 'absolute',
-                            left: '1.25rem',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            color: 'var(--text-muted)',
-                        }}
-                    />
-                    <input
-                        className="search-input"
-                        placeholder="Ask anything about your proposals, team, projects..."
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                        style={{ paddingLeft: '3.25rem', paddingRight: '5rem' }}
-                    />
-                    <button
-                        className="btn btn-primary btn-sm"
-                        onClick={isSearching ? stopStreaming : handleSearch}
-                        disabled={!isSearching && !query.trim()}
-                        style={{
-                            position: 'absolute',
-                            right: '0.5rem',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                        }}
-                    >
-                        {isSearching ? (
-                            <>
-                                <Square size={12} /> Stop
-                            </>
-                        ) : (
-                            <>
-                                <Send size={14} /> Search
-                            </>
-                        )}
-                    </button>
+                <div style={{ marginBottom: '2rem' }}>
+                    <div style={{ display: 'flex', gap: '0.9rem', alignItems: 'stretch', flexWrap: 'wrap' }}>
+                        <div style={{ position: 'relative', flex: '1 1 560px', minWidth: '320px' }}>
+                            <SearchIcon
+                                size={20}
+                                style={{
+                                    position: 'absolute',
+                                    left: '1.25rem',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    color: 'var(--text-muted)',
+                                }}
+                            />
+                            <input
+                                className="search-input"
+                                placeholder="Ask anything about your proposals, team, projects..."
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                                style={{ paddingLeft: '3.25rem' }}
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', minWidth: '168px' }}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={isSearching ? stopStreaming : handleSearch}
+                                disabled={!isSearching && !query.trim()}
+                                style={{ justifyContent: 'center' }}
+                            >
+                                {isSearching ? (
+                                    <>
+                                        <Square size={12} /> Stop
+                                    </>
+                                ) : (
+                                    <>
+                                        <Send size={14} /> Search
+                                    </>
+                                )}
+                            </button>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={openSettingsModal}
+                                style={{ justifyContent: 'center' }}
+                            >
+                                <SlidersHorizontal size={14} /> Customize
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.55rem', marginTop: '0.85rem' }}>
+                        {searchSettingsSummary.map((item) => (
+                            <span
+                                key={item}
+                                style={{
+                                    padding: '0.4rem 0.7rem',
+                                    borderRadius: 999,
+                                    border: '1px solid var(--border-color)',
+                                    background: 'color-mix(in srgb, var(--bg-secondary) 88%, transparent)',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                {item}
+                            </span>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Error */}
@@ -502,6 +601,315 @@ export default function RAGSearch() {
                         <span>{error}</span>
                     </div>
                 )}
+
+                <AnimatePresence>
+                    {showSettingsModal && (
+                        <motion.div
+                            className="modal-overlay"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={closeSettingsModal}
+                        >
+                            <motion.div
+                                className="modal-content search-settings-modal"
+                                style={{ maxWidth: '860px' }}
+                                initial={{ scale: 0.96, opacity: 0, y: 18 }}
+                                animate={{ scale: 1, opacity: 1, y: 0 }}
+                                exit={{ scale: 0.96, opacity: 0, y: 18 }}
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                <div className="modal-header">
+                                    <div>
+                                        <h3 style={{ margin: 0 }}>Customize LLM/RAG Search</h3>
+                                        <p className="page-subtitle" style={{ margin: '0.45rem 0 0 0' }}>
+                                            Tune retrieval, ranking, and model behavior. Streaming stays active and these settings apply to the next search.
+                                        </p>
+                                    </div>
+                                    <button
+                                        className="btn btn-icon btn-ghost"
+                                        onClick={closeSettingsModal}
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                </div>
+
+                                <div className="modal-body search-settings-modal-body" style={{ display: 'grid', gap: '1.25rem' }}>
+                                    <div className="card" style={{ padding: '1rem' }}>
+                                        <div style={{ marginBottom: '0.9rem' }}>
+                                            <h4 style={{ margin: 0, fontSize: '0.98rem' }}>Quick presets</h4>
+                                            <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                Start from a safe baseline, then fine-tune the individual controls.
+                                            </p>
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.8rem' }}>
+                                            {SEARCH_PRESET_DETAILS.map((preset) => (
+                                                <button
+                                                    key={preset.key}
+                                                    type="button"
+                                                    onClick={() => applyPresetToDraft(preset.key)}
+                                                    style={{
+                                                        textAlign: 'left',
+                                                        padding: '0.95rem',
+                                                        borderRadius: '14px',
+                                                        border: draftSearchSettings.preset === preset.key
+                                                            ? '1px solid var(--accent-blue)'
+                                                            : '1px solid var(--border-color)',
+                                                        background: draftSearchSettings.preset === preset.key
+                                                            ? 'color-mix(in srgb, var(--accent-blue) 14%, var(--bg-secondary))'
+                                                            : 'var(--bg-secondary)',
+                                                        cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.35rem' }}>
+                                                        {preset.title}
+                                                    </div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: 1.55 }}>
+                                                        {preset.description}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: '1rem' }}>
+                                        <div className="card" style={{ padding: '1rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' }}>
+                                                <div>
+                                                    <h4 style={{ margin: 0, fontSize: '0.98rem' }}>Recall retrieval</h4>
+                                                    <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                        How many candidates to pull from dense, BM25, and graph retrieval before fusion and reranking.
+                                                    </p>
+                                                </div>
+                                                <strong style={{ color: 'var(--text-primary)' }}>{draftSearchSettings.retrievalTopK}</strong>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min={8}
+                                                max={40}
+                                                step={1}
+                                                value={draftSearchSettings.retrievalTopK}
+                                                onChange={(event) => setDraftSearchSettings((current) => ({
+                                                    ...current,
+                                                    preset: 'custom',
+                                                    retrievalTopK: Number(event.target.value),
+                                                }))}
+                                                style={{ width: '100%', marginTop: '1rem' }}
+                                            />
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.4rem' }}>
+                                                <span>Narrow recall</span>
+                                                <span>Wide recall</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="card" style={{ padding: '1rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' }}>
+                                                <div>
+                                                    <h4 style={{ margin: 0, fontSize: '0.98rem' }}>LLM temperature</h4>
+                                                    <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                        Lower for source-grounded answers, higher for exploratory rephrasing.
+                                                    </p>
+                                                </div>
+                                                <strong style={{ color: 'var(--text-primary)' }}>{draftSearchSettings.temperature.toFixed(2)}</strong>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={1}
+                                                step={0.05}
+                                                value={draftSearchSettings.temperature}
+                                                onChange={(event) => setDraftSearchSettings((current) => ({
+                                                    ...current,
+                                                    preset: 'custom',
+                                                    temperature: Number(event.target.value),
+                                                }))}
+                                                style={{ width: '100%', marginTop: '1rem' }}
+                                            />
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.4rem' }}>
+                                                <span>Grounded</span>
+                                                <span>Creative</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="card" style={{ padding: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' }}>
+                                            <div>
+                                                <h4 style={{ margin: 0, fontSize: '0.98rem' }}>Final sources in context</h4>
+                                                <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                    How many sources to keep after fusion and reranking for the answer and the on-page source list.
+                                                </p>
+                                            </div>
+                                            <strong style={{ color: 'var(--text-primary)' }}>{draftSearchSettings.topK}</strong>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min={3}
+                                            max={12}
+                                            step={1}
+                                            value={draftSearchSettings.topK}
+                                            onChange={(event) => setDraftSearchSettings((current) => ({
+                                                ...current,
+                                                preset: 'custom',
+                                                topK: Number(event.target.value),
+                                            }))}
+                                            style={{ width: '100%', marginTop: '1rem' }}
+                                        />
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.4rem' }}>
+                                            <span>Lean</span>
+                                            <span>More sources</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="card" style={{ padding: '1rem' }}>
+                                        <div style={{ marginBottom: '1rem' }}>
+                                            <h4 style={{ margin: 0, fontSize: '0.98rem' }}>Active retrievers and fusion weights</h4>
+                                            <p style={{ margin: '0.35rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                                Choose which channels to use and how much each one should influence the final fusion rank. At least one retriever always stays enabled.
+                                            </p>
+                                        </div>
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.85rem' }}>
+                                            {([
+                                                {
+                                                    key: 'dense',
+                                                    title: 'Vector',
+                                                    description: 'Semantic retrieval over embeddings based on meaning similarity.',
+                                                    accent: 'var(--accent-blue)',
+                                                },
+                                                {
+                                                    key: 'sparse',
+                                                    title: 'BM25',
+                                                    description: 'Lexical and exact matching, useful for technical keywords and specific terms.',
+                                                    accent: 'var(--accent-amber)',
+                                                },
+                                                {
+                                                    key: 'graph',
+                                                    title: 'Knowledge Graph',
+                                                    description: 'Structured relationships across entities, projects, team members, and requirements.',
+                                                    accent: 'var(--accent-purple)',
+                                                },
+                                            ] as Array<{ key: RetrieverKey; title: string; description: string; accent: string }>).map((retriever) => (
+                                                <div
+                                                    key={retriever.key}
+                                                    style={{
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: '14px',
+                                                        padding: '0.95rem',
+                                                        background: 'var(--bg-secondary)',
+                                                    }}
+                                                >
+                                                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.7rem' }}>
+                                                        <div>
+                                                            <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+                                                                {retriever.title}
+                                                            </div>
+                                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', lineHeight: 1.45, marginTop: '0.25rem' }}>
+                                                                {retriever.description}
+                                                            </div>
+                                                        </div>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={draftSearchSettings.retrievers[retriever.key]}
+                                                            onChange={() => updateDraftRetriever(retriever.key)}
+                                                        />
+                                                    </label>
+
+                                                    <div style={{ opacity: draftSearchSettings.retrievers[retriever.key] ? 1 : 0.5 }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                            <span style={{ fontSize: '0.76rem', fontWeight: 700, color: retriever.accent }}>
+                                                                Fusion weight
+                                                            </span>
+                                                            <span style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                                                                {draftSearchSettings.fusionWeights[retriever.key].toFixed(2)}
+                                                            </span>
+                                                        </div>
+                                                        <input
+                                                            type="range"
+                                                            min={0.05}
+                                                            max={1.5}
+                                                            step={0.05}
+                                                            disabled={!draftSearchSettings.retrievers[retriever.key]}
+                                                            value={draftSearchSettings.fusionWeights[retriever.key]}
+                                                            onChange={(event) => setDraftSearchSettings((current) => ({
+                                                                ...current,
+                                                                preset: 'custom',
+                                                                fusionWeights: {
+                                                                    ...current.fusionWeights,
+                                                                    [retriever.key]: Number(event.target.value),
+                                                                },
+                                                            }))}
+                                                            style={{ width: '100%' }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="card" style={{ padding: '1rem' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.9rem' }}>
+                                                <div>
+                                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Save to history</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                                                        When disabled, the current search is not stored in the sidebar history.
+                                                    </div>
+                                                </div>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={draftSearchSettings.saveHistory}
+                                                    onChange={(event) => setDraftSearchSettings((current) => ({
+                                                        ...current,
+                                                        preset: 'custom',
+                                                        saveHistory: event.target.checked,
+                                                    }))}
+                                                />
+                                            </label>
+
+                                            <div style={{
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '12px',
+                                                padding: '0.9rem',
+                                                background: 'color-mix(in srgb, var(--accent-blue) 8%, var(--bg-secondary))',
+                                            }}>
+                                                <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.35rem' }}>
+                                                    Streaming preserved
+                                                </div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: 1.55 }}>
+                                                    Answers still arrive token by token exactly as before. This modal customizes retrieval and ranking without automatically shortening the output.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="modal-footer">
+                                    <button
+                                        className="btn btn-ghost"
+                                        onClick={() => setDraftSearchSettings(cloneSearchSettings(DEFAULT_SEARCH_SETTINGS))}
+                                    >
+                                        <RotateCcw size={15} /> Reset default
+                                    </button>
+                                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                        <button
+                                            className="btn btn-ghost"
+                                            onClick={closeSettingsModal}
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={applySettings}
+                                        >
+                                            Applica impostazioni
+                                        </button>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* Example Queries */}
                 {!hasSearched && (

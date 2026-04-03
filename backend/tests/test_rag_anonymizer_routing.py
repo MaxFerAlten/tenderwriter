@@ -385,6 +385,82 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("sviluppa una risposta un po' piu completa del minimo", constraints)
 
+    def test_resolve_retriever_selection_falls_back_to_defaults_when_everything_is_disabled(self) -> None:
+        engine = self._build_engine()
+
+        selection = engine._resolve_retriever_selection(
+            RAGQuery(
+                text="assignment",
+                mode=QueryMode.QA,
+                retrievers={"dense": False, "sparse": False, "graph": False},
+            )
+        )
+
+        self.assertEqual(selection, {"dense": True, "sparse": True, "graph": True})
+
+    def test_resolve_fusion_weights_clamps_invalid_values(self) -> None:
+        engine = self._build_engine()
+
+        weights = engine._resolve_fusion_weights(
+            RAGQuery(
+                text="assignment",
+                mode=QueryMode.QA,
+                fusion_weights={"dense": 5, "sparse": 0, "graph": 0.75},
+            )
+        )
+
+        self.assertEqual(weights, {"dense": 2.0, "sparse": 0.05, "graph": 0.75})
+
+    async def test_retrieve_context_and_sources_skips_disabled_retrievers(self) -> None:
+        engine = self._build_engine()
+        engine.dense_retriever = Mock(
+            search=Mock(
+                return_value=[
+                    SimpleNamespace(
+                        text="Risultato dense",
+                        score=0.9,
+                        metadata={"source": "dense"},
+                    )
+                ]
+            )
+        )
+        engine.sparse_retriever = Mock(search=Mock(return_value=[]))
+        engine.graph_retriever = SimpleNamespace(
+            search=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        text="Risultato graph",
+                        score=0.8,
+                        metadata={"source": "graph"},
+                    )
+                ]
+            )
+        )
+        engine.reranker = SimpleNamespace(
+            rerank=Mock(
+                return_value=[
+                    {
+                        "text": "Risultato dense",
+                        "score": 0.9,
+                        "metadata": {"source": "dense"},
+                    }
+                ]
+            )
+        )
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text="assignment",
+                mode=QueryMode.QA,
+                retrievers={"dense": True, "sparse": False, "graph": True},
+            )
+        )
+
+        engine.dense_retriever.search.assert_called_once()
+        engine.sparse_retriever.search.assert_not_called()
+        engine.graph_retriever.search.assert_awaited_once()
+        self.assertIn("Risultato dense", retrieved.context)
+
     def test_math_rendering_constraints_are_added_when_requested(self) -> None:
         engine = self._build_engine()
 

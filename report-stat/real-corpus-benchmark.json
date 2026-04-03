@@ -1,0 +1,933 @@
+{
+  "health": {
+    "engine_initialized": true,
+    "dense_retriever": true,
+    "sparse_retriever": true,
+    "sparse_corpus_size": 0,
+    "graph_retriever": true,
+    "generator": true,
+    "ollama_available": true
+  },
+  "corpus_snapshot": {
+    "collection_name": "tw_documents",
+    "vector_points": 83,
+    "chunk_text_count": 83,
+    "unique_document_ids": 1,
+    "unique_source_files": 1
+  },
+  "backend_log_summary": {
+    "available": true,
+    "bm25_empty_count": 12,
+    "graph_failure_count": 12,
+    "fallback_answer_count": 1,
+    "fusion_rows": [
+      {
+        "dense": 5,
+        "fused": 5,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 4,
+        "fused": 4,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 8,
+        "fused": 8,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 5,
+        "fused": 5,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 5,
+        "fused": 5,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 4,
+        "fused": 4,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 8,
+        "fused": 8,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 4,
+        "fused": 4,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 5,
+        "fused": 5,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 4,
+        "fused": 4,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 8,
+        "fused": 8,
+        "graph": 0,
+        "sparse": 0
+      },
+      {
+        "dense": 8,
+        "fused": 8,
+        "graph": 0,
+        "sparse": 0
+      }
+    ],
+    "graph_error_detail": "{neo4j_code: Neo.ClientError.Statement.ParameterMissing} {message: Expected parameter(s): query, top_k} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}",
+    "effective_dense_runs": 12,
+    "effective_sparse_runs": 0,
+    "effective_graph_runs": 0
+  },
+  "scenario_rankings": [
+    {
+      "key": "balanced",
+      "title": "Balanced search",
+      "query": "riassumimi il problema di assegnamento e le sue applicazioni in 300 parole",
+      "ranking": [
+        {
+          "preset": "balanced",
+          "title": "Balanced",
+          "metrics": {
+            "source_count": 5,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 1.0,
+            "mean_score": 3.89612,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:2",
+              "doc:2#chunk:0",
+              "doc:2#chunk:42",
+              "doc:2#chunk:53",
+              "doc:2#chunk:3"
+            ],
+            "sources": [
+              {
+                "score": 6.3597,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 4.1656,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 3.6241,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  1,
+                  4
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 2.6696,
+                "chunk_ref": "doc:2#chunk:53",
+                "matched_groups": [
+                  4
+                ],
+                "preview": "Il risultato in 2.3 vale più in generale per misure di probabilità e sottoinsiemi di R arbitrari, come riportato in [5, §2.2, Teorema 2.9]. Inoltre, riusciamo a esprimere il costo di tale problema di trasporto in funzione dei quantili delle"
+              },
+              {
+                "score": 2.6616,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  3,
+                  4
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              }
+            ],
+            "depth_fit": 1.0,
+            "mean_score_normalized": 0.9828448901081575
+          },
+          "score": 0.9974
+        },
+        {
+          "preset": "precise",
+          "title": "Precise",
+          "metrics": {
+            "source_count": 4,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 1.0,
+            "mean_score": 3.964125,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:2",
+              "doc:2#chunk:0",
+              "doc:2#chunk:53",
+              "doc:2#chunk:3"
+            ],
+            "sources": [
+              {
+                "score": 6.3597,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 4.1656,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 2.6696,
+                "chunk_ref": "doc:2#chunk:53",
+                "matched_groups": [
+                  4
+                ],
+                "preview": "Il risultato in 2.3 vale più in generale per misure di probabilità e sottoinsiemi di R arbitrari, come riportato in [5, §2.2, Teorema 2.9]. Inoltre, riusciamo a esprimere il costo di tale problema di trasporto in funzione dei quantili delle"
+              },
+              {
+                "score": 2.6616,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  3,
+                  4
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              }
+            ],
+            "depth_fit": 0.75,
+            "mean_score_normalized": 1.0
+          },
+          "score": 0.9
+        },
+        {
+          "preset": "exploratory",
+          "title": "Exploratory",
+          "metrics": {
+            "source_count": 8,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 1.0,
+            "mean_score": 3.4349375,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:2",
+              "doc:2#chunk:48",
+              "doc:2#chunk:0",
+              "doc:2#chunk:9",
+              "doc:2#chunk:42"
+            ],
+            "sources": [
+              {
+                "score": 6.3597,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 4.3444,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  3,
+                  4
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 4.1656,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 3.855,
+                "chunk_ref": "doc:2#chunk:9",
+                "matched_groups": [
+                  0,
+                  3
+                ],
+                "preview": "eseguire più incarichi possibili, assegnando ciascun incarico ad al più un impiegato e ciascun im- piegato al più un incarico, in modo che il costo totale di impiego sia minimo. Più in generale, il problema di assegnamento può essere visto"
+              },
+              {
+                "score": 3.6241,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  1,
+                  4
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 2.6696,
+                "chunk_ref": "doc:2#chunk:53",
+                "matched_groups": [
+                  4
+                ],
+                "preview": "Il risultato in 2.3 vale più in generale per misure di probabilità e sottoinsiemi di R arbitrari, come riportato in [5, §2.2, Teorema 2.9]. Inoltre, riusciamo a esprimere il costo di tale problema di trasporto in funzione dei quantili delle"
+              },
+              {
+                "score": 2.6616,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  3,
+                  4
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              },
+              {
+                "score": -0.2005,
+                "chunk_ref": "doc:2#chunk:7",
+                "matched_groups": [
+                  3
+                ],
+                "preview": "0 oppure ±1. 5 1.2. PROBLEMA DI MASSIMO ACCOPPIAMENTO: UNA GENERALIZZAZIONE Dimostrazione: Sia Q una qualsiasi sottomatrice quadrata k × k di A. Dimostriamo il risultato per induzione su k."
+              }
+            ],
+            "depth_fit": 0.25,
+            "mean_score_normalized": 0.8665058493362344
+          },
+          "score": 0.68
+        }
+      ],
+      "margin_vs_second": 0.0974,
+      "qa_smoke": {
+        "preset": "balanced",
+        "llm_route": "external_anonymized",
+        "anonymized": true,
+        "fallback_answer": false,
+        "answer_word_count": 311,
+        "duration_seconds": 110.6,
+        "answer_preview": "Il problema di assegnamento è un classico problema di ottimizzazione combinatoria che trova applicazioni in diversi contesti. In sostanza, si tratta di trovare l'allocazione ottimale di risorse a diverse attività, minimizzando un certo cost"
+      }
+    },
+    {
+      "key": "precise",
+      "title": "Precise search",
+      "query": "spiegami il politopo di Birkhoff e le matrici di permutazione nel problema di assegnamento in 200 parole",
+      "ranking": [
+        {
+          "preset": "precise",
+          "title": "Precise",
+          "metrics": {
+            "source_count": 4,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 1.0,
+            "mean_score": 6.237525,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:42",
+              "doc:2#chunk:44",
+              "doc:2#chunk:45"
+            ],
+            "sources": [
+              {
+                "score": 6.9091,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 6.8086,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  1,
+                  2
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 6.6247,
+                "chunk_ref": "doc:2#chunk:44",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "22 2.2. MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Proposizione 2.3. Se m = n e a = b = 1n/n, allora esiste una soluzione ottima P ∗ σ del problema (2.3). In particolare, la soluzione P ∗ σ è una matrice di permutazione ed è associata a"
+              },
+              {
+                "score": 4.6077,
+                "chunk_ref": "doc:2#chunk:45",
+                "matched_groups": [
+                  0,
+                  1
+                ],
+                "preview": "matrici di permutazione, così è A. □ Osservazione 8. L’insieme delle matrici di permutazione è contenuto nel- l’insieme dei vertici del politopo di Birkhoﬀ, vale a dire che ogni matrice di permutazione non può essere espressa come combinazi"
+              }
+            ],
+            "depth_fit": 1.0,
+            "mean_score_normalized": 0.9936415162868939
+          },
+          "score": 0.999
+        },
+        {
+          "preset": "balanced",
+          "title": "Balanced",
+          "metrics": {
+            "source_count": 5,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 1.0,
+            "mean_score": 6.27744,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:42",
+              "doc:2#chunk:44",
+              "doc:2#chunk:43",
+              "doc:2#chunk:45"
+            ],
+            "sources": [
+              {
+                "score": 6.9091,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 6.8086,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  1,
+                  2
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 6.6247,
+                "chunk_ref": "doc:2#chunk:44",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "22 2.2. MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Proposizione 2.3. Se m = n e a = b = 1n/n, allora esiste una soluzione ottima P ∗ σ del problema (2.3). In particolare, la soluzione P ∗ σ è una matrice di permutazione ed è associata a"
+              },
+              {
+                "score": 6.4371,
+                "chunk_ref": "doc:2#chunk:43",
+                "matched_groups": [
+                  0,
+                  1,
+                  3
+                ],
+                "preview": "necessariamente minore quando si considerano tutte le matrici del politopo di Birkhoﬀanziché solo quelle di permutazione, ossia Lc(1n, 1n) ≤min σ∈Sn ⟨C, Pσ⟩. Tuttavia, quando i vettori di probabilità sono vettori di probabilità uniforme, ov"
+              },
+              {
+                "score": 4.6077,
+                "chunk_ref": "doc:2#chunk:45",
+                "matched_groups": [
+                  0,
+                  1
+                ],
+                "preview": "matrici di permutazione, così è A. □ Osservazione 8. L’insieme delle matrici di permutazione è contenuto nel- l’insieme dei vertici del politopo di Birkhoﬀ, vale a dire che ogni matrice di permutazione non può essere espressa come combinazi"
+              }
+            ],
+            "depth_fit": 0.75,
+            "mean_score_normalized": 1.0
+          },
+          "score": 0.9
+        },
+        {
+          "preset": "exploratory",
+          "title": "Exploratory",
+          "metrics": {
+            "source_count": 8,
+            "group_coverage": 1.0,
+            "source_density": 0.875,
+            "top1_group_coverage": 1.0,
+            "mean_score": 4.292075,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:42",
+              "doc:2#chunk:44",
+              "doc:2#chunk:43",
+              "doc:2#chunk:45"
+            ],
+            "sources": [
+              {
+                "score": 6.9091,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 6.8086,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  1,
+                  2
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 6.6247,
+                "chunk_ref": "doc:2#chunk:44",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "22 2.2. MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Proposizione 2.3. Se m = n e a = b = 1n/n, allora esiste una soluzione ottima P ∗ σ del problema (2.3). In particolare, la soluzione P ∗ σ è una matrice di permutazione ed è associata a"
+              },
+              {
+                "score": 6.4371,
+                "chunk_ref": "doc:2#chunk:43",
+                "matched_groups": [
+                  0,
+                  1,
+                  3
+                ],
+                "preview": "necessariamente minore quando si considerano tutte le matrici del politopo di Birkhoﬀanziché solo quelle di permutazione, ossia Lc(1n, 1n) ≤min σ∈Sn ⟨C, Pσ⟩. Tuttavia, quando i vettori di probabilità sono vettori di probabilità uniforme, ov"
+              },
+              {
+                "score": 4.6077,
+                "chunk_ref": "doc:2#chunk:45",
+                "matched_groups": [
+                  0,
+                  1
+                ],
+                "preview": "matrici di permutazione, così è A. □ Osservazione 8. L’insieme delle matrici di permutazione è contenuto nel- l’insieme dei vertici del politopo di Birkhoﬀ, vale a dire che ogni matrice di permutazione non può essere espressa come combinazi"
+              },
+              {
+                "score": 3.3998,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  3
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 2.536,
+                "chunk_ref": "doc:2#chunk:63",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "|xn −xn−1|p ∗   , dove gli elementi ∗sulla diagonale sono molto grandi, in modo da costringere i punti a muoversi. 30  2.6. SPERIMENTAZIONI NUMERICHE Figura 2.1: Punti equidistanti sulla circonferenza unitaria Ad ogni sperimentazione"
+              },
+              {
+                "score": -2.9864,
+                "chunk_ref": "doc:2#chunk:4",
+                "matched_groups": [],
+                "preview": "illustriamo nel dettaglio l’algoritmo di Hopcroft e Karp (Algoritmo 2), utilizzati rispettivamente per determinare un accoppiamento massimo nel caso di graﬁbipartiti e di graﬁ non orientati e non pesati. Inﬁne, osserviamo che l’algoritmo di"
+              }
+            ],
+            "depth_fit": 0.0,
+            "mean_score_normalized": 0.6837301511444155
+          },
+          "score": 0.5276
+        }
+      ],
+      "margin_vs_second": 0.099,
+      "qa_smoke": {
+        "preset": "precise",
+        "llm_route": "external_anonymized",
+        "anonymized": true,
+        "fallback_answer": true,
+        "answer_word_count": 11,
+        "duration_seconds": 60.9,
+        "answer_preview": "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
+      }
+    },
+    {
+      "key": "exploratory",
+      "title": "Exploratory search",
+      "query": "spiegami la relazione tra problema di assegnamento, massimo accoppiamento e trasporto ottimo secondo Kantorovich in 300 parole",
+      "ranking": [
+        {
+          "preset": "exploratory",
+          "title": "Exploratory",
+          "metrics": {
+            "source_count": 8,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 0.8,
+            "mean_score": 5.0881875,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:0",
+              "doc:2#chunk:2",
+              "doc:2#chunk:10",
+              "doc:2#chunk:3"
+            ],
+            "sources": [
+              {
+                "score": 7.4108,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 7.1787,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 6.7897,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 5.676,
+                "chunk_ref": "doc:2#chunk:10",
+                "matched_groups": [
+                  0,
+                  1,
+                  4
+                ],
+                "preview": "6 1.2. PROBLEMA DI MASSIMO ACCOPPIAMENTO: UNA GENERALIZZAZIONE Deﬁnizione 1.4. Si deﬁnisce politopo di accoppiamento frazionario (frac- tional matching polytope), e si denota con FM(G), il politopo determinato dai vincoli di (1.2). Deﬁnizio"
+              },
+              {
+                "score": 5.5228,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              },
+              {
+                "score": 3.37,
+                "chunk_ref": "doc:2#chunk:42",
+                "matched_groups": [
+                  0,
+                  2,
+                  3
+                ],
+                "preview": "MATRICI DI PERMUTAZIONE E POLITOPO DI BIRKHOFF Assumiamo che la ditta di trasporto possegga il monopolio sul traspor- to della merce, e applichi la stessa tariﬀa a ogni acquirente: il costo di trasportare a unità di materie prime da i a j è"
+              },
+              {
+                "score": 2.3861,
+                "chunk_ref": "doc:2#chunk:66",
+                "matched_groups": [
+                  2
+                ],
+                "preview": ", 10 del parametro relativo alla matrice M. Come riportato nel Teorema 2.3 si ha la seguente matrice ottima di trasporto. (a) p = 1 (b) p = 10 Figura 2.7 2.7 Problema duale Il problema di Kantorovich (2.3) viene naturalmente con il suo prob"
+              },
+              {
+                "score": 2.3714,
+                "chunk_ref": "doc:2#chunk:24",
+                "matched_groups": [
+                  1
+                ],
+                "preview": "almeno uno tra u, v è in U, altrimenti l’arco uv non sarebbe coperto da U. Dunque segue la disuguaglianza e M è un accoppiamento massimo. □ L’Algoritmo 1 riporta uno schema algoritmico basato sulla dimostrazione precedente per trovare un ac"
+              }
+            ],
+            "depth_fit": 1.0,
+            "mean_score_normalized": 0.7565515575050182
+          },
+          "score": 0.9535
+        },
+        {
+          "preset": "balanced",
+          "title": "Balanced",
+          "metrics": {
+            "source_count": 5,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 0.8,
+            "mean_score": 6.515600000000001,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:0",
+              "doc:2#chunk:2",
+              "doc:2#chunk:10",
+              "doc:2#chunk:3"
+            ],
+            "sources": [
+              {
+                "score": 7.4108,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 7.1787,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 6.7897,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 5.676,
+                "chunk_ref": "doc:2#chunk:10",
+                "matched_groups": [
+                  0,
+                  1,
+                  4
+                ],
+                "preview": "6 1.2. PROBLEMA DI MASSIMO ACCOPPIAMENTO: UNA GENERALIZZAZIONE Deﬁnizione 1.4. Si deﬁnisce politopo di accoppiamento frazionario (frac- tional matching polytope), e si denota con FM(G), il politopo determinato dai vincoli di (1.2). Deﬁnizio"
+              },
+              {
+                "score": 5.5228,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              }
+            ],
+            "depth_fit": 0.25,
+            "mean_score_normalized": 0.9687904245037545
+          },
+          "score": 0.6103
+        },
+        {
+          "preset": "precise",
+          "title": "Precise",
+          "metrics": {
+            "source_count": 4,
+            "group_coverage": 1.0,
+            "source_density": 1.0,
+            "top1_group_coverage": 0.8,
+            "mean_score": 6.7255,
+            "matched_group_indexes": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "top_chunk_refs": [
+              "doc:2#chunk:48",
+              "doc:2#chunk:0",
+              "doc:2#chunk:2",
+              "doc:2#chunk:3"
+            ],
+            "sources": [
+              {
+                "score": 7.4108,
+                "chunk_ref": "doc:2#chunk:48",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "Corollario 2.2. Le matrici di permutazione sono i vertici del politopo di Birkhoﬀ. Osservazione 9 (Problema di massimo accoppiamento e problema Kan- torovich). Si nota che il teorema di Birkhoﬀè un’istanza particolare del teorema di massimo"
+              },
+              {
+                "score": 7.1787,
+                "chunk_ref": "doc:2#chunk:0",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "Corso di Laurea Triennale in Matematica Università di Pisa Dal problema di massimo accoppiamento al problema di trasporto ottimo: due generalizzazioni del problema di assegnamento Relatore: Dario Trevisan Candidata: Arianna Carelli Anno acc"
+              },
+              {
+                "score": 6.7897,
+                "chunk_ref": "doc:2#chunk:2",
+                "matched_groups": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "preview": "35 Appendice 38 1 Introduzione Il problema di assegnamento è un problema classico di ottimizzazione com- binatoria che trova impiego in diverse applicazioni. In questo lavoro di tesi, esponiamo alcuni risultati e algoritmi inerenti a due ge"
+              },
+              {
+                "score": 5.5228,
+                "chunk_ref": "doc:2#chunk:3",
+                "matched_groups": [
+                  1,
+                  2,
+                  3
+                ],
+                "preview": "vettori di probabilità associati e sulla matrice costo, deducendo una caratterizzazione del piano di trasporto ottimale. Introduciamo poi, un metodo generale per risolvere il problema di Kantorovich: la regolariz- zazione entropica (2.8). D"
+              }
+            ],
+            "depth_fit": 0.0,
+            "mean_score_normalized": 1.0
+          },
+          "score": 0.49
+        }
+      ],
+      "margin_vs_second": 0.3432,
+      "qa_smoke": {
+        "preset": "exploratory",
+        "llm_route": "external_anonymized",
+        "anonymized": true,
+        "fallback_answer": false,
+        "answer_word_count": 229,
+        "duration_seconds": 166.9,
+        "answer_preview": "La relazione tra problema di assegnamento, massimo accoppiamento e trasporto ottimo secondo il testo fornito è che il problema di assegnamento può essere visto come un'istanza particolare del problema di trasporto ottimo. In altre parole, l"
+      }
+    }
+  ]
+}

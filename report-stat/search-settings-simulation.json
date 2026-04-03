@@ -1,0 +1,155 @@
+{
+  "balanced": {
+    "scenario": {
+      "key": "balanced",
+      "title": "Balanced search",
+      "description": "Mixed enterprise query where we want a reliable answer with healthy coverage and some graph help.",
+      "target": {
+        "exactness": 0.5,
+        "breadth": 0.3,
+        "graphAffinity": 0.24,
+        "answerDiscipline": 0.58
+      },
+      "weights": {
+        "exactness": 0.3,
+        "breadth": 0.25,
+        "graphAffinity": 0.15,
+        "answerDiscipline": 0.3
+      }
+    },
+    "ranked": [
+      {
+        "preset": "balanced",
+        "score": 0.9946,
+        "metrics": {
+          "exactness": 0.4966,
+          "breadth": 0.2964,
+          "graphAffinity": 0.2337,
+          "answerDiscipline": 0.5717
+        }
+      },
+      {
+        "preset": "precise",
+        "score": 0.8818,
+        "metrics": {
+          "exactness": 0.6003,
+          "breadth": 0.1482,
+          "graphAffinity": 0.1169,
+          "answerDiscipline": 0.6858
+        }
+      },
+      {
+        "preset": "exploratory",
+        "score": 0.8364,
+        "metrics": {
+          "exactness": 0.3656,
+          "breadth": 0.5197,
+          "graphAffinity": 0.3841,
+          "answerDiscipline": 0.4242
+        }
+      }
+    ]
+  },
+  "precise": {
+    "scenario": {
+      "key": "precise",
+      "title": "Precise search",
+      "description": "Compliance or lookup query where lexical certainty and disciplined generation matter most.",
+      "target": {
+        "exactness": 0.88,
+        "breadth": 0.36,
+        "graphAffinity": 0.16,
+        "answerDiscipline": 0.9
+      },
+      "weights": {
+        "exactness": 0.4,
+        "breadth": 0.1,
+        "graphAffinity": 0.1,
+        "answerDiscipline": 0.4
+      }
+    },
+    "ranked": [
+      {
+        "preset": "precise",
+        "score": 0.777,
+        "metrics": {
+          "exactness": 0.6003,
+          "breadth": 0.1482,
+          "graphAffinity": 0.1169,
+          "answerDiscipline": 0.6858
+        }
+      },
+      {
+        "preset": "balanced",
+        "score": 0.7016,
+        "metrics": {
+          "exactness": 0.4966,
+          "breadth": 0.2964,
+          "graphAffinity": 0.2337,
+          "answerDiscipline": 0.5717
+        }
+      },
+      {
+        "preset": "exploratory",
+        "score": 0.5655,
+        "metrics": {
+          "exactness": 0.3656,
+          "breadth": 0.5197,
+          "graphAffinity": 0.3841,
+          "answerDiscipline": 0.4242
+        }
+      }
+    ]
+  },
+  "exploratory": {
+    "scenario": {
+      "key": "exploratory",
+      "title": "Exploratory search",
+      "description": "Discovery query where recall, synthesis breadth, and graph relations matter more than tight focus.",
+      "target": {
+        "exactness": 0.46,
+        "breadth": 0.9,
+        "graphAffinity": 0.84,
+        "answerDiscipline": 0.46
+      },
+      "weights": {
+        "exactness": 0.1,
+        "breadth": 0.4,
+        "graphAffinity": 0.3,
+        "answerDiscipline": 0.2
+      }
+    },
+    "ranked": [
+      {
+        "preset": "exploratory",
+        "score": 0.6945,
+        "metrics": {
+          "exactness": 0.3656,
+          "breadth": 0.5197,
+          "graphAffinity": 0.3841,
+          "answerDiscipline": 0.4242
+        }
+      },
+      {
+        "preset": "balanced",
+        "score": 0.5507,
+        "metrics": {
+          "exactness": 0.4966,
+          "breadth": 0.2964,
+          "graphAffinity": 0.2337,
+          "answerDiscipline": 0.5717
+        }
+      },
+      {
+        "preset": "precise",
+        "score": 0.4232,
+        "metrics": {
+          "exactness": 0.6003,
+          "breadth": 0.1482,
+          "graphAffinity": 0.1169,
+          "answerDiscipline": 0.6858
+        }
+      }
+    ]
+  }
+}

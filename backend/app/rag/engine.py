@@ -280,6 +280,7 @@ class RAGQuery:
     mode: QueryMode = QueryMode.QA
     filters: dict = field(default_factory=dict)
     top_k: int | None = None
+    retrieval_top_k: int | None = None
     # Additional context for specific modes
     section_title: str = ""
     instructions: str = ""
@@ -288,6 +289,8 @@ class RAGQuery:
     section_content: str = ""
     document_text: str = ""
     temperature: float = 0.3
+    retrievers: dict[str, bool] = field(default_factory=dict)
+    fusion_weights: dict[str, float] = field(default_factory=dict)
     stream: bool = False
     anonymizer_enabled_override: bool | None = None
     route_key: str = "tender"
@@ -452,55 +455,64 @@ class HybridRAGEngine:
         rag_query: RAGQuery,
     ) -> RetrievedContext:
         retrieval_query = self._query_text_without_length_request(rag_query.text)
+        retriever_selection = self._resolve_retriever_selection(rag_query)
+        rank_fusion = self._build_rank_fusion_for_query(rag_query)
+        retrieval_top_k = rag_query.retrieval_top_k
 
         dense_results = []
         sparse_results = []
         graph_results = []
 
-        try:
-            raw_dense = self.dense_retriever.search(
-                query=retrieval_query,
-                top_k=rag_query.top_k or settings.rag_top_k_dense,
-                filters=rag_query.filters,
-            )
-            dense_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_dense
-            ]
-        except Exception as e:
-            logger.warning("Dense retrieval failed", error=str(e))
+        if retriever_selection["dense"] and self.dense_retriever:
+            try:
+                raw_dense = self.dense_retriever.search(
+                    query=retrieval_query,
+                    top_k=retrieval_top_k or settings.rag_top_k_dense,
+                    filters=rag_query.filters,
+                )
+                dense_results = [
+                    {"text": r.text, "score": r.score, "metadata": r.metadata}
+                    for r in raw_dense
+                ]
+            except Exception as e:
+                logger.warning("Dense retrieval failed", error=str(e))
 
-        try:
-            raw_sparse = self.sparse_retriever.search(
-                query=retrieval_query,
-                top_k=rag_query.top_k or settings.rag_top_k_sparse,
-                filters=rag_query.filters,
-            )
-            sparse_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_sparse
-            ]
-        except Exception as e:
-            logger.warning("Sparse retrieval failed", error=str(e))
+        if retriever_selection["sparse"] and self.sparse_retriever:
+            try:
+                raw_sparse = self.sparse_retriever.search(
+                    query=retrieval_query,
+                    top_k=retrieval_top_k or settings.rag_top_k_sparse,
+                    filters=rag_query.filters,
+                )
+                sparse_results = [
+                    {"text": r.text, "score": r.score, "metadata": r.metadata}
+                    for r in raw_sparse
+                ]
+            except Exception as e:
+                logger.warning("Sparse retrieval failed", error=str(e))
 
-        try:
-            raw_graph = await self.graph_retriever.search(
-                query=retrieval_query,
-                top_k=rag_query.top_k or settings.rag_top_k_graph,
-                filters=rag_query.filters,
-            )
-            graph_results = [
-                {"text": r.text, "score": r.score, "metadata": r.metadata}
-                for r in raw_graph
-            ]
-        except Exception as e:
-            logger.warning("Graph retrieval failed", error=str(e))
+        if retriever_selection["graph"] and self.graph_retriever:
+            try:
+                raw_graph = await self.graph_retriever.search(
+                    query=retrieval_query,
+                    top_k=retrieval_top_k or settings.rag_top_k_graph,
+                    filters=rag_query.filters,
+                )
+                graph_results = [
+                    {"text": r.text, "score": r.score, "metadata": r.metadata}
+                    for r in raw_graph
+                ]
+            except Exception as e:
+                logger.warning("Graph retrieval failed", error=str(e))
 
-        fused = self.fusion.fuse(
+        fused = rank_fusion.fuse(
             dense_results=dense_results,
             sparse_results=sparse_results,
             graph_results=graph_results,
-            top_k=20,
+            top_k=max(
+                rag_query.top_k or settings.rag_top_k_final,
+                retrieval_top_k or settings.rag_top_k_dense,
+            ),
         )
 
         top_k_final = rag_query.top_k or settings.rag_top_k_final
@@ -535,6 +547,56 @@ class HybridRAGEngine:
         return RetrievedContext(
             context="\n\n---\n\n".join(context_texts),
             sources=sources,
+        )
+
+    def _resolve_retriever_selection(self, rag_query: RAGQuery) -> dict[str, bool]:
+        selection = {
+            "dense": True,
+            "sparse": True,
+            "graph": True,
+        }
+
+        for key in selection:
+            if key in rag_query.retrievers:
+                selection[key] = bool(rag_query.retrievers[key])
+
+        if any(selection.values()):
+            return selection
+
+        logger.warning(
+            "All retrievers disabled for query; falling back to defaults",
+            query_len=len(rag_query.text),
+        )
+        return {
+            "dense": True,
+            "sparse": True,
+            "graph": True,
+        }
+
+    def _resolve_fusion_weights(self, rag_query: RAGQuery) -> dict[str, float]:
+        defaults = {
+            "dense": settings.rag_dense_weight,
+            "sparse": settings.rag_sparse_weight,
+            "graph": settings.rag_graph_weight,
+        }
+
+        resolved: dict[str, float] = {}
+        for key, default_value in defaults.items():
+            candidate = rag_query.fusion_weights.get(key)
+            if isinstance(candidate, (int, float)) and math.isfinite(candidate):
+                resolved[key] = max(0.05, min(2.0, float(candidate)))
+            else:
+                resolved[key] = default_value
+
+        return resolved
+
+    def _build_rank_fusion_for_query(self, rag_query: RAGQuery) -> RankFusion:
+        weights = self._resolve_fusion_weights(rag_query)
+        return RankFusion(
+            k=settings.rag_rrf_k,
+            dense_weight=weights["dense"],
+            sparse_weight=weights["sparse"],
+            graph_weight=weights["graph"],
         )
 
     async def query(self, rag_query: RAGQuery) -> RAGResponse:

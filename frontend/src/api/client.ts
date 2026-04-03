@@ -1259,9 +1259,20 @@ export interface RAGQueryRequest {
     mode?: string;
     filters?: Record<string, unknown>;
     top_k?: number;
+    retrieval_top_k?: number;
     temperature?: number;
     stream?: boolean;
     save_history?: boolean;
+    retrievers?: {
+        dense?: boolean;
+        sparse?: boolean;
+        graph?: boolean;
+    };
+    fusion_weights?: {
+        dense?: number;
+        sparse?: number;
+        graph?: number;
+    };
 }
 
 export interface GenerateSectionRequest {

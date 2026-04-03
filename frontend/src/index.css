@@ -945,6 +945,45 @@ a:hover {
   gap: 0.75rem;
 }
 
+.search-settings-modal {
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+    var(--bg-card);
+}
+
+.search-settings-modal .modal-header,
+.search-settings-modal .modal-footer {
+  flex-shrink: 0;
+}
+
+.search-settings-modal-body {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.55) rgba(255, 255, 255, 0.04);
+}
+
+.search-settings-modal-body::-webkit-scrollbar {
+  width: 12px;
+}
+
+.search-settings-modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.search-settings-modal-body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.78), rgba(168, 85, 247, 0.78));
+  border: 3px solid rgba(9, 14, 28, 0.85);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.search-settings-modal-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.9), rgba(196, 181, 253, 0.9));
+}
+
 /* ── Loading / Empty States ── */
 .loading-spinner {
   display: flex;

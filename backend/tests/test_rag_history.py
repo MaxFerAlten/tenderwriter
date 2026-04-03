@@ -120,6 +120,49 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(getattr(db.added[0], "query", None), "assignment")
         self.assertEqual(db.commit_calls, 1)
 
+    async def test_query_forwards_retriever_settings_to_engine(self) -> None:
+        engine = SimpleNamespace(
+            query=AsyncMock(
+                return_value=SimpleNamespace(
+                    answer="Answer",
+                    sources=[],
+                    mode=QueryMode.SEARCH,
+                    llm_route=None,
+                    anonymized=False,
+                )
+            )
+        )
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rag_engine=engine)))
+        current_user = SimpleNamespace(id=7)
+        db = _FakeDb()
+
+        with (
+            patch("app.api.rag._resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch("app.api.rag._audit_rag_result", AsyncMock()),
+        ):
+            await rag_query(
+                data=RAGQueryRequest(
+                    query="assignment",
+                    mode="search",
+                    top_k=8,
+                    retrieval_top_k=24,
+                    temperature=0.45,
+                    save_history=False,
+                    retrievers={"dense": True, "sparse": False, "graph": True},
+                    fusion_weights={"dense": 0.55, "sparse": 0.2, "graph": 0.45},
+                ),
+                request=request,
+                current_user=current_user,
+                db=db,
+            )
+
+        forwarded = engine.query.await_args.args[0]
+        self.assertEqual(forwarded.top_k, 8)
+        self.assertEqual(forwarded.retrieval_top_k, 24)
+        self.assertEqual(forwarded.temperature, 0.45)
+        self.assertEqual(forwarded.retrievers, {"dense": True, "sparse": False, "graph": True})
+        self.assertEqual(forwarded.fusion_weights, {"dense": 0.55, "sparse": 0.2, "graph": 0.45})
+
     async def test_clear_search_history_deletes_only_current_user_rows(self) -> None:
         db = _FakeDb()
         db.execute_result = _FakeDeleteResult(rowcount=4)
