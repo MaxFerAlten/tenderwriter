@@ -78,6 +78,143 @@ _REQUIREMENT_LINE_KEYWORDS = (
     "includere",
     "conforme",
 )
+_STRONG_REQUIREMENT_ACTION_KEYWORDS = (
+    " provide",
+    " submit",
+    " include",
+    " attach",
+    " comply",
+    " ensure",
+    " maintain",
+    " certify",
+    " demonstrate",
+    " describe",
+    " deliver",
+    " present",
+    " possess",
+    " guarantee",
+    " implement",
+    " deploy",
+    " integrate",
+    " support",
+    " furnish",
+    "fornire",
+    "presentare",
+    "includere",
+    "allegare",
+    "rispettare",
+    "garantire",
+    "mantenere",
+    "dimostrare",
+    "possedere",
+    "consegnare",
+    "assicurare",
+    "certificare",
+    "indicare",
+    "descrivere",
+    "implementare",
+    "integrare",
+    "supportare",
+)
+_REQUIREMENT_OBJECT_KEYWORDS = (
+    " certification",
+    " certificate",
+    " iso ",
+    " insurance",
+    " annex",
+    " declaration",
+    " statement",
+    " evidence",
+    " experience",
+    " reference",
+    " references",
+    " plan",
+    " timeline",
+    " milestone",
+    " sla",
+    " service level",
+    " support",
+    " maintenance",
+    " security",
+    " continuity",
+    " privacy",
+    " gdpr",
+    " deliverable",
+    " contract",
+    " tender",
+    " proposal",
+    " bid ",
+    " staffing",
+    " personnel",
+    " qualification",
+    " licensing",
+    " license",
+    " licence",
+    " audit",
+    " policy",
+    " certificazione",
+    " certificato",
+    " assicurazione",
+    " polizza",
+    " allegato",
+    " dichiarazione",
+    " evidenza",
+    " esperienza",
+    " referenza",
+    " referenze",
+    " piano",
+    " cronoprogramma",
+    " supporto",
+    " manutenzione",
+    " sicurezza",
+    " continuita",
+    " continuita'",
+    " privacy",
+    " conformita",
+    " conformita'",
+    " offerta",
+    " gara",
+    " contratto",
+    " personale",
+    " qualifica",
+)
+_ACADEMIC_CONTEXT_KEYWORDS = (
+    " theorem",
+    " proof",
+    " lemma",
+    " corollary",
+    " proposition",
+    " graph",
+    " vertex",
+    " vertices",
+    " edge",
+    " edges",
+    " path",
+    " cycle",
+    " matrix",
+    " vector",
+    " variable",
+    " objective function",
+    " optimization",
+    " algoritmo",
+    " teorema",
+    " dimostrazione",
+    " lemma",
+    " corollario",
+    " proposizione",
+    " grafo",
+    " vertice",
+    " vertici",
+    " arco",
+    " archi",
+    " cammino",
+    " ciclo",
+    " matrice",
+    " vettore",
+    " variabile",
+    " funzione obiettivo",
+    " ottimizzazione",
+)
 _HIGH_PRIORITY_KEYWORDS = (
     "must",
     "shall",
@@ -238,16 +375,33 @@ class IngestionPipeline:
         return any(keyword in normalized for keyword in _REQUIREMENT_SECTION_KEYWORDS)
 
     def _looks_like_requirement_line(self, text: str, *, force: bool = False) -> bool:
+        raw = str(text or "").strip()
         cleaned = self._normalize_requirement_text(text)
         if len(cleaned) < 18 or len(cleaned) > 280:
             return False
 
         normalized = f" {cleaned.casefold()} "
         keyword_hit = any(keyword in normalized for keyword in _REQUIREMENT_LINE_KEYWORDS)
-        if force and len(cleaned.split()) >= 4:
+        strong_action_hit = any(keyword in normalized for keyword in _STRONG_REQUIREMENT_ACTION_KEYWORDS)
+        object_hit = any(keyword in normalized for keyword in _REQUIREMENT_OBJECT_KEYWORDS)
+        academic_hit = any(keyword in normalized for keyword in _ACADEMIC_CONTEXT_KEYWORDS)
+        explicit_list_hit = bool(re.match(r"^(?:[-•*\u2022]\s+|\(?\d+[\).]\s+|[A-Za-z][\).]\s+)", raw))
+        procurement_hit = strong_action_hit or object_hit
+
+        if force:
+            if academic_hit and not procurement_hit:
+                return False
+            return len(cleaned.split()) >= 4 and (procurement_hit or keyword_hit or explicit_list_hit)
+
+        if academic_hit and not procurement_hit:
+            return False
+
+        if procurement_hit and (keyword_hit or explicit_list_hit):
             return True
-        if keyword_hit:
+
+        if strong_action_hit and object_hit:
             return True
+
         return False
 
     def _infer_requirement_priority(self, text: str) -> str:

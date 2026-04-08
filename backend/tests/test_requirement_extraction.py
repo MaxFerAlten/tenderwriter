@@ -48,6 +48,30 @@ class RequirementExtractionTests(unittest.TestCase):
         self.assertTrue(any("continuita' operativa" in summary for summary in summaries))
         self.assertTrue(all(candidate["priority"] in {"high", "medium", "low"} for candidate in candidates))
 
+    def test_extract_requirement_candidates_ignores_academic_prose_with_modal_verbs(self) -> None:
+        pipeline = IngestionPipeline(rag_engine=None)
+        elements = [
+            {
+                "type": "Title",
+                "text": "Capitolo 3 - Grafi",
+                "metadata": {"section": "Capitolo 3 - Grafi"},
+            },
+            {
+                "type": "Text",
+                "text": (
+                    "cammino M-alternante P per poter collegare due vertici esposti deve essere.\n"
+                    "tutti i vertici di grado 2 allora deve essere un ciclo pari che alterna tra archi.\n"
+                    "l'operatore deve risolvere il problema di ottimizzazione (2.3)."
+                ),
+                "metadata": {"page_number": 12},
+            },
+        ]
+
+        _, section_texts = pipeline._structure_elements(elements)
+        candidates = pipeline.extract_requirement_candidates(elements, section_texts)
+
+        self.assertEqual(candidates, [])
+
     def test_apply_extracted_requirement_candidates_deduplicates_existing_rows(self) -> None:
         tender = Tender(id=7, title="Framework Tender", status=TenderStatus.DRAFT)
         tender.requirements = [

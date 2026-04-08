@@ -20,7 +20,7 @@ POSTGRES_USER = "tenderwriter"
 POSTGRES_PASSWORD = "DefaultPg2024Pass"
 POSTGRES_DB_HOST = "postgres"
 POSTGRES_PORT = 5432
-REVISION_ID = "20260403_0001"
+REVISION_ID = "20260408_0007"
 
 pytestmark = pytest.mark.skipif(
     not RUN_CONTAINERIZED_ROLLOUT,

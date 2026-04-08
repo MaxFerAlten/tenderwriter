@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -17,8 +17,11 @@ import {
     Settings,
     Shield,
     Sparkles,
+    PawPrint,
 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
+import { BuddyPanel } from './components/buddy';
+import type { Buddy } from './components/buddy/types';
 import {
     ComponentsPage,
     ContentLibraryPage,
@@ -78,6 +81,8 @@ function App() {
     const location = useLocation();
     const { user, isLoading, logout } = useAuth();
     const isPublicAuthRoute = ['/login', '/register', '/forgot-password'].includes(location.pathname);
+    const [buddyPanelOpen, setBuddyPanelOpen] = useState(false);
+    const [currentBuddy, setCurrentBuddy] = useState<Buddy | null>(null);
 
     useEffect(() => {
         if (!user) {
@@ -89,6 +94,21 @@ function App() {
         }, 900);
 
         return () => window.clearTimeout(timer);
+    }, [user]);
+
+    useEffect(() => {
+        if (user) {
+            const mockBuddy: Buddy = {
+                id: "1",
+                name: "Clawdia",
+                species: "cat",
+                rarity: "rare",
+                stats: { xp: 150, level: 2, happiness: 85, energy: 90 },
+                mood: "happy",
+                accessory: null,
+            };
+            setCurrentBuddy(mockBuddy);
+        }
     }, [user]);
 
     const warmRoute = (path: string) => {
@@ -143,6 +163,23 @@ function App() {
                 </nav>
 
                 <div className="sidebar-footer">
+                    <button
+                        className="nav-item"
+                        onClick={() => setBuddyPanelOpen(true)}
+                        style={{
+                            background: 'transparent',
+                            border: 'none',
+                            width: '100%',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            fontSize: 'inherit',
+                            color: 'var(--text-secondary)',
+                        }}
+                    >
+                        <PawPrint />
+                        <span>Companion</span>
+                    </button>
                     <button
                         className="nav-item"
                         onClick={logout}
@@ -200,6 +237,12 @@ function App() {
                     </motion.div>
                 </AnimatePresence>
             </main>
+
+            <BuddyPanel
+                buddy={currentBuddy}
+                isOpen={buddyPanelOpen}
+                onClose={() => setBuddyPanelOpen(false)}
+            />
         </div>
     );
 }

@@ -8,6 +8,7 @@ vi.mock('../auth/keycloak', () => keycloakMock);
 
 import {
     authApi,
+    hooksApi,
     kpiAdminApi,
     observabilityApi,
     prefetchTenderChatContext,
@@ -376,6 +377,59 @@ describe('kpiAdminApi', () => {
     });
 });
 
+describe('hooksApi', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('preserves the hooks listing contract through the shared client', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify([{ id: 'hook-1', name: 'Pre-save hook' }]), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await hooksApi.list<{ id: string; name: string }>();
+
+        expect(response[0].id).toBe('hook-1');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/hooks/hooks',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('sends hook test requests with the encoded event type query string', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await hooksApi.test<{ ok: boolean }>('hook-1', 'before save', { payload: 'demo' });
+
+        expect(response.ok).toBe(true);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/hooks/hooks/hook-1/test?event_type=before%20save',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ payload: 'demo' }),
+            })
+        );
+    });
+});
+
 describe('chat context prefetch', () => {
     beforeEach(() => {
         storage.clear();
@@ -546,6 +600,421 @@ describe('tenderApi', () => {
             '/api/tenders/12',
             expect.objectContaining({
                 method: 'GET',
+            })
+        );
+    });
+
+    it('loads staged requirement extraction runs through the tender pipeline endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                items: [
+                    {
+                        id: 51,
+                        source_document_ref: 'tenders/12/rfp.pdf',
+                        filename: 'rfp.pdf',
+                        extraction_method: 'heuristic_v1',
+                        candidate_count: 2,
+                        metadata_json: { staged_candidate_count: 2 },
+                        created_at: '2026-04-04T10:00:00Z',
+                        candidates: [
+                            {
+                                id: 71,
+                                candidate_position: 1,
+                                summary_text: 'Provide signed annex A.',
+                                normalized_text: 'provide signed annex a',
+                                category: 'Section 1',
+                                priority: 'high',
+                                confidence: 0.91,
+                                source_document_ref: 'tenders/12/rfp.pdf',
+                                source_reference: 'Section 1',
+                                created_at: '2026-04-04T10:00:00Z',
+                            },
+                        ],
+                    },
+                ],
+                total_runs: 1,
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.getRequirementCandidateRuns(12, { limit_runs: 3 });
+
+        expect(response.total_runs).toBe(1);
+        expect(response.items[0].candidates[0].summary_text).toBe('Provide signed annex A.');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/requirement-candidates?limit_runs=3',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('rebuilds and reviews consolidated requirements through the tender pipeline endpoints', async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 91,
+                            canonical_text: 'Submit insurance certificate.',
+                            normalized_text: 'submit insurance certificate',
+                            category: 'Section 7',
+                            priority: 'high',
+                            confidence: 0.83,
+                            source_count: 1,
+                            consolidation_method: 'staging_v1',
+                            review_state: 'pending',
+                            graph_state: 'active',
+                            metadata_json: { sources: [{ candidate_id: 201 }] },
+                            created_at: '2026-04-04T10:30:00Z',
+                        },
+                    ],
+                    total_items: 1,
+                }), {
+                    status: 202,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 91,
+                            canonical_text: 'Submit insurance certificate.',
+                            normalized_text: 'submit insurance certificate',
+                            category: 'Section 7',
+                            priority: 'high',
+                            confidence: 0.83,
+                            source_count: 1,
+                            consolidation_method: 'staging_v1',
+                            review_state: 'pending',
+                            graph_state: 'active',
+                            metadata_json: { review_count: 0 },
+                            created_at: '2026-04-04T10:30:00Z',
+                        },
+                    ],
+                    total_items: 1,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    requirement: {
+                        id: 91,
+                        canonical_text: 'Submit insurance certificate.',
+                        normalized_text: 'submit insurance certificate',
+                        category: 'Section 7',
+                        priority: 'high',
+                        confidence: 0.83,
+                        source_count: 1,
+                        consolidation_method: 'staging_v1',
+                        review_state: 'approved',
+                        graph_state: 'active',
+                        metadata_json: { review_count: 1 },
+                        created_at: '2026-04-04T10:30:00Z',
+                    },
+                    review: {
+                        id: 301,
+                        action: 'approve',
+                        previous_review_state: 'pending',
+                        new_review_state: 'approved',
+                        notes: 'Verified manually.',
+                        actor_id: 1,
+                        metadata_json: {},
+                        created_at: '2026-04-04T11:00:00Z',
+                    },
+                }), {
+                    status: 202,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+
+        const rebuilt = await tenderApi.rebuildConsolidatedRequirements(12, { limit_runs: 4 });
+        const reviewQueue = await tenderApi.getConsolidatedRequirementReviewQueue(12, { review_state: 'pending', limit: 10 });
+        const reviewResult = await tenderApi.reviewConsolidatedRequirement(12, 91, {
+            action: 'approve',
+            notes: 'Verified manually.',
+        });
+
+        expect(rebuilt.items[0].canonical_text).toBe('Submit insurance certificate.');
+        expect(reviewQueue.items[0].review_state).toBe('pending');
+        expect(reviewResult.review.new_review_state).toBe('approved');
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            '/api/tenders/12/consolidated-requirements/rebuild?limit_runs=4',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/tenders/12/consolidated-requirements/review-queue?review_state=pending&limit=10',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            '/api/tenders/12/consolidated-requirements/91/review',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'approve',
+                    notes: 'Verified manually.',
+                }),
+            })
+        );
+    });
+
+    it('loads inferred requirement relations through the tender pipeline endpoint', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                items: [
+                    {
+                        id: 501,
+                        source_requirement_id: 91,
+                        source_requirement_text: 'Provide signed annex A with wet signature.',
+                        target_requirement_id: 92,
+                        target_requirement_text: 'Provide signed annex A.',
+                        relation_type: 'overrides',
+                        confidence: 0.91,
+                        review_state: 'pending',
+                        graph_state: 'active',
+                        metadata_json: {
+                            inference_method: 'lexical_override_v1',
+                            shared_terms: ['provide', 'signed', 'annex'],
+                        },
+                        created_at: '2026-04-04T11:10:00Z',
+                    },
+                ],
+                total_items: 1,
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.getConsolidatedRequirementRelations(12, {
+            relation_type: 'overrides',
+        });
+
+        expect(response.total_items).toBe(1);
+        expect(response.items[0].relation_type).toBe('overrides');
+        expect(response.items[0].review_state).toBe('pending');
+        expect(response.items[0].source_requirement_text).toContain('wet signature');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/consolidated-requirements/relations?relation_type=overrides',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('loads all inferred requirement relations when no filter is provided', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                items: [
+                    {
+                        id: 502,
+                        source_requirement_id: 101,
+                        source_requirement_text: 'Submit the final commercial offer after presenting the technical plan.',
+                        target_requirement_id: 102,
+                        target_requirement_text: 'Present the technical plan.',
+                        relation_type: 'depends_on',
+                        confidence: 0.77,
+                        review_state: 'pending',
+                        graph_state: 'active',
+                        metadata_json: {
+                            inference_method: 'dependency_clause_v1',
+                        },
+                        created_at: '2026-04-04T11:20:00Z',
+                    },
+                ],
+                total_items: 1,
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.getConsolidatedRequirementRelations(12);
+
+        expect(response.total_items).toBe(1);
+        expect(response.items[0].relation_type).toBe('depends_on');
+        expect(response.items[0].review_state).toBe('pending');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/consolidated-requirements/relations',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('loads obsolete graph audit rows through the tender pipeline endpoints', async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 211,
+                            canonical_text: 'Legacy requirement no longer present.',
+                            normalized_text: 'legacy requirement no longer present',
+                            category: 'Historical',
+                            priority: 'low',
+                            confidence: 0.41,
+                            source_count: 1,
+                            consolidation_method: 'staging_v1',
+                            review_state: 'approved',
+                            graph_state: 'obsolete',
+                            metadata_json: { lifecycle: { graph_state: 'obsolete', reason: 'missing_from_latest_rebuild' } },
+                            created_at: '2026-04-08T10:20:00Z',
+                        },
+                    ],
+                    total_items: 1,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 611,
+                            source_requirement_id: 211,
+                            source_requirement_text: 'Legacy source requirement.',
+                            target_requirement_id: 212,
+                            target_requirement_text: 'Legacy target requirement.',
+                            relation_type: 'overrides',
+                            confidence: 0.52,
+                            review_state: 'approved',
+                            graph_state: 'obsolete',
+                            metadata_json: { lifecycle: { graph_state: 'obsolete', reason: 'missing_from_latest_rebuild' } },
+                            created_at: '2026-04-08T10:25:00Z',
+                        },
+                    ],
+                    total_items: 1,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+
+        const obsoleteRequirements = await tenderApi.getConsolidatedRequirements(12, {
+            graph_state: 'obsolete',
+        });
+        const obsoleteRelations = await tenderApi.getConsolidatedRequirementRelations(12, {
+            graph_state: 'obsolete',
+            relation_type: 'overrides',
+        });
+
+        expect(obsoleteRequirements.items[0].graph_state).toBe('obsolete');
+        expect(obsoleteRelations.items[0].graph_state).toBe('obsolete');
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            '/api/tenders/12/consolidated-requirements?graph_state=obsolete',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/tenders/12/consolidated-requirements/relations?graph_state=obsolete&relation_type=overrides',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+    });
+
+    it('reviews inferred requirement relations through the tender pipeline endpoints', async () => {
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    items: [
+                        {
+                            id: 503,
+                            source_requirement_id: 111,
+                            source_requirement_text: 'Submit the final commercial offer after presenting the technical plan.',
+                            target_requirement_id: 112,
+                            target_requirement_text: 'Present the technical plan.',
+                            relation_type: 'depends_on',
+                            confidence: 0.66,
+                            review_state: 'pending',
+                            graph_state: 'active',
+                            metadata_json: { inference_method: 'dependency_clause_v1' },
+                            created_at: '2026-04-04T11:25:00Z',
+                        },
+                    ],
+                    total_items: 1,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    relation: {
+                        id: 503,
+                        source_requirement_id: 111,
+                        source_requirement_text: 'Submit the final commercial offer after presenting the technical plan.',
+                        target_requirement_id: 112,
+                        target_requirement_text: 'Present the technical plan.',
+                        relation_type: 'depends_on',
+                        confidence: 0.66,
+                        review_state: 'approved',
+                        graph_state: 'active',
+                        metadata_json: { review_count: 1 },
+                        created_at: '2026-04-04T11:25:00Z',
+                    },
+                    review: {
+                        id: 901,
+                        action: 'approve',
+                        previous_review_state: 'pending',
+                        new_review_state: 'approved',
+                        notes: 'Dependency confirmed manually.',
+                        actor_id: 1,
+                        metadata_json: {},
+                        created_at: '2026-04-04T11:30:00Z',
+                    },
+                }), {
+                    status: 202,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+
+        const queue = await tenderApi.getConsolidatedRequirementRelationReviewQueue(12, {
+            review_state: 'pending',
+            relation_type: 'depends_on',
+            limit: 5,
+        });
+        const reviewResult = await tenderApi.reviewConsolidatedRequirementRelation(12, 503, {
+            action: 'approve',
+            notes: 'Dependency confirmed manually.',
+        });
+
+        expect(queue.items[0].review_state).toBe('pending');
+        expect(reviewResult.relation.review_state).toBe('approved');
+        expect(reviewResult.review.new_review_state).toBe('approved');
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            '/api/tenders/12/consolidated-requirements/relations/review-queue?review_state=pending&relation_type=depends_on&limit=5',
+            expect.objectContaining({
+                method: 'GET',
+            })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/tenders/12/consolidated-requirements/relations/503/review',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'approve',
+                    notes: 'Dependency confirmed manually.',
+                }),
             })
         );
     });

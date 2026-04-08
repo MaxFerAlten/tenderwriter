@@ -22,7 +22,7 @@ POSTGRES_USER = "tenderwriter"
 POSTGRES_PASSWORD = "DefaultPg2024Pass"
 POSTGRES_HOST = "127.0.0.1"
 POSTGRES_PORT = 5432
-REVISION_ID = "20260403_0001"
+REVISION_ID = "20260408_0007"
 
 pytestmark = pytest.mark.skipif(
     not RUN_LIVE_REPLAY,

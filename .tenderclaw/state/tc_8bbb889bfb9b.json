@@ -1,0 +1,12 @@
+{
+  "session_id": "tc_8bbb889bfb9b",
+  "status": "idle",
+  "model": "claude-sonnet-4-20250514",
+  "created_at": "2026-04-04T23:45:07.458473",
+  "messages": [],
+  "total_usage_input": 0,
+  "total_usage_output": 0,
+  "total_cost_usd": 0.0,
+  "working_directory": ".",
+  "system_prompt_append": ""
+}

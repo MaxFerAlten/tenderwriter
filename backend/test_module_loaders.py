@@ -164,8 +164,39 @@ def _build_fake_compliance_module():
 
 def _build_fake_tender_requirements_module():
     fake_module = types.ModuleType("app.services.tender_requirements")
-    fake_module.apply_extracted_requirement_candidates = AsyncMock(return_value=[])
+    fake_module.apply_extracted_requirement_candidates = Mock(return_value=[])
     fake_module.sync_tender_requirements_to_graph = AsyncMock(return_value=False)
+    return fake_module
+
+
+def _build_fake_requirement_candidates_module():
+    fake_module = types.ModuleType("app.services.requirement_candidates")
+    fake_module.stage_extracted_requirement_candidates = AsyncMock(return_value=(None, []))
+    fake_module.list_staged_requirement_candidate_runs = AsyncMock(return_value=[])
+    return fake_module
+
+
+def _build_fake_requirement_consolidation_module():
+    fake_module = types.ModuleType("app.services.requirement_consolidation")
+    fake_module.list_consolidated_requirements = AsyncMock(return_value=[])
+    fake_module.list_requirement_relations = AsyncMock(return_value=[])
+    fake_module.rebuild_consolidated_requirements_from_staging = AsyncMock(return_value=[])
+    return fake_module
+
+
+def _build_fake_requirement_review_module():
+    fake_module = types.ModuleType("app.services.requirement_review")
+    fake_module.get_consolidated_requirement_for_tender = AsyncMock(return_value=None)
+    fake_module.list_consolidated_requirements_for_review = AsyncMock(return_value=[])
+    fake_module.apply_requirement_review = AsyncMock(return_value=(None, None))
+    return fake_module
+
+
+def _build_fake_requirement_relation_review_module():
+    fake_module = types.ModuleType("app.services.requirement_relation_review")
+    fake_module.get_requirement_relation_for_tender = AsyncMock(return_value=None)
+    fake_module.list_requirement_relations_for_review = AsyncMock(return_value=[])
+    fake_module.apply_requirement_relation_review = AsyncMock(return_value=(None, None))
     return fake_module
 
 
@@ -182,6 +213,10 @@ def load_tenders_test_modules():
         "app.services.chat": _build_fake_chat_module(),
         "app.services.kpi_reason_engine": _build_fake_kpi_module(),
         "app.services.compliance_observability": _build_fake_compliance_module(),
+        "app.services.requirement_candidates": _build_fake_requirement_candidates_module(),
+        "app.services.requirement_consolidation": _build_fake_requirement_consolidation_module(),
+        "app.services.requirement_review": _build_fake_requirement_review_module(),
+        "app.services.requirement_relation_review": _build_fake_requirement_relation_review_module(),
         "app.services.tender_requirements": _build_fake_tender_requirements_module(),
     }
 

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Enum,
@@ -178,6 +179,36 @@ class Tender(Base):
     # Relationships
     created_by_user = relationship("User", back_populates="tenders")
     requirements = relationship("TenderRequirement", back_populates="tender", cascade="all, delete")
+    requirement_extraction_runs = relationship(
+        "RequirementExtractionRun",
+        back_populates="tender",
+        cascade="all, delete",
+    )
+    requirement_candidates = relationship(
+        "RequirementCandidate",
+        back_populates="tender",
+        cascade="all, delete",
+    )
+    requirement_reviews = relationship(
+        "RequirementReview",
+        back_populates="tender",
+        cascade="all, delete",
+    )
+    requirement_relations = relationship(
+        "RequirementRelation",
+        back_populates="tender",
+        cascade="all, delete",
+    )
+    requirement_relation_reviews = relationship(
+        "RequirementRelationReview",
+        back_populates="tender",
+        cascade="all, delete",
+    )
+    consolidated_requirements = relationship(
+        "ConsolidatedRequirement",
+        back_populates="tender",
+        cascade="all, delete",
+    )
     proposals = relationship("Proposal", back_populates="tender", cascade="all, delete")
     permissions = relationship("TenderPermission", back_populates="tender", cascade="all, delete")
     chat_room = relationship("ChatRoom", back_populates="tender", uselist=False, cascade="all, delete")
@@ -200,6 +231,202 @@ class TenderRequirement(Base):
     # Relationships
     tender = relationship("Tender", back_populates="requirements")
     proposal_section = relationship("ProposalSection", back_populates="requirements")
+
+
+class RequirementExtractionRun(Base):
+    __tablename__ = "requirement_extraction_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_document_ref = Column(String(1000), nullable=True)
+    filename = Column(String(500), nullable=True)
+    extraction_method = Column(String(100), nullable=False, default="heuristic_v1")
+    candidate_count = Column(Integer, default=0)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tender = relationship("Tender", back_populates="requirement_extraction_runs")
+    actor = relationship("User", foreign_keys=[actor_id])
+    candidates = relationship(
+        "RequirementCandidate",
+        back_populates="extraction_run",
+        cascade="all, delete",
+    )
+
+
+class RequirementCandidate(Base):
+    __tablename__ = "requirement_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    extraction_run_id = Column(
+        Integer,
+        ForeignKey("requirement_extraction_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_position = Column(Integer, nullable=False, default=0)
+    source_document_ref = Column(String(1000), nullable=True)
+    source_reference = Column(String(255), nullable=True)
+    summary_text = Column(Text, nullable=False)
+    normalized_text = Column(Text, nullable=False)
+    category = Column(String(100))
+    priority = Column(String(20), default="medium")
+    confidence = Column(Float, nullable=True)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tender = relationship("Tender", back_populates="requirement_candidates")
+    extraction_run = relationship("RequirementExtractionRun", back_populates="candidates")
+
+
+class ConsolidatedRequirement(Base):
+    __tablename__ = "consolidated_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "tender_id",
+            "normalized_text",
+            name="uq_consolidated_requirements_tender_normalized",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    canonical_text = Column(Text, nullable=False)
+    normalized_text = Column(Text, nullable=False)
+    category = Column(String(100))
+    priority = Column(String(20), default="medium")
+    confidence = Column(Float, nullable=True)
+    source_count = Column(Integer, default=1)
+    consolidation_method = Column(String(100), default="staging_v1")
+    review_state = Column(String(50), default="pending")
+    graph_state = Column(String(50), default="active", index=True)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    tender = relationship("Tender", back_populates="consolidated_requirements")
+    reviews = relationship(
+        "RequirementReview",
+        back_populates="consolidated_requirement",
+        cascade="all, delete",
+    )
+    outgoing_relations = relationship(
+        "RequirementRelation",
+        foreign_keys="RequirementRelation.source_requirement_id",
+        back_populates="source_requirement",
+        cascade="all, delete",
+    )
+    incoming_relations = relationship(
+        "RequirementRelation",
+        foreign_keys="RequirementRelation.target_requirement_id",
+        back_populates="target_requirement",
+        cascade="all, delete",
+    )
+
+
+class RequirementReview(Base):
+    __tablename__ = "requirement_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    consolidated_requirement_id = Column(
+        Integer,
+        ForeignKey("consolidated_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    previous_review_state = Column(String(50), nullable=True)
+    new_review_state = Column(String(50), nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tender = relationship("Tender", back_populates="requirement_reviews")
+    consolidated_requirement = relationship("ConsolidatedRequirement", back_populates="reviews")
+    actor = relationship("User", foreign_keys=[actor_id])
+
+
+class RequirementRelation(Base):
+    __tablename__ = "requirement_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tender_id",
+            "source_requirement_id",
+            "target_requirement_id",
+            "relation_type",
+            name="uq_requirement_relations_edge",
+        ),
+        CheckConstraint(
+            "source_requirement_id <> target_requirement_id",
+            name="ck_requirement_relations_not_self",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_requirement_id = Column(
+        Integer,
+        ForeignKey("consolidated_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_requirement_id = Column(
+        Integer,
+        ForeignKey("consolidated_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relation_type = Column(String(50), nullable=False, index=True)
+    confidence = Column(Float, nullable=True)
+    review_state = Column(String(50), default="pending", index=True)
+    graph_state = Column(String(50), default="active", index=True)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tender = relationship("Tender", back_populates="requirement_relations")
+    source_requirement = relationship(
+        "ConsolidatedRequirement",
+        foreign_keys=[source_requirement_id],
+        back_populates="outgoing_relations",
+    )
+    target_requirement = relationship(
+        "ConsolidatedRequirement",
+        foreign_keys=[target_requirement_id],
+        back_populates="incoming_relations",
+    )
+    reviews = relationship(
+        "RequirementRelationReview",
+        back_populates="requirement_relation",
+        cascade="all, delete",
+    )
+
+
+class RequirementRelationReview(Base):
+    __tablename__ = "requirement_relation_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    requirement_relation_id = Column(
+        Integer,
+        ForeignKey("requirement_relations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    previous_review_state = Column(String(50), nullable=True)
+    new_review_state = Column(String(50), nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    metadata_json = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tender = relationship("Tender", back_populates="requirement_relation_reviews")
+    requirement_relation = relationship("RequirementRelation", back_populates="reviews")
+    actor = relationship("User", foreign_keys=[actor_id])
 
 
 class Proposal(Base):

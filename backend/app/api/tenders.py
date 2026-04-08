@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from minio import Minio
@@ -21,7 +21,19 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db.database import get_db
-from app.models import Tender, TenderRequirement, TenderStatus, ComplianceStatus, TenderPermission
+from app.models import (
+    ConsolidatedRequirement,
+    RequirementReview,
+    RequirementRelation,
+    RequirementRelationReview,
+    Tender,
+    TenderRequirement,
+    TenderStatus,
+    ComplianceStatus,
+    TenderPermission,
+    RequirementCandidate,
+    RequirementExtractionRun,
+)
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
@@ -45,6 +57,25 @@ from app.services.kpi_reason_engine import (
     sync_tender_and_publish_event,
 )
 from app.services.compliance_observability import sync_requirement_compliance_and_gate
+from app.services.requirement_candidates import (
+    list_staged_requirement_candidate_runs,
+    stage_extracted_requirement_candidates,
+)
+from app.services.requirement_consolidation import (
+    list_consolidated_requirements,
+    list_requirement_relations,
+    rebuild_consolidated_requirements_from_staging,
+)
+from app.services.requirement_review import (
+    apply_requirement_review,
+    get_consolidated_requirement_for_tender,
+    list_consolidated_requirements_for_review,
+)
+from app.services.requirement_relation_review import (
+    apply_requirement_relation_review,
+    get_requirement_relation_for_tender,
+    list_requirement_relations_for_review,
+)
 from app.services.tender_requirements import (
     apply_extracted_requirement_candidates,
     sync_tender_requirements_to_graph,
@@ -111,6 +142,126 @@ class TenderResponse(BaseModel):
 
 class TenderDetailResponse(TenderResponse):
     requirements: list[RequirementResponse] = []
+
+
+class RequirementCandidateResponse(BaseModel):
+    id: int
+    candidate_position: int
+    summary_text: str
+    normalized_text: str
+    category: str | None = None
+    priority: str
+    confidence: float | None = None
+    source_document_ref: str | None = None
+    source_reference: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RequirementExtractionRunResponse(BaseModel):
+    id: int
+    source_document_ref: str | None = None
+    filename: str | None = None
+    extraction_method: str
+    candidate_count: int
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    candidates: list[RequirementCandidateResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class RequirementExtractionRunListResponse(BaseModel):
+    items: list[RequirementExtractionRunResponse]
+    total_runs: int
+
+
+class ConsolidatedRequirementResponse(BaseModel):
+    id: int
+    canonical_text: str
+    normalized_text: str
+    category: str | None = None
+    priority: str
+    confidence: float | None = None
+    source_count: int
+    consolidation_method: str
+    review_state: str
+    graph_state: str
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConsolidatedRequirementListResponse(BaseModel):
+    items: list[ConsolidatedRequirementResponse]
+    total_items: int
+
+
+class ConsolidatedRequirementReviewRequest(BaseModel):
+    action: str
+    notes: str | None = None
+
+
+class RequirementReviewResponse(BaseModel):
+    id: int
+    action: str
+    previous_review_state: str | None = None
+    new_review_state: str
+    notes: str | None = None
+    actor_id: int | None = None
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConsolidatedRequirementReviewActionResponse(BaseModel):
+    requirement: ConsolidatedRequirementResponse
+    review: RequirementReviewResponse
+
+
+class RequirementRelationResponse(BaseModel):
+    id: int
+    source_requirement_id: int
+    source_requirement_text: str
+    target_requirement_id: int
+    target_requirement_text: str
+    relation_type: str
+    confidence: float | None = None
+    review_state: str
+    graph_state: str
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+
+
+class RequirementRelationListResponse(BaseModel):
+    items: list[RequirementRelationResponse]
+    total_items: int
+
+
+class RequirementRelationReviewRequest(BaseModel):
+    action: str
+    notes: str | None = None
+
+
+class RequirementRelationReviewResponse(BaseModel):
+    id: int
+    action: str
+    previous_review_state: str | None = None
+    new_review_state: str
+    notes: str | None = None
+    actor_id: int | None = None
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RequirementRelationReviewActionResponse(BaseModel):
+    relation: RequirementRelationResponse
+    review: RequirementRelationReviewResponse
 
 
 class TenderListResponse(BaseModel):
@@ -260,6 +411,111 @@ def _requirement_to_response(requirement: TenderRequirement) -> RequirementRespo
     )
 
 
+def _requirement_candidate_to_response(
+    candidate: RequirementCandidate,
+) -> RequirementCandidateResponse:
+    return RequirementCandidateResponse(
+        id=candidate.id,
+        candidate_position=candidate.candidate_position,
+        summary_text=candidate.summary_text,
+        normalized_text=candidate.normalized_text,
+        category=candidate.category,
+        priority=candidate.priority,
+        confidence=candidate.confidence,
+        source_document_ref=candidate.source_document_ref,
+        source_reference=candidate.source_reference,
+        created_at=candidate.created_at,
+    )
+
+
+def _requirement_extraction_run_to_response(
+    extraction_run: RequirementExtractionRun,
+) -> RequirementExtractionRunResponse:
+    ordered_candidates = sorted(
+        list(extraction_run.candidates or []),
+        key=lambda candidate: (candidate.candidate_position or 0, candidate.id or 0),
+    )
+    return RequirementExtractionRunResponse(
+        id=extraction_run.id,
+        source_document_ref=extraction_run.source_document_ref,
+        filename=extraction_run.filename,
+        extraction_method=extraction_run.extraction_method,
+        candidate_count=extraction_run.candidate_count,
+        metadata_json=dict(extraction_run.metadata_json or {}),
+        created_at=extraction_run.created_at,
+        candidates=[_requirement_candidate_to_response(candidate) for candidate in ordered_candidates],
+    )
+
+
+def _consolidated_requirement_to_response(
+    requirement: ConsolidatedRequirement,
+) -> ConsolidatedRequirementResponse:
+    return ConsolidatedRequirementResponse(
+        id=requirement.id,
+        canonical_text=requirement.canonical_text,
+        normalized_text=requirement.normalized_text,
+        category=requirement.category,
+        priority=requirement.priority,
+        confidence=requirement.confidence,
+        source_count=requirement.source_count,
+        consolidation_method=requirement.consolidation_method,
+        review_state=requirement.review_state,
+        graph_state=str(requirement.graph_state or "active"),
+        metadata_json=dict(requirement.metadata_json or {}),
+        created_at=requirement.created_at,
+    )
+
+
+def _requirement_review_to_response(
+    review: RequirementReview,
+) -> RequirementReviewResponse:
+    return RequirementReviewResponse(
+        id=review.id,
+        action=review.action,
+        previous_review_state=review.previous_review_state,
+        new_review_state=review.new_review_state,
+        notes=review.notes,
+        actor_id=review.actor_id,
+        metadata_json=dict(review.metadata_json or {}),
+        created_at=review.created_at,
+    )
+
+
+def _requirement_relation_to_response(
+    relation: RequirementRelation,
+) -> RequirementRelationResponse:
+    source_requirement = relation.source_requirement
+    target_requirement = relation.target_requirement
+    return RequirementRelationResponse(
+        id=relation.id,
+        source_requirement_id=relation.source_requirement_id,
+        source_requirement_text=getattr(source_requirement, "canonical_text", "") or "",
+        target_requirement_id=relation.target_requirement_id,
+        target_requirement_text=getattr(target_requirement, "canonical_text", "") or "",
+        relation_type=relation.relation_type,
+        confidence=relation.confidence,
+        review_state=str(relation.review_state or "pending"),
+        graph_state=str(relation.graph_state or "active"),
+        metadata_json=dict(relation.metadata_json or {}),
+        created_at=relation.created_at,
+    )
+
+
+def _requirement_relation_review_to_response(
+    review: RequirementRelationReview,
+) -> RequirementRelationReviewResponse:
+    return RequirementRelationReviewResponse(
+        id=review.id,
+        action=review.action,
+        previous_review_state=review.previous_review_state,
+        new_review_state=review.new_review_state,
+        notes=review.notes,
+        actor_id=review.actor_id,
+        metadata_json=dict(review.metadata_json or {}),
+        created_at=review.created_at,
+    )
+
+
 # ── Routes ──
 
 
@@ -373,6 +629,239 @@ async def get_tender(
     return TenderDetailResponse(
         **response.model_dump(),
         requirements=[_requirement_to_response(r) for r in tender.requirements],
+    )
+
+
+@router.get(
+    "/{tender_id}/requirement-candidates",
+    response_model=RequirementExtractionRunListResponse,
+)
+async def get_tender_requirement_candidates(
+    tender_id: int,
+    limit_runs: int = Query(default=5, ge=1, le=20),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent staged requirement extraction runs for a tender."""
+
+    await check_tender_access(tender_id, current_user, db)
+    extraction_runs = await list_staged_requirement_candidate_runs(
+        db,
+        tender_id=tender_id,
+        limit_runs=limit_runs,
+    )
+    return RequirementExtractionRunListResponse(
+        items=[_requirement_extraction_run_to_response(run) for run in extraction_runs],
+        total_runs=len(extraction_runs),
+    )
+
+
+@router.get(
+    "/{tender_id}/consolidated-requirements",
+    response_model=ConsolidatedRequirementListResponse,
+)
+async def get_tender_consolidated_requirements(
+    tender_id: int,
+    graph_state: Annotated[str | None, Query()] = "active",
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return persisted consolidated requirements for a tender."""
+
+    await check_tender_access(tender_id, current_user, db)
+    requirements = await list_consolidated_requirements(
+        db,
+        tender_id=tender_id,
+        graph_state=graph_state,
+    )
+    return ConsolidatedRequirementListResponse(
+        items=[_consolidated_requirement_to_response(item) for item in requirements],
+        total_items=len(requirements),
+    )
+
+
+@router.get(
+    "/{tender_id}/consolidated-requirements/review-queue",
+    response_model=ConsolidatedRequirementListResponse,
+)
+async def get_tender_consolidated_requirement_review_queue(
+    tender_id: int,
+    review_state: str | None = Query(default="pending"),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return consolidated requirements ordered for review triage."""
+
+    await check_tender_access(tender_id, current_user, db)
+    requirements = await list_consolidated_requirements_for_review(
+        db,
+        tender_id=tender_id,
+        review_state=review_state,
+        limit=limit,
+    )
+    return ConsolidatedRequirementListResponse(
+        items=[_consolidated_requirement_to_response(item) for item in requirements],
+        total_items=len(requirements),
+    )
+
+
+@router.get(
+    "/{tender_id}/consolidated-requirements/relations",
+    response_model=RequirementRelationListResponse,
+)
+async def get_tender_consolidated_requirement_relations(
+    tender_id: int,
+    relation_type: str | None = Query(default=None),
+    graph_state: Annotated[str | None, Query()] = "active",
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return persisted requirement relations for a tender."""
+
+    await check_tender_access(tender_id, current_user, db)
+    relations = await list_requirement_relations(
+        db,
+        tender_id=tender_id,
+        relation_type=relation_type,
+        graph_state=graph_state,
+    )
+    return RequirementRelationListResponse(
+        items=[_requirement_relation_to_response(item) for item in relations],
+        total_items=len(relations),
+    )
+
+
+@router.get(
+    "/{tender_id}/consolidated-requirements/relations/review-queue",
+    response_model=RequirementRelationListResponse,
+)
+async def get_tender_consolidated_requirement_relation_review_queue(
+    tender_id: int,
+    review_state: str | None = Query(default="pending"),
+    relation_type: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return inferred requirement relations ordered for review triage."""
+
+    await check_tender_access(tender_id, current_user, db)
+    relations = await list_requirement_relations_for_review(
+        db,
+        tender_id=tender_id,
+        review_state=review_state,
+        relation_type=relation_type,
+        limit=limit,
+    )
+    return RequirementRelationListResponse(
+        items=[_requirement_relation_to_response(item) for item in relations],
+        total_items=len(relations),
+    )
+
+
+@router.post(
+    "/{tender_id}/consolidated-requirements/rebuild",
+    response_model=ConsolidatedRequirementListResponse,
+    status_code=202,
+)
+async def rebuild_tender_consolidated_requirements(
+    tender_id: int,
+    limit_runs: int = Query(default=5, ge=1, le=20),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rebuild persisted consolidated requirements from staged candidates."""
+
+    await check_tender_access(tender_id, current_user, db)
+    requirements = await rebuild_consolidated_requirements_from_staging(
+        db,
+        tender_id=tender_id,
+        limit_runs=limit_runs,
+    )
+    return ConsolidatedRequirementListResponse(
+        items=[_consolidated_requirement_to_response(item) for item in requirements],
+        total_items=len(requirements),
+    )
+
+
+@router.post(
+    "/{tender_id}/consolidated-requirements/{requirement_id}/review",
+    response_model=ConsolidatedRequirementReviewActionResponse,
+    status_code=202,
+)
+async def review_tender_consolidated_requirement(
+    tender_id: int,
+    requirement_id: int,
+    data: ConsolidatedRequirementReviewRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply a review decision to a consolidated requirement."""
+
+    await check_tender_access(tender_id, current_user, db)
+    requirement = await get_consolidated_requirement_for_tender(
+        db,
+        tender_id=tender_id,
+        requirement_id=requirement_id,
+    )
+    if requirement is None:
+        raise HTTPException(status_code=404, detail="Consolidated requirement not found")
+
+    try:
+        updated_requirement, review = await apply_requirement_review(
+            db,
+            requirement=requirement,
+            actor_id=current_user.id,
+            action=data.action,
+            notes=data.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ConsolidatedRequirementReviewActionResponse(
+        requirement=_consolidated_requirement_to_response(updated_requirement),
+        review=_requirement_review_to_response(review),
+    )
+
+
+@router.post(
+    "/{tender_id}/consolidated-requirements/relations/{relation_id}/review",
+    response_model=RequirementRelationReviewActionResponse,
+    status_code=202,
+)
+async def review_tender_consolidated_requirement_relation(
+    tender_id: int,
+    relation_id: int,
+    data: RequirementRelationReviewRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply a review decision to an inferred requirement relation."""
+
+    await check_tender_access(tender_id, current_user, db)
+    relation = await get_requirement_relation_for_tender(
+        db,
+        tender_id=tender_id,
+        relation_id=relation_id,
+    )
+    if relation is None:
+        raise HTTPException(status_code=404, detail="Requirement relation not found")
+
+    try:
+        updated_relation, review = await apply_requirement_relation_review(
+            db,
+            relation=relation,
+            actor_id=current_user.id,
+            action=data.action,
+            notes=data.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RequirementRelationReviewActionResponse(
+        relation=_requirement_relation_to_response(updated_relation),
+        review=_requirement_relation_review_to_response(review),
     )
 
 
@@ -555,6 +1044,21 @@ async def import_tender_document(
             os.remove(tmp_path)
 
     requirement_candidates = list(stats.get("requirement_candidates") or [])
+    await stage_extracted_requirement_candidates(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        source_document_ref=object_name,
+        filename=file.filename,
+        extraction_method=str(stats.get("requirement_extraction_method") or "heuristic_v1"),
+        candidates=requirement_candidates,
+        metadata={
+            "content_type": file.content_type,
+            "requirements_detected": stats.get("requirements_detected"),
+            "sections_detected": stats.get("sections_detected"),
+            "ingestion_status": stats.get("status"),
+        },
+    )
     created_requirements = apply_extracted_requirement_candidates(tender, requirement_candidates)
     await db.flush()
     graph_synced = await sync_tender_requirements_to_graph(

@@ -1,0 +1,15 @@
+{
+  "session_id": "tc_cab143ed6ca7",
+  "status": "idle",
+  "model": "claude-sonnet-4-20250514",
+  "created_at": "2026-04-06T08:28:30.511951",
+  "messages": [],
+  "total_usage_input": 0,
+  "total_usage_output": 0,
+  "total_cost_usd": 0.0,
+  "working_directory": ".",
+  "system_prompt_append": "",
+  "should_abort": false,
+  "model_config": {},
+  "api_keys": {}
+}

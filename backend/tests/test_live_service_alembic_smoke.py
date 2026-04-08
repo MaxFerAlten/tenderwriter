@@ -94,7 +94,7 @@ def test_live_backend_env_and_schema_version_match_alembic_rollout() -> None:
     )
 
     assert "DB_SCHEMA_BOOTSTRAP_MODE=alembic" in env_output
-    assert version_output == "20260403_0001"
+    assert version_output == "20260408_0007"
 
 
 def test_live_backend_admin_login_still_succeeds() -> None:

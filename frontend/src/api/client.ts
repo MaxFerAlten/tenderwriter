@@ -247,6 +247,93 @@ export const tenderApi = {
         return request<{ items: Tender[]; total: number }>(`/tenders${query}`);
     },
     get: (id: number) => request<TenderDetail>(`/tenders/${id}`),
+    getRequirementCandidateRuns: (id: number, params?: { limit_runs?: number }) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<RequirementExtractionRunListResponse>(`/tenders/${id}/requirement-candidates${query}`);
+    },
+    getConsolidatedRequirements: (
+        id: number,
+        params?: { graph_state?: string }
+    ) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<ConsolidatedRequirementListResponse>(`/tenders/${id}/consolidated-requirements${query}`);
+    },
+    getConsolidatedRequirementRelations: (
+        id: number,
+        params?: { relation_type?: string; graph_state?: string }
+    ) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<RequirementRelationListResponse>(
+            `/tenders/${id}/consolidated-requirements/relations${query}`
+        );
+    },
+    getConsolidatedRequirementRelationReviewQueue: (
+        id: number,
+        params?: { review_state?: string; relation_type?: string; limit?: number }
+    ) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<RequirementRelationListResponse>(
+            `/tenders/${id}/consolidated-requirements/relations/review-queue${query}`
+        );
+    },
+    getConsolidatedRequirementReviewQueue: (
+        id: number,
+        params?: { review_state?: string; limit?: number }
+    ) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<ConsolidatedRequirementListResponse>(
+            `/tenders/${id}/consolidated-requirements/review-queue${query}`
+        );
+    },
+    rebuildConsolidatedRequirements: (id: number, params?: { limit_runs?: number }) => {
+        const query = params ? '?' + new URLSearchParams(
+            Object.entries(params)
+                .filter(([, value]) => value !== undefined && value !== null)
+                .reduce((acc, [key, value]) => ({ ...acc, [key]: String(value) }), {} as Record<string, string>)
+        ).toString() : '';
+        return request<ConsolidatedRequirementListResponse>(
+            `/tenders/${id}/consolidated-requirements/rebuild${query}`,
+            { method: 'POST' }
+        );
+    },
+    reviewConsolidatedRequirement: (
+        id: number,
+        requirementId: number,
+        data: ConsolidatedRequirementReviewRequest
+    ) =>
+        request<ConsolidatedRequirementReviewActionResponse>(
+            `/tenders/${id}/consolidated-requirements/${requirementId}/review`,
+            { method: 'POST', body: data }
+        ),
+    reviewConsolidatedRequirementRelation: (
+        id: number,
+        relationId: number,
+        data: RequirementRelationReviewRequest
+    ) =>
+        request<RequirementRelationReviewActionResponse>(
+            `/tenders/${id}/consolidated-requirements/relations/${relationId}/review`,
+            { method: 'POST', body: data }
+        ),
     create: (data: TenderCreate) => request<Tender>('/tenders', { method: 'POST', body: data }),
     update: (id: number, data: TenderUpdate) =>
         request<Tender>(`/tenders/${id}`, { method: 'PUT', body: data }),
@@ -714,6 +801,20 @@ export const systemApi = {
     updateAppSettings: (data: Partial<AppSettingsData>) => request<AppSettingsData>('/system/app-settings', { method: 'PUT', body: data }),
 };
 
+export const hooksApi = {
+    list: <T = unknown>() => request<T[]>('/hooks/hooks'),
+    listEvents: <T = unknown>() => request<{ events: T[] }>('/hooks/hooks/events'),
+    register: <TBody extends Record<string, unknown>>(hook: TBody) =>
+        request('/hooks/hooks', { method: 'POST', body: hook }),
+    unregister: (hookId: string) =>
+        request(`/hooks/hooks/${hookId}`, { method: 'DELETE' }),
+    test: <T = unknown>(hookId: string, eventType: string, testData?: Record<string, unknown>) =>
+        request<T>(
+            `/hooks/hooks/${hookId}/test?event_type=${encodeURIComponent(eventType)}`,
+            { method: 'POST', body: testData }
+        ),
+};
+
 export interface SystemCapabilityStatus {
     available: boolean;
     reason: string | null;
@@ -1086,6 +1187,116 @@ export interface Requirement {
     compliance_status: string;
     mapped_section_id: number | null;
     mapped_section_title: string | null;
+}
+
+export interface RequirementCandidateRecord {
+    id: number;
+    candidate_position: number;
+    summary_text: string;
+    normalized_text: string;
+    category: string | null;
+    priority: string;
+    confidence: number | null;
+    source_document_ref: string | null;
+    source_reference: string | null;
+    created_at: string | null;
+}
+
+export interface RequirementExtractionRunRecord {
+    id: number;
+    source_document_ref: string | null;
+    filename: string | null;
+    extraction_method: string;
+    candidate_count: number;
+    metadata_json: Record<string, unknown> | null;
+    created_at: string | null;
+    candidates: RequirementCandidateRecord[];
+}
+
+export interface RequirementExtractionRunListResponse {
+    items: RequirementExtractionRunRecord[];
+    total_runs: number;
+}
+
+export interface ConsolidatedRequirementRecord {
+    id: number;
+    canonical_text: string;
+    normalized_text: string;
+    category: string | null;
+    priority: string;
+    confidence: number | null;
+    source_count: number;
+    consolidation_method: string;
+    review_state: string;
+    graph_state: string;
+    metadata_json: Record<string, unknown> | null;
+    created_at: string | null;
+}
+
+export interface ConsolidatedRequirementListResponse {
+    items: ConsolidatedRequirementRecord[];
+    total_items: number;
+}
+
+export interface RequirementRelationRecord {
+    id: number;
+    source_requirement_id: number;
+    source_requirement_text: string;
+    target_requirement_id: number;
+    target_requirement_text: string;
+    relation_type: string;
+    confidence: number | null;
+    review_state: string;
+    graph_state: string;
+    metadata_json: Record<string, unknown> | null;
+    created_at: string | null;
+}
+
+export interface RequirementRelationListResponse {
+    items: RequirementRelationRecord[];
+    total_items: number;
+}
+
+export interface RequirementRelationReviewRequest {
+    action: string;
+    notes?: string;
+}
+
+export interface RequirementRelationReviewRecord {
+    id: number;
+    action: string;
+    previous_review_state: string | null;
+    new_review_state: string;
+    notes: string | null;
+    actor_id: number | null;
+    metadata_json: Record<string, unknown> | null;
+    created_at: string | null;
+}
+
+export interface RequirementRelationReviewActionResponse {
+    relation: RequirementRelationRecord;
+    review: RequirementRelationReviewRecord;
+}
+
+export interface ConsolidatedRequirementReviewRequest {
+    action: string;
+    notes?: string;
+}
+
+export interface RequirementReviewRecord {
+    id: number;
+    action: string;
+    previous_review_state: string | null;
+    new_review_state: string;
+    notes: string | null;
+    actor_id: number | null;
+    metadata_json: Record<string, unknown> | null;
+    created_at: string | null;
+}
+
+export interface ConsolidatedRequirementReviewActionResponse {
+    requirement: ConsolidatedRequirementRecord;
+    review: RequirementReviewRecord;
 }
 
 export interface TenderCreate {

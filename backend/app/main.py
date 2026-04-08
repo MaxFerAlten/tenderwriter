@@ -69,6 +69,10 @@ async def lifespan(app: FastAPI):
         app.state.rag_engine_initialization_task = None
         logger.info("HybridRAG engine ready for lazy initialization")
 
+        from hooks.builtins import register_builtin_hooks
+        register_builtin_hooks()
+        logger.info("Built-in hooks registered")
+
     except Exception as e:
         logger.exception("Startup failed", error=str(e))
         raise e
@@ -116,7 +120,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, anonymizer_admin, auth, chat, content_library, data_explorer, gateway_admin, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
+    from app.api import admin, anonymizer_admin, auth, chat, content_library, data_explorer, gateway_admin, hooks_api, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -135,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])
     app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(data_explorer.router, prefix="/api/data-explorer", tags=["Data Explorer"])
+    app.include_router(hooks_api.router, prefix="/api/hooks", tags=["Hooks"])
 
     @app.get("/health", tags=["Health"])
     async def health_check():

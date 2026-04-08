@@ -132,13 +132,45 @@ def test_schema_inventory_captures_compatibility_columns() -> None:
 
 
 def test_baseline_revision_covers_schema_inventory_tables() -> None:
-    """The baseline revision should cover the same tables exposed by the inventory snapshot."""
+    """The baseline revision should remain covered by the live metadata inventory."""
 
     schema_inventory = _load_schema_inventory_module()
     baseline_revision = _load_baseline_revision_module()
 
     inventory = schema_inventory.build_schema_inventory()
+    inventory_tables = set(inventory["tables"])
+    baseline_tables = set(baseline_revision.BASELINE_TABLES)
 
-    assert set(baseline_revision.BASELINE_TABLES) == set(inventory["tables"])
+    assert baseline_tables.issubset(inventory_tables)
     assert baseline_revision.revision == "20260403_0001"
     assert baseline_revision.down_revision is None
+
+
+def test_schema_inventory_tracks_requirement_candidate_staging_tables() -> None:
+    """The metadata inventory should expose the new requirement pipeline tables explicitly."""
+
+    schema_inventory = _load_schema_inventory_module()
+    baseline_revision = _load_baseline_revision_module()
+
+    inventory = schema_inventory.build_schema_inventory()
+    inventory_tables = set(inventory["tables"])
+    baseline_tables = set(baseline_revision.BASELINE_TABLES)
+    new_tables = inventory_tables - baseline_tables
+    relation_columns = {
+        column["name"] for column in inventory["tables"]["requirement_relations"]["columns"]
+    }
+    consolidated_columns = {
+        column["name"] for column in inventory["tables"]["consolidated_requirements"]["columns"]
+    }
+
+    assert new_tables == {
+        "consolidated_requirements",
+        "requirement_candidates",
+        "requirement_extraction_runs",
+        "requirement_relation_reviews",
+        "requirement_relations",
+        "requirement_reviews",
+    }
+    assert "graph_state" in consolidated_columns
+    assert "review_state" in relation_columns
+    assert "graph_state" in relation_columns
