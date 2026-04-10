@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from app.models import (
     ComplianceGate,
     ComplianceGateStatus,
     ComplianceStatus,
+    ConsolidatedRequirement,
     Proposal,
     ProposalSection,
     SectionStatus,
@@ -21,6 +23,7 @@ from app.services.kpi_reason_engine import (
     build_compliance_gate_decision_event_payload,
     build_compliance_gate_opened_event_payload,
 )
+from app.services.tender_requirements import normalize_requirement_text
 
 AUTO_COMPLIANCE_GATE_NAME = "Auto compliance readiness"
 _AUTO_NOTES = {
@@ -28,6 +31,18 @@ _AUTO_NOTES = {
     ComplianceGateStatus.PASSED: "Auto-managed gate: all mapped requirements are fully addressed.",
     ComplianceGateStatus.FAILED: "Auto-managed gate: tender deadline passed with unresolved requirements.",
 }
+
+
+@dataclass
+class ComplianceRequirementCoverage:
+    id: int
+    requirement_text: str
+    category: str | None
+    priority: str
+    compliance_status: ComplianceStatus
+    proposal_section_id: int | None = None
+    proposal_section_title: str | None = None
+    coverage_source: str = "legacy"
 
 
 def _now_utc() -> datetime:
@@ -42,9 +57,146 @@ def derive_requirement_compliance_status(section_status: SectionStatus | None) -
     return ComplianceStatus.NOT_ADDRESSED
 
 
+def _coerce_compliance_status(value: Any) -> ComplianceStatus:
+    if isinstance(value, ComplianceStatus):
+        return value
+    try:
+        return ComplianceStatus(str(value))
+    except ValueError:
+        return ComplianceStatus.NOT_ADDRESSED
+
+
+def _source_payloads(metadata_json: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    if not isinstance(metadata_json, Mapping):
+        return []
+    payloads: list[Mapping[str, Any]] = []
+    primary_source = metadata_json.get("primary_source")
+    if isinstance(primary_source, Mapping):
+        payloads.append(primary_source)
+    for source in metadata_json.get("sources") or []:
+        if isinstance(source, Mapping):
+            payloads.append(source)
+    return payloads
+
+
+def _legacy_requirement_for_consolidated(
+    consolidated_requirement: ConsolidatedRequirement,
+    *,
+    legacy_by_id: Mapping[int, TenderRequirement],
+    legacy_by_text: Mapping[str, TenderRequirement],
+) -> TenderRequirement | None:
+    for payload in _source_payloads(consolidated_requirement.metadata_json):
+        legacy_id = payload.get("legacy_requirement_id")
+        if legacy_id is None:
+            continue
+        try:
+            legacy_requirement = legacy_by_id.get(int(legacy_id))
+        except (TypeError, ValueError):
+            legacy_requirement = None
+        if legacy_requirement is not None:
+            return legacy_requirement
+
+    normalized_text = normalize_requirement_text(
+        consolidated_requirement.normalized_text
+        or consolidated_requirement.canonical_text
+        or ""
+    )
+    if normalized_text:
+        return legacy_by_text.get(normalized_text)
+    return None
+
+
+def _legacy_requirement_to_coverage(requirement: TenderRequirement) -> ComplianceRequirementCoverage:
+    mapped_section = requirement.proposal_section
+    return ComplianceRequirementCoverage(
+        id=int(requirement.id or 0),
+        requirement_text=str(requirement.requirement_text or ""),
+        category=requirement.category,
+        priority=str(requirement.priority or "medium"),
+        compliance_status=_coerce_compliance_status(requirement.compliance_status),
+        proposal_section_id=requirement.proposal_section_id,
+        proposal_section_title=mapped_section.title if mapped_section else None,
+        coverage_source="legacy",
+    )
+
+
+def _consolidated_requirement_to_coverage(
+    requirement: ConsolidatedRequirement,
+    *,
+    legacy_requirement: TenderRequirement | None,
+) -> ComplianceRequirementCoverage:
+    is_approved = str(requirement.review_state or "pending").casefold() == "approved"
+    mapped_section = legacy_requirement.proposal_section if legacy_requirement is not None else None
+    return ComplianceRequirementCoverage(
+        id=int(requirement.id or 0),
+        requirement_text=str(requirement.canonical_text or ""),
+        category=requirement.category or (legacy_requirement.category if legacy_requirement else None),
+        priority=str(requirement.priority or (legacy_requirement.priority if legacy_requirement else "medium")),
+        compliance_status=_coerce_compliance_status(
+            legacy_requirement.compliance_status
+            if is_approved and legacy_requirement is not None
+            else None
+        ),
+        proposal_section_id=(
+            legacy_requirement.proposal_section_id
+            if is_approved and legacy_requirement is not None
+            else None
+        ),
+        proposal_section_title=mapped_section.title if is_approved and mapped_section else None,
+        coverage_source="consolidated_approved" if is_approved else "consolidated_review_pending",
+    )
+
+
+def build_compliance_requirement_coverage(tender: Tender) -> list[ComplianceRequirementCoverage]:
+    """Build the compliance coverage source, preferring approved consolidated requirements."""
+
+    legacy_requirements = list(tender.requirements or [])
+    legacy_by_id = {
+        int(requirement.id): requirement
+        for requirement in legacy_requirements
+        if requirement.id is not None
+    }
+    legacy_by_text = {
+        normalize_requirement_text(requirement.requirement_text or ""): requirement
+        for requirement in legacy_requirements
+        if requirement.requirement_text
+    }
+
+    active_consolidated = [
+        requirement
+        for requirement in list(tender.consolidated_requirements or [])
+        if str(requirement.graph_state or "active").casefold() == "active"
+    ]
+    has_approved_consolidated = any(
+        str(requirement.review_state or "pending").casefold() == "approved"
+        for requirement in active_consolidated
+    )
+
+    if not has_approved_consolidated:
+        return [_legacy_requirement_to_coverage(requirement) for requirement in legacy_requirements]
+
+    coverage_items = []
+    for requirement in sorted(
+        active_consolidated,
+        key=lambda item: (str(item.priority or "medium").casefold(), item.id or 0),
+    ):
+        legacy_requirement = _legacy_requirement_for_consolidated(
+            requirement,
+            legacy_by_id=legacy_by_id,
+            legacy_by_text=legacy_by_text,
+        )
+        coverage_items.append(
+            _consolidated_requirement_to_coverage(
+                requirement,
+                legacy_requirement=legacy_requirement,
+            )
+        )
+    return coverage_items
+
+
 def determine_auto_gate_target_status(
     *,
-    requirements: Sequence[TenderRequirement],
+    requirements: Sequence[TenderRequirement | ComplianceRequirementCoverage],
     sections: Sequence[ProposalSection],
     tender_due_at: datetime | None,
     now: datetime | None = None,
@@ -84,7 +236,8 @@ async def _load_tender_for_compliance(db: AsyncSession, tender_id: int) -> Tende
         select(Tender)
         .where(Tender.id == tender_id)
         .options(
-            selectinload(Tender.requirements),
+            selectinload(Tender.requirements).selectinload(TenderRequirement.proposal_section),
+            selectinload(Tender.consolidated_requirements),
             selectinload(Tender.proposals).selectinload(Proposal.sections),
         )
     )
@@ -130,8 +283,9 @@ async def sync_requirement_compliance_and_gate(
             continue
         requirement.compliance_status = derive_requirement_compliance_status(section.status)
 
+    coverage_requirements = build_compliance_requirement_coverage(tender)
     gate_target = determine_auto_gate_target_status(
-        requirements=list(tender.requirements or []),
+        requirements=coverage_requirements,
         sections=sections,
         tender_due_at=tender.deadline,
     )

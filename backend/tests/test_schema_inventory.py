@@ -172,5 +172,12 @@ def test_schema_inventory_tracks_requirement_candidate_staging_tables() -> None:
         "requirement_reviews",
     }
     assert "graph_state" in consolidated_columns
+    assert {
+        "parent_requirement_id",
+        "parent_requirement_key",
+        "applicability",
+        "conditions",
+        "exceptions",
+    } <= consolidated_columns
     assert "review_state" in relation_columns
     assert "graph_state" in relation_columns

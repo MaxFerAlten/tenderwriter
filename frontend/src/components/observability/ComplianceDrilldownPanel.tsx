@@ -149,6 +149,11 @@ export default function ComplianceDrilldownPanel({
                                                             {requirement.category}
                                                         </span>
                                                     )}
+                                                    {requirement.coverage_source === 'consolidated_approved' && (
+                                                        <span style={{ ...badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)'), textTransform: 'none' }}>
+                                                            consolidated approved
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>

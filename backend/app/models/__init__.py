@@ -212,6 +212,12 @@ class Tender(Base):
     proposals = relationship("Proposal", back_populates="tender", cascade="all, delete")
     permissions = relationship("TenderPermission", back_populates="tender", cascade="all, delete")
     chat_room = relationship("ChatRoom", back_populates="tender", uselist=False, cascade="all, delete")
+    documents = relationship(
+        "Document",
+        back_populates="tender",
+        cascade="all, delete",
+        foreign_keys="Document.tender_id",
+    )
 
 
 class TenderRequirement(Base):
@@ -302,6 +308,16 @@ class ConsolidatedRequirement(Base):
     consolidation_method = Column(String(100), default="staging_v1")
     review_state = Column(String(50), default="pending")
     graph_state = Column(String(50), default="active", index=True)
+    parent_requirement_id = Column(
+        Integer,
+        ForeignKey("consolidated_requirements.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    parent_requirement_key = Column(String(255), nullable=True, index=True)
+    applicability = Column(JSONB, default=dict)
+    conditions = Column(JSONB, default=list)
+    exceptions = Column(JSONB, default=list)
     metadata_json = Column(JSONB, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -311,6 +327,17 @@ class ConsolidatedRequirement(Base):
         "RequirementReview",
         back_populates="consolidated_requirement",
         cascade="all, delete",
+    )
+    parent_requirement = relationship(
+        "ConsolidatedRequirement",
+        remote_side=[id],
+        back_populates="child_requirements",
+        foreign_keys=[parent_requirement_id],
+    )
+    child_requirements = relationship(
+        "ConsolidatedRequirement",
+        back_populates="parent_requirement",
+        foreign_keys=[parent_requirement_id],
     )
     outgoing_relations = relationship(
         "RequirementRelation",
@@ -494,6 +521,7 @@ class Document(Base):
     file_size = Column(Integer)
     mime_type = Column(String(100))
     ingestion_status = Column(Enum(IngestionStatus), default=IngestionStatus.PENDING, index=True)
+    ingestion_progress = Column(Float, default=0.0)
     chunk_count = Column(Integer, default=0)
     error_message = Column(Text)
     metadata_json = Column(JSONB, default=dict)
@@ -501,8 +529,27 @@ class Document(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # ── New fields for tender document lifecycle ──
+    tender_id = Column(
+        Integer,
+        ForeignKey("tenders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    storage_bucket = Column(String(255), nullable=True)
+    storage_object_name = Column(String(1000), nullable=True)
+    source_kind = Column(String(50), default="upload")  # upload | onlyoffice | generated | library
+    ingestion_started_at = Column(DateTime(timezone=True), nullable=True)
+    ingestion_completed_at = Column(DateTime(timezone=True), nullable=True)
+    ingestion_job_id = Column(String(200), nullable=True)
+
     # Relationships
     chunks = relationship("Chunk", back_populates="document", cascade="all, delete")
+    tender = relationship(
+        "Tender",
+        back_populates="documents",
+        foreign_keys=[tender_id],
+    )
 
 
 class Chunk(Base):

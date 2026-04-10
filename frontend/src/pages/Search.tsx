@@ -56,6 +56,38 @@ interface HistoryItem {
     created_at: string;
 }
 
+interface SearchResultsVisibilityInput {
+    hasSearched: boolean;
+    isSearching: boolean;
+    visibleAnswer: string;
+    resultsLength: number;
+}
+
+interface SearchEmptyStateInput {
+    isSearching: boolean;
+    visibleAnswer: string;
+    resultsLength: number;
+    error: string | null;
+}
+
+export function normalizeSearchErrorMessage(message: string): string {
+    if (message.includes('fetch') || message.includes('network') || message.includes('Failed')) {
+        return 'Could not reach the backend. Make sure the API server is running on port 8000.';
+    }
+    return message;
+}
+
+export function shouldShowSearchResults(input: SearchResultsVisibilityInput): boolean {
+    return (
+        input.hasSearched
+        && (input.isSearching || Boolean(input.visibleAnswer) || input.resultsLength > 0)
+    );
+}
+
+export function shouldShowEmptySearchState(input: SearchEmptyStateInput): boolean {
+    return !input.isSearching && !input.visibleAnswer && input.resultsLength === 0 && !input.error;
+}
+
 function normalizeMatchScore(score: number): number {
     if (!Number.isFinite(score)) return 0;
 
@@ -363,6 +395,7 @@ export default function RAGSearch() {
         cancelSourcesReveal();
         const effectiveSettings = normalizeSearchSettings(searchSettings);
         const controller = new AbortController();
+        let sourcePromise: Promise<DisplayResult[]> | null = null;
         streamControllerRef.current = controller;
 
         setIsSearching(true);
@@ -379,7 +412,7 @@ export default function RAGSearch() {
                 effectiveSettings,
                 { save_history: false }
             );
-            const sourcePromise: Promise<DisplayResult[]> = ragApi.query({
+            sourcePromise = ragApi.query({
                 ...sourceRequest,
             }, {
                 signal: controller.signal,
@@ -425,14 +458,20 @@ export default function RAGSearch() {
                 return;
             }
             cancelAnswerFlush();
-            cancelSourcesReveal();
-            controller.abort();
-            const msg = err instanceof Error ? err.message : 'Search failed';
-            setError(msg);
-            // Show a helpful message if the backend is likely offline
-            if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
-                setError('Could not reach the backend. Make sure the API server is running on port 8000.');
+            if (sourcePromise) {
+                try {
+                    const sourceData = await sourcePromise;
+                    if (!controller.signal.aborted) {
+                        applyResultRevealTransition(
+                            finalizeSearchResults(resultsRevealStateRef.current, sourceData)
+                        );
+                    }
+                } catch {
+                    // Retrieval failed too; the error banner already explains the visible failure.
+                }
             }
+            const msg = err instanceof Error ? err.message : 'Search failed';
+            setError(normalizeSearchErrorMessage(msg));
         } finally {
             if (streamControllerRef.current === controller) {
                 streamControllerRef.current = null;
@@ -941,7 +980,12 @@ export default function RAGSearch() {
                 )}
 
                 {/* Results */}
-                {hasSearched && !error && (isSearching || visibleAnswer || results.length > 0) && (
+                {shouldShowSearchResults({
+                    hasSearched,
+                    isSearching,
+                    visibleAnswer,
+                    resultsLength: results.length,
+                }) && (
                     <div style={{ display: 'grid', gap: '1.5rem' }}>
                         {/* AI Answer */}
                         {(visibleAnswer || isSearching) && (
@@ -984,7 +1028,12 @@ export default function RAGSearch() {
                         )}
 
                         {/* No answer and no results */}
-                        {!isSearching && !visibleAnswer && results.length === 0 && (
+                        {shouldShowEmptySearchState({
+                            isSearching,
+                            visibleAnswer,
+                            resultsLength: results.length,
+                            error,
+                        }) && (
                             <div className="empty-state" style={{ padding: '2rem 0' }}>
                                 <SearchIcon size={48} />
                                 <h3>No results found</h3>

@@ -175,6 +175,165 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
                 action="archive",
             )
 
+    async def test_apply_requirement_review_edits_text_and_graph_v2_fields_with_audit(self) -> None:
+        db = _FakeAsyncSession()
+        requirement = ConsolidatedRequirement(
+            id=16,
+            tender_id=64,
+            canonical_text="Provide old insurance certificate.",
+            normalized_text="provide old insurance certificate",
+            category="risk",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="approved",
+            graph_state="active",
+            metadata_json={"review_count": 1},
+        )
+
+        updated_requirement, review = await apply_requirement_review(
+            db,
+            requirement=requirement,
+            actor_id=9,
+            action="edit",
+            notes="Cleaned up the extracted requirement.",
+            edit_payload={
+                "canonical_text": "Provide updated cyber insurance certificate.",
+                "priority": "high",
+                "conditions": ["Before contract signature"],
+                "exceptions": ["Optional modules excluded"],
+                "applicability": {"lot": "1"},
+            },
+        )
+
+        self.assertIs(updated_requirement, requirement)
+        self.assertEqual(requirement.review_state, "pending")
+        self.assertEqual(requirement.graph_state, "active")
+        self.assertEqual(requirement.canonical_text, "Provide updated cyber insurance certificate.")
+        self.assertEqual(requirement.normalized_text, "provide updated cyber insurance certificate.")
+        self.assertEqual(requirement.priority, "high")
+        self.assertEqual(requirement.conditions, ["Before contract signature"])
+        self.assertEqual(requirement.exceptions, ["Optional modules excluded"])
+        self.assertEqual(requirement.applicability, {"lot": "1"})
+        self.assertEqual(review.action, "edit")
+        self.assertEqual(review.previous_review_state, "approved")
+        self.assertEqual(review.new_review_state, "pending")
+        self.assertEqual(review.metadata_json["edit"]["before"]["canonical_text"], "Provide old insurance certificate.")
+        self.assertEqual(review.metadata_json["edit"]["after"]["priority"], "high")
+
+    async def test_apply_requirement_review_dismiss_marks_requirement_obsolete_without_deleting_audit(self) -> None:
+        db = _FakeAsyncSession()
+        requirement = ConsolidatedRequirement(
+            id=17,
+            tender_id=65,
+            canonical_text="Dismiss noisy candidate.",
+            normalized_text="dismiss noisy candidate",
+            priority="low",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            graph_state="active",
+            metadata_json={"sources": [{"candidate_id": 4}]},
+        )
+
+        updated_requirement, review = await apply_requirement_review(
+            db,
+            requirement=requirement,
+            actor_id=10,
+            action="dismiss",
+            notes="False positive.",
+        )
+
+        self.assertIs(updated_requirement, requirement)
+        self.assertEqual(requirement.review_state, "dismissed")
+        self.assertEqual(requirement.graph_state, "obsolete")
+        self.assertEqual(requirement.metadata_json["lifecycle"]["reason"], "manual_dismissed")
+        self.assertEqual(requirement.metadata_json["sources"], [{"candidate_id": 4}])
+        self.assertEqual(review.action, "dismiss")
+        self.assertEqual(review.metadata_json["previous_graph_state"], "active")
+
+    async def test_apply_requirement_review_merge_marks_source_obsolete_and_updates_target_metadata(self) -> None:
+        db = _FakeAsyncSession()
+        source = ConsolidatedRequirement(
+            id=18,
+            tender_id=66,
+            canonical_text="Provide insurance.",
+            normalized_text="provide insurance",
+            priority="medium",
+            source_count=2,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            graph_state="active",
+        )
+        target = ConsolidatedRequirement(
+            id=19,
+            tender_id=66,
+            canonical_text="Provide cyber insurance certificate.",
+            normalized_text="provide cyber insurance certificate",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            graph_state="active",
+            metadata_json={},
+        )
+
+        updated_requirement, review = await apply_requirement_review(
+            db,
+            requirement=source,
+            actor_id=11,
+            action="merge",
+            notes="Duplicate of the stronger insurance requirement.",
+            target_requirement=target,
+        )
+
+        self.assertIs(updated_requirement, source)
+        self.assertEqual(source.review_state, "merged")
+        self.assertEqual(source.graph_state, "obsolete")
+        self.assertEqual(source.metadata_json["lifecycle"]["reason"], "manual_merged")
+        self.assertEqual(target.source_count, 3)
+        self.assertEqual(target.metadata_json["manual_merges"][0]["source_requirement_id"], 18)
+        self.assertEqual(review.metadata_json["merge_target"]["id"], 19)
+
+    async def test_apply_requirement_review_split_creates_pending_children_and_obsoletes_source(self) -> None:
+        db = _FakeAsyncSession()
+        requirement = ConsolidatedRequirement(
+            id=20,
+            tender_id=67,
+            canonical_text="Provide ISO 27001 and cyber insurance.",
+            normalized_text="provide iso 27001 and cyber insurance",
+            category="technical",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            graph_state="active",
+        )
+
+        updated_requirement, review = await apply_requirement_review(
+            db,
+            requirement=requirement,
+            actor_id=12,
+            action="split",
+            notes="Two atomic requirements.",
+            split_payloads=[
+                {"canonical_text": "Provide ISO 27001 certification.", "category": "security"},
+                {"canonical_text": "Provide cyber insurance certificate.", "category": "risk"},
+            ],
+        )
+
+        created_children = [item for item in db.added if isinstance(item, ConsolidatedRequirement)]
+        self.assertIs(updated_requirement, requirement)
+        self.assertEqual(requirement.review_state, "split")
+        self.assertEqual(requirement.graph_state, "obsolete")
+        self.assertEqual(requirement.metadata_json["lifecycle"]["reason"], "manual_split")
+        self.assertEqual([item.canonical_text for item in created_children], [
+            "Provide ISO 27001 certification.",
+            "Provide cyber insurance certificate.",
+        ])
+        self.assertTrue(all(item.review_state == "pending" for item in created_children))
+        self.assertEqual(review.metadata_json["split_children"][0]["id"], created_children[0].id)
+
 
 if __name__ == "__main__":
     unittest.main()

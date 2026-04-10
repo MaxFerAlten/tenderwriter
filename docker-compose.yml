@@ -78,6 +78,24 @@ services:
     networks:
       - default
 
+  # --- GPT4Free OpenAI-compatible API ---
+  gpt4free:
+    image: hlohaus789/g4f:latest-slim
+    container_name: tw-gpt4free
+    restart: unless-stopped
+    user: "0:0"
+    ports:
+      - "${GPT4FREE_PORT:-1337}:8080"
+    volumes:
+      - har_and_cookies:/app/har_and_cookies
+      - gpt4free_har_and_cookies:/app/har_and_cookies
+      - gpt4free_generated_media:/app/generated_media
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/v1/models', timeout=10).read()" ]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+
   # --- OpenCode stack temporarily disabled ---
   # --- llama.cpp Server for OpenCode (Agentic Coder) ---
   # llama-opencode:
@@ -208,6 +226,9 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    environment:
+      KPI_REASON_ENGINE_BASE_URL: ${KPI_REASON_ENGINE_BASE_URL:-http://tw-kpi-reason-engine:8010}
+      KPI_REASON_ENGINE_SERVICE_TOKEN: ${KPI_REASON_ENGINE_SERVICE_TOKEN:-changeme-kpi-service-token}
     volumes:
       - ./backend/app:/app/app
 
@@ -271,6 +292,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      gpt4free:
+        condition: service_healthy
+      gateway:
+        condition: service_started
     environment:
       DATABASE_URL: ${DATABASE_URL}
       DB_SCHEMA_BOOTSTRAP_MODE: ${DB_SCHEMA_BOOTSTRAP_MODE:-alembic}
@@ -288,7 +313,7 @@ services:
       APP_SECRET_KEY: ${APP_SECRET_KEY}
       ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS}
-      LLAMA_SERVER_URL: http://tw-gateway:8080/v1
+      LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://tw-gateway:8080/v1}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_ENABLED: ${ADMIN_ENABLED}
@@ -442,10 +467,10 @@ services:
     container_name: tw-gateway
     restart: unless-stopped
     environment:
-      GATEWAY_TENDER_UPSTREAM: http://llama-tender:8080
+      GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_UPSTREAM: http://llama-opencode:8080
       GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-180}
-      GATEWAY_TENDER_DMZ_UPSTREAM: http://llama-tender:8080
+      GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_DMZ_UPSTREAM: http://llama-opencode:8080
       GATEWAY_ANONYMIZER_URL: http://tw-anonymizer:8090
       GATEWAY_TENDER_CLOUD_PROVIDER: ${GATEWAY_TENDER_CLOUD_PROVIDER:-}
@@ -860,6 +885,8 @@ volumes:
   qdrant_data:
   neo4j_data:
   ollama_data: # Kept for potential future Ollama use
+  gpt4free_har_and_cookies:
+  gpt4free_generated_media:
   minio_data:
   redis_data:
   onlyoffice_data:

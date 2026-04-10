@@ -55,7 +55,7 @@ from app.rag.engine import (
     QueryMode,
     RAGQuery,
 )
-from app.rag.generator import GenerationResult
+from app.rag.generator import GenerationResult, PROMPT_TEMPLATES
 
 
 class _EmptyRetriever:
@@ -425,6 +425,101 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("sviluppa una risposta un po' piu completa del minimo", constraints)
 
+    def test_broad_tender_summary_queries_boost_effective_final_top_k(self) -> None:
+        engine = self._build_engine()
+
+        top_k = engine._effective_final_top_k(
+            RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.QA,
+                top_k=5,
+            )
+        )
+
+        self.assertEqual(top_k, 10)
+
+    def test_detailed_tender_overview_queries_boost_effective_final_top_k_more_aggressively(self) -> None:
+        engine = self._build_engine()
+
+        top_k = engine._effective_final_top_k(
+            RAGQuery(
+                text="fai un elenco dettagliato della gara toscana",
+                mode=QueryMode.QA,
+                top_k=5,
+            )
+        )
+
+        self.assertEqual(top_k, 12)
+
+    def test_detailed_tender_overview_queries_boost_retrieval_top_k(self) -> None:
+        engine = self._build_engine()
+
+        retrieval_top_k = engine._effective_retrieval_top_k(
+            RAGQuery(
+                text="fai un elenco dettagliato della gara toscana",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertEqual(retrieval_top_k, 30)
+
+    def test_broad_tender_overview_queries_strip_instruction_words_from_retrieval_query(self) -> None:
+        engine = self._build_engine()
+
+        retrieval_query = engine._query_text_for_retrieval(
+            "fai un elenco dettagliato della gara toscana"
+        )
+
+        self.assertEqual(retrieval_query, "gara toscana")
+
+    def test_broad_tender_summary_constraints_prefer_best_effort_synthesis(self) -> None:
+        engine = self._build_engine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("migliore sintesi possibile", constraints)
+        self.assertIn("aspetti non coperti", constraints)
+
+    def test_detailed_tender_overview_constraints_require_structured_list_and_ocr_cleanup(self) -> None:
+        engine = self._build_engine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text="fai un elenco dettagliato della gara toscana",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("elenco strutturato della gara", constraints)
+        self.assertIn("frammenti OCR", constraints)
+
+    def test_general_qa_prompt_allows_best_effort_when_context_is_partial(self) -> None:
+        template = PROMPT_TEMPLATES["general_qa"]
+
+        self.assertIn("best grounded answer", template)
+        self.assertIn("partial but relevant", template)
+
+    def test_search_mode_resolve_template_includes_response_constraints(self) -> None:
+        engine = self._build_engine()
+
+        template_name, variables = engine._resolve_template(
+            RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.SEARCH,
+            ),
+            context="Contesto sintetico",
+        )
+
+        self.assertEqual(template_name, "general_qa")
+        self.assertEqual(variables["context"], "Contesto sintetico")
+        self.assertIn("response_constraints", variables)
+        self.assertTrue(variables["response_constraints"].strip())
+
     def test_resolve_retriever_selection_falls_back_to_defaults_when_everything_is_disabled(self) -> None:
         engine = self._build_engine()
 
@@ -501,6 +596,81 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine.graph_retriever.search.assert_awaited_once()
         self.assertIn("Risultato dense", retrieved.context)
 
+    async def test_retrieve_context_and_sources_uses_more_final_chunks_for_broad_tender_summary(self) -> None:
+        engine = self._build_engine()
+        engine.dense_retriever = Mock(
+            search=Mock(
+                return_value=[
+                    SimpleNamespace(
+                        text=f"Risultato {idx}",
+                        score=1.0 - idx * 0.01,
+                        metadata={"source": f"dense-{idx}"},
+                    )
+                    for idx in range(12)
+                ]
+            )
+        )
+        engine.sparse_retriever = Mock(search=Mock(return_value=[]))
+        engine.graph_retriever = SimpleNamespace(search=AsyncMock(return_value=[]))
+        rerank_calls: list[dict] = []
+
+        def fake_rerank(**kwargs):
+            rerank_calls.append(kwargs)
+            return kwargs["results"][: kwargs["top_k"]]
+
+        engine.reranker = SimpleNamespace(rerank=Mock(side_effect=fake_rerank))
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.QA,
+                top_k=5,
+            )
+        )
+
+        self.assertEqual(rerank_calls[0]["top_k"], 10)
+        self.assertEqual(len(retrieved.sources), 10)
+
+    async def test_retrieve_context_and_sources_uses_more_chunks_for_detailed_tender_overview(self) -> None:
+        engine = self._build_engine()
+        engine.dense_retriever = Mock(
+            search=Mock(
+                return_value=[
+                    SimpleNamespace(
+                        text=f"Risultato {idx}",
+                        score=1.0 - idx * 0.01,
+                        metadata={"source": f"dense-{idx}"},
+                    )
+                    for idx in range(16)
+                ]
+            )
+        )
+        engine.sparse_retriever = Mock(search=Mock(return_value=[]))
+        engine.graph_retriever = SimpleNamespace(search=AsyncMock(return_value=[]))
+        rerank_calls: list[dict] = []
+
+        def fake_rerank(**kwargs):
+            rerank_calls.append(kwargs)
+            return kwargs["results"][: kwargs["top_k"]]
+
+        engine.reranker = SimpleNamespace(rerank=Mock(side_effect=fake_rerank))
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text="fai un elenco dettagliato della gara toscana",
+                mode=QueryMode.QA,
+                top_k=5,
+            )
+        )
+
+        engine.dense_retriever.search.assert_called_once_with(
+            query="gara toscana",
+            top_k=30,
+            filters={},
+        )
+        self.assertEqual(rerank_calls[0]["top_k"], 12)
+        self.assertEqual(len(retrieved.sources), 12)
+
     def test_math_rendering_constraints_are_added_when_requested(self) -> None:
         engine = self._build_engine()
 
@@ -536,6 +706,30 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         fitted = engine._fit_context_for_generator(context, generator=external_generator)
 
         self.assertEqual(fitted, context)
+
+    def test_broad_tender_summary_local_generator_gets_expanded_context_budget(self) -> None:
+        engine = self._build_engine()
+        local_generator = SimpleNamespace(provider="llama")
+        context = "\n\n---\n\n".join([
+            "A" * 3800,
+            "B" * 3800,
+            "C" * 3800,
+            "D" * 3800,
+        ])
+
+        fitted = engine._fit_context_for_generator(
+            context,
+            generator=local_generator,
+            rag_query=RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.QA,
+            ),
+        )
+
+        self.assertLessEqual(len(fitted), 12000)
+        self.assertGreater(len(fitted), 4500)
+        self.assertIn("A", fitted)
+        self.assertIn("B", fitted)
 
     async def test_external_target_override_uses_dynamic_generator_configuration(self) -> None:
         engine = self._build_engine()

@@ -73,6 +73,7 @@ async def stage_extracted_requirement_candidates(
 
         seen_normalized.add(normalized)
         reference = candidate.get("reference") or candidate.get("section") or candidate.get("source_section")
+        category = candidate.get("category") or reference
         staged_candidate = RequirementCandidate(
             tender_id=tender_id,
             extraction_run_id=run.id,
@@ -81,7 +82,7 @@ async def stage_extracted_requirement_candidates(
             source_reference=str(reference) if reference is not None else None,
             summary_text=summary,
             normalized_text=normalized,
-            category=str(reference) if reference is not None else None,
+            category=str(category) if category is not None else None,
             priority=_normalize_priority(candidate.get("priority")),
             confidence=_normalize_confidence(candidate.get("confidence")),
             metadata_json={"raw_candidate": dict(candidate)},

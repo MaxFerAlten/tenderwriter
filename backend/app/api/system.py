@@ -1,6 +1,6 @@
 """TenderWriter system APIs backed by the internal privileged ops-agent."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 import structlog
 from typing import Dict, Any, List
@@ -166,3 +166,26 @@ async def update_app_settings(
     await db.refresh(row)
     logger.info("App settings updated", data=row.data)
     return row.data
+
+
+@router.post("/rebuild-bm25", dependencies=[Depends(admin_required)])
+async def rebuild_bm25_index(
+    request: Request,
+):
+    """Manually trigger a full rebuild of the BM25 sparse index."""
+    rag_engine = getattr(request.app.state, "rag_engine", None)
+    if not rag_engine:
+        raise HTTPException(status_code=503, detail="RAG Engine not available")
+    
+    await rag_engine.ensure_initialized()
+    if not rag_engine.sparse_retriever:
+        raise HTTPException(status_code=503, detail="Sparse retriever not initialized")
+    
+    try:
+        rag_engine._bootstrap_sparse_retriever()
+        size = rag_engine.sparse_retriever.corpus_size
+        logger.info("Manual BM25 rebuild completed", corpus_size=size)
+        return {"status": "ok", "message": "BM25 index rebuilt successfully", "corpus_size": size}
+    except Exception as e:
+        logger.error("Failed to rebuild BM25 index", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

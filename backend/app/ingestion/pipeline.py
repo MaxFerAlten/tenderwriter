@@ -16,6 +16,9 @@ import re
 import structlog
 
 from app.config import settings
+from app.services.tender_document_requirement_extractor import (
+    extract_tender_participation_requirements,
+)
 
 logger = structlog.get_logger()
 
@@ -271,13 +274,37 @@ class IngestionPipeline:
         elements = self._parse_document(file_path)
         if not elements:
             logger.warning("No content extracted from document", file_path=file_path)
-            return {"status": "empty", "chunks": 0, "entities": 0, "requirements_detected": 0}
+            return {
+                "status": "empty",
+                "chunks": 0,
+                "entities": 0,
+                "requirements_detected": 0,
+                "warnings": [],
+            }
 
         # Step 2: Build structured text from elements
         full_text, section_texts = self._structure_elements(elements)
         requirement_candidates: list[dict] = []
+        requirement_extraction_method = "none"
+        ingestion_warnings: list[dict[str, object]] = []
+        requirement_scope = "general"
+        requirement_extractor_pipeline = "none"
         if doc_type == "tender":
-            requirement_candidates = self.extract_requirement_candidates(elements, section_texts)
+            heuristic_candidates = self.extract_requirement_candidates(elements, section_texts)
+            extraction_result = await extract_tender_participation_requirements(
+                generator=getattr(self.rag_engine, "generator", None),
+                document_text=full_text,
+                section_texts=section_texts,
+                source_document_ref=file_path,
+                tender_id=metadata.get("tender_id") or document_id,
+                fallback_candidates=heuristic_candidates,
+                settings=settings,
+            )
+            requirement_candidates = extraction_result.candidates
+            requirement_extraction_method = extraction_result.extraction_method
+            ingestion_warnings = list(extraction_result.warnings)
+            requirement_scope = extraction_result.requirement_scope
+            requirement_extractor_pipeline = extraction_result.extractor_pipeline
 
         # Step 3: Chunk the text
         from app.rag.chunker import ChunkMetadata
@@ -310,7 +337,11 @@ class IngestionPipeline:
             "point_ids": point_ids,
             "requirements_detected": len(requirement_candidates),
             "requirement_candidates": requirement_candidates,
+            "requirement_extraction_method": requirement_extraction_method,
+            "requirement_scope": requirement_scope,
+            "requirement_extractor_pipeline": requirement_extractor_pipeline,
             "sections_detected": len(section_texts),
+            "warnings": ingestion_warnings,
         }
 
         logger.info("Document ingestion complete", **stats)

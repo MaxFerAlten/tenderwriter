@@ -10,6 +10,10 @@ import {
 import { formatDateTime } from '../../features/observability/shared';
 
 type ReviewAction = 'approve' | 'request_changes' | 'reset_to_pending';
+type EditorialRequirementAction = ReviewAction | 'edit' | 'dismiss' | 'merge' | 'split';
+type EditorialRelationAction = ReviewAction | 'edit' | 'dismiss';
+type RequirementReviewPayload = Parameters<typeof tenderApi.reviewConsolidatedRequirement>[2];
+type RelationReviewPayload = Parameters<typeof tenderApi.reviewConsolidatedRequirementRelation>[2];
 
 export interface RequirementWorkbenchData {
     candidateRuns: RequirementExtractionRunRecord[];
@@ -34,6 +38,7 @@ export interface RequirementWorkbenchSummary {
     obsoleteRelations: number;
     overrideRelations: number;
     dependsOnRelations: number;
+    conflictRelations: number;
 }
 
 interface RequirementWorkbenchContentProps {
@@ -48,12 +53,20 @@ interface RequirementWorkbenchContentProps {
     message?: string | null;
     noteDrafts?: Record<number, string>;
     relationNoteDrafts?: Record<number, string>;
+    editorialDrafts?: Record<number, string>;
+    mergeTargetDrafts?: Record<number, string>;
+    splitDrafts?: Record<number, string>;
+    relationTypeDrafts?: Record<number, string>;
     onNoteChange?: (requirementId: number, value: string) => void;
     onRelationNoteChange?: (relationId: number, value: string) => void;
+    onEditorialDraftChange?: (requirementId: number, value: string) => void;
+    onMergeTargetDraftChange?: (requirementId: number, value: string) => void;
+    onSplitDraftChange?: (requirementId: number, value: string) => void;
+    onRelationTypeDraftChange?: (relationId: number, value: string) => void;
     onRefresh?: () => void;
     onRebuild?: () => void;
-    onReview?: (requirementId: number, action: ReviewAction) => void;
-    onRelationReview?: (relationId: number, action: ReviewAction) => void;
+    onReview?: (requirementId: number, action: EditorialRequirementAction, payload?: RequirementReviewPayload) => void;
+    onRelationReview?: (relationId: number, action: EditorialRelationAction, payload?: RelationReviewPayload) => void;
 }
 
 const EMPTY_DATA: RequirementWorkbenchData = {
@@ -126,6 +139,98 @@ function extractLifecycleReason(metadataJson: Record<string, unknown> | null | u
     return typeof reason === 'string' && reason.trim() ? reason : null;
 }
 
+function metadataRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function formatMetadataLabel(value: unknown): string | null {
+    if (typeof value !== 'string' && typeof value !== 'number') {
+        return null;
+    }
+    const normalized = String(value).replace(/_/g, ' ').trim();
+    return normalized || null;
+}
+
+function extractRequirementPrecedenceSummary(metadataJson: Record<string, unknown> | null | undefined): string | null {
+    const precedence = metadataRecord(metadataJson?.document_precedence);
+    const primaryRole = formatMetadataLabel(precedence.primary_role);
+    const supersededSources = Array.isArray(precedence.superseded_sources) ? precedence.superseded_sources : [];
+    const supersededRoles = supersededSources
+        .map((source) => formatMetadataLabel(metadataRecord(source).document_role))
+        .filter((role): role is string => Boolean(role));
+    if (!primaryRole || supersededRoles.length === 0) {
+        return null;
+    }
+    return `Precedence: ${primaryRole} over ${Array.from(new Set(supersededRoles)).join(', ')}`;
+}
+
+function extractSourceVariantSummary(metadataJson: Record<string, unknown> | null | undefined): string | null {
+    const sourceVariants = metadataRecord(metadataJson?.source_variants);
+    const variantCount = typeof sourceVariants.variant_count === 'number' ? sourceVariants.variant_count : 0;
+    if (variantCount <= 1) {
+        return null;
+    }
+    return `Source variants: ${variantCount}`;
+}
+
+function extractRelationPrecedenceSummary(metadataJson: Record<string, unknown> | null | undefined): string | null {
+    const metadata = metadataRecord(metadataJson);
+    const sourceRole = formatMetadataLabel(metadata.source_role);
+    const targetRole = formatMetadataLabel(metadata.target_role);
+    if (!sourceRole || !targetRole) {
+        return null;
+    }
+    return `Document route: ${sourceRole} -> ${targetRole}`;
+}
+
+function extractConflictSignals(metadataJson: Record<string, unknown> | null | undefined): string[] {
+    const signals = metadataRecord(metadataJson).conflict_signals;
+    if (!Array.isArray(signals)) {
+        return [];
+    }
+    return signals
+        .map(formatMetadataLabel)
+        .filter((signal): signal is string => Boolean(signal));
+}
+
+function formatApplicability(applicability: Record<string, unknown> | null | undefined): string | null {
+    if (!applicability || Object.keys(applicability).length === 0) {
+        return null;
+    }
+    const text = applicability.text;
+    if (typeof text === 'string' && text.trim()) {
+        return text;
+    }
+    const values = applicability.values;
+    if (Array.isArray(values) && values.length > 0) {
+        return values.map(String).join(', ');
+    }
+    return Object.entries(applicability)
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.map(String).join(', ') : String(value)}`)
+        .join(' | ');
+}
+
+function hasGraphV2Details(requirement: ConsolidatedRequirementRecord): boolean {
+    return Boolean(
+        requirement.parent_requirement_key ||
+        requirement.parent_requirement_id ||
+        formatApplicability(requirement.applicability) ||
+        requirement.conditions.length ||
+        requirement.exceptions.length
+    );
+}
+
+function parseSplitDraft(value: string | undefined): RequirementReviewPayload['split_requirements'] {
+    const lines = (value || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length < 2) {
+        return [];
+    }
+    return lines.map((canonicalText) => ({ canonical_text: canonicalText }));
+}
+
 export function summarizeRequirementWorkbench(data: RequirementWorkbenchData): RequirementWorkbenchSummary {
     return {
         extractionRuns: data.candidateRuns.length,
@@ -140,6 +245,7 @@ export function summarizeRequirementWorkbench(data: RequirementWorkbenchData): R
         obsoleteRelations: data.obsoleteRelations.length,
         overrideRelations: data.relations.filter((item) => item.relation_type === 'overrides').length,
         dependsOnRelations: data.relations.filter((item) => item.relation_type === 'depends_on').length,
+        conflictRelations: data.relations.filter((item) => item.relation_type === 'conflicts_with').length,
     };
 }
 
@@ -168,8 +274,16 @@ export function RequirementWorkbenchContent({
     message = null,
     noteDrafts = {},
     relationNoteDrafts = {},
+    editorialDrafts = {},
+    mergeTargetDrafts = {},
+    splitDrafts = {},
+    relationTypeDrafts = {},
     onNoteChange,
     onRelationNoteChange,
+    onEditorialDraftChange,
+    onMergeTargetDraftChange,
+    onSplitDraftChange,
+    onRelationTypeDraftChange,
     onRefresh,
     onRebuild,
     onReview,
@@ -267,6 +381,8 @@ export function RequirementWorkbenchContent({
                                 ) : data.consolidatedRequirements.map((requirement) => {
                                     const stateTone = reviewStateTone(requirement.review_state);
                                     const requirementPriorityTone = priorityTone(requirement.priority);
+                                    const precedenceSummary = extractRequirementPrecedenceSummary(requirement.metadata_json);
+                                    const sourceVariantSummary = extractSourceVariantSummary(requirement.metadata_json);
                                     return (
                                         <div key={requirement.id} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontWeight: 600 }}>{requirement.canonical_text}</div>
@@ -280,6 +396,17 @@ export function RequirementWorkbenchContent({
                                                 <div>Sources linked: {requirement.source_count}</div>
                                                 <div>Confidence: {formatConfidence(requirement.confidence)}</div>
                                                 <div>Method: {statusLabel(requirement.consolidation_method)}</div>
+                                                {precedenceSummary && <div>{precedenceSummary}</div>}
+                                                {sourceVariantSummary && <div>{sourceVariantSummary}</div>}
+                                                {hasGraphV2Details(requirement) && (
+                                                    <div>
+                                                        Graph V2:
+                                                        {requirement.parent_requirement_key && ` parent ${requirement.parent_requirement_key}`}
+                                                        {formatApplicability(requirement.applicability) && ` | applies to ${formatApplicability(requirement.applicability)}`}
+                                                        {requirement.conditions.length > 0 && ` | conditions ${requirement.conditions.join('; ')}`}
+                                                        {requirement.exceptions.length > 0 && ` | exceptions ${requirement.exceptions.join('; ')}`}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );
@@ -307,12 +434,61 @@ export function RequirementWorkbenchContent({
                                             </div>
                                         </div>
                                         <textarea className="input" rows={3} placeholder="Reviewer notes" style={{ marginTop: '0.7rem', width: '100%' }} readOnly={!onNoteChange} value={noteDrafts[requirement.id] || ''} onChange={(event) => onNoteChange?.(requirement.id, event.target.value)} />
+                                        <input
+                                            className="input"
+                                            placeholder="Manual edit: corrected canonical requirement text"
+                                            style={{ marginTop: '0.65rem', width: '100%' }}
+                                            readOnly={!onEditorialDraftChange}
+                                            value={editorialDrafts[requirement.id] || ''}
+                                            onChange={(event) => onEditorialDraftChange?.(requirement.id, event.target.value)}
+                                        />
+                                        <input
+                                            className="input"
+                                            placeholder="Merge into requirement id"
+                                            style={{ marginTop: '0.65rem', width: '100%' }}
+                                            readOnly={!onMergeTargetDraftChange}
+                                            value={mergeTargetDrafts[requirement.id] || ''}
+                                            onChange={(event) => onMergeTargetDraftChange?.(requirement.id, event.target.value)}
+                                        />
+                                        <textarea
+                                            className="input"
+                                            rows={3}
+                                            placeholder="Split into atomic requirements, one per line"
+                                            style={{ marginTop: '0.65rem', width: '100%' }}
+                                            readOnly={!onSplitDraftChange}
+                                            value={splitDrafts[requirement.id] || ''}
+                                            onChange={(event) => onSplitDraftChange?.(requirement.id, event.target.value)}
+                                        />
                                         <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.7rem' }}>
                                             <button className={`btn btn-primary btn-sm ${actionKey === `approve-${requirement.id}` ? 'animate-pulse' : ''}`} disabled={!onReview || !!actionKey} onClick={() => onReview?.(requirement.id, 'approve')}>
                                                 <ShieldCheck size={14} /> Approve
                                             </button>
                                             <button className={`btn btn-secondary btn-sm ${actionKey === `request_changes-${requirement.id}` ? 'animate-pulse' : ''}`} disabled={!onReview || !!actionKey} onClick={() => onReview?.(requirement.id, 'request_changes')}>
                                                 <AlertTriangle size={14} /> Request changes
+                                            </button>
+                                            <button
+                                                className={`btn btn-secondary btn-sm ${actionKey === `edit-${requirement.id}` ? 'animate-pulse' : ''}`}
+                                                disabled={!onReview || !!actionKey || !(editorialDrafts[requirement.id] || '').trim()}
+                                                onClick={() => onReview?.(requirement.id, 'edit', { action: 'edit', notes: noteDrafts[requirement.id]?.trim() || undefined, edit: { canonical_text: editorialDrafts[requirement.id]?.trim() } })}
+                                            >
+                                                Save edit
+                                            </button>
+                                            <button
+                                                className={`btn btn-secondary btn-sm ${actionKey === `merge-${requirement.id}` ? 'animate-pulse' : ''}`}
+                                                disabled={!onReview || !!actionKey || !Number.parseInt(mergeTargetDrafts[requirement.id] || '', 10)}
+                                                onClick={() => onReview?.(requirement.id, 'merge', { action: 'merge', notes: noteDrafts[requirement.id]?.trim() || undefined, target_requirement_id: Number.parseInt(mergeTargetDrafts[requirement.id] || '', 10) })}
+                                            >
+                                                Merge
+                                            </button>
+                                            <button
+                                                className={`btn btn-secondary btn-sm ${actionKey === `split-${requirement.id}` ? 'animate-pulse' : ''}`}
+                                                disabled={!onReview || !!actionKey || (parseSplitDraft(splitDrafts[requirement.id]) || []).length < 2}
+                                                onClick={() => onReview?.(requirement.id, 'split', { action: 'split', notes: noteDrafts[requirement.id]?.trim() || undefined, split_requirements: parseSplitDraft(splitDrafts[requirement.id]) })}
+                                            >
+                                                Split
+                                            </button>
+                                            <button className={`btn btn-secondary btn-sm ${actionKey === `dismiss-${requirement.id}` ? 'animate-pulse' : ''}`} disabled={!onReview || !!actionKey} onClick={() => onReview?.(requirement.id, 'dismiss')}>
+                                                Dismiss
                                             </button>
                                         </div>
                                     </div>
@@ -326,25 +502,36 @@ export function RequirementWorkbenchContent({
                                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                     <span style={badgeStyle('#f97316', 'rgba(249, 115, 22, 0.14)')}>{summary.overrideRelations} overrides</span>
                                     <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>{summary.dependsOnRelations} depends on</span>
+                                    <span style={badgeStyle('#fb7185', 'rgba(251, 113, 133, 0.12)')}>{summary.conflictRelations} conflicts</span>
                                 </div>
                             </div>
                             <div style={{ display: 'grid', gap: '0.75rem' }}>
                                 {data.relations.length === 0 ? (
                                     <EmptyState text="No inferred requirement relations yet." />
-                                ) : data.relations.map((relation) => (
-                                    <div key={relation.id} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
-                                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
-                                            <span style={badgeStyle('#f97316', 'rgba(249, 115, 22, 0.14)')}>{statusLabel(relation.relation_type)}</span>
-                                            <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>Confidence {formatConfidence(relation.confidence)}</span>
-                                            <span style={badgeStyle(reviewStateTone(relation.review_state).accent, reviewStateTone(relation.review_state).soft)}>{statusLabel(relation.review_state)}</span>
-                                            <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>{relation.graph_state}</span>
+                                ) : data.relations.map((relation) => {
+                                    const relationPrecedenceSummary = extractRelationPrecedenceSummary(relation.metadata_json);
+                                    const conflictSignals = extractConflictSignals(relation.metadata_json);
+                                    return (
+                                        <div key={relation.id} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid var(--border-color)' }}>
+                                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
+                                                <span style={badgeStyle('#f97316', 'rgba(249, 115, 22, 0.14)')}>{statusLabel(relation.relation_type)}</span>
+                                                <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>Confidence {formatConfidence(relation.confidence)}</span>
+                                                <span style={badgeStyle(reviewStateTone(relation.review_state).accent, reviewStateTone(relation.review_state).soft)}>{statusLabel(relation.review_state)}</span>
+                                                <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>{relation.graph_state}</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Source requirement</div>
+                                            <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.source_requirement_text}</div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>Target requirement</div>
+                                            <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.target_requirement_text}</div>
+                                            {(relationPrecedenceSummary || conflictSignals.length > 0) && (
+                                                <div style={{ display: 'grid', gap: '0.25rem', marginTop: '0.7rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                                    {relationPrecedenceSummary && <div>{relationPrecedenceSummary}</div>}
+                                                    {conflictSignals.length > 0 && <div>Conflict signals: {conflictSignals.join(', ')}</div>}
+                                                </div>
+                                            )}
                                         </div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Source requirement</div>
-                                        <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.source_requirement_text}</div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>Target requirement</div>
-                                        <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.target_requirement_text}</div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
 
@@ -356,43 +543,79 @@ export function RequirementWorkbenchContent({
                             <div style={{ display: 'grid', gap: '0.75rem' }}>
                                 {data.relationReviewQueue.length === 0 ? (
                                     <EmptyState text="No pending inferred relations to review." />
-                                ) : data.relationReviewQueue.map((relation) => (
-                                    <div key={relation.id} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid rgba(251, 113, 133, 0.22)' }}>
-                                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
-                                            <span style={badgeStyle('#fb7185', 'rgba(251, 113, 133, 0.12)')}>{statusLabel(relation.relation_type)}</span>
-                                            <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>Confidence {formatConfidence(relation.confidence)}</span>
-                                        </div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Source requirement</div>
-                                        <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.source_requirement_text}</div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>Target requirement</div>
-                                        <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.target_requirement_text}</div>
-                                        <textarea
-                                            className="input"
-                                            rows={3}
-                                            placeholder="Reviewer notes for this relation"
-                                            style={{ marginTop: '0.7rem', width: '100%' }}
-                                            readOnly={!onRelationNoteChange}
-                                            value={relationNoteDrafts[relation.id] || ''}
-                                            onChange={(event) => onRelationNoteChange?.(relation.id, event.target.value)}
-                                        />
-                                        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.7rem' }}>
-                                            <button
-                                                className={`btn btn-primary btn-sm ${actionKey === `relation-approve-${relation.id}` ? 'animate-pulse' : ''}`}
-                                                disabled={!onRelationReview || !!actionKey}
-                                                onClick={() => onRelationReview?.(relation.id, 'approve')}
+                                ) : data.relationReviewQueue.map((relation) => {
+                                    const relationPrecedenceSummary = extractRelationPrecedenceSummary(relation.metadata_json);
+                                    const conflictSignals = extractConflictSignals(relation.metadata_json);
+                                    return (
+                                        <div key={relation.id} style={{ padding: '0.85rem', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.35)', border: '1px solid rgba(251, 113, 133, 0.22)' }}>
+                                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
+                                                <span style={badgeStyle('#fb7185', 'rgba(251, 113, 133, 0.12)')}>{statusLabel(relation.relation_type)}</span>
+                                                <span style={badgeStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>Confidence {formatConfidence(relation.confidence)}</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Source requirement</div>
+                                            <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.source_requirement_text}</div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>Target requirement</div>
+                                            <div style={{ fontSize: '0.86rem', fontWeight: 600, marginTop: '0.2rem' }}>{relation.target_requirement_text}</div>
+                                            {(relationPrecedenceSummary || conflictSignals.length > 0) && (
+                                                <div style={{ display: 'grid', gap: '0.25rem', marginTop: '0.7rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                                    {relationPrecedenceSummary && <div>{relationPrecedenceSummary}</div>}
+                                                    {conflictSignals.length > 0 && <div>Conflict signals: {conflictSignals.join(', ')}</div>}
+                                                </div>
+                                            )}
+                                            <textarea
+                                                className="input"
+                                                rows={3}
+                                                placeholder="Reviewer notes for this relation"
+                                                style={{ marginTop: '0.7rem', width: '100%' }}
+                                                readOnly={!onRelationNoteChange}
+                                                value={relationNoteDrafts[relation.id] || ''}
+                                                onChange={(event) => onRelationNoteChange?.(relation.id, event.target.value)}
+                                            />
+                                            <select
+                                                className="input"
+                                                style={{ marginTop: '0.65rem', width: '100%' }}
+                                                disabled={!onRelationTypeDraftChange}
+                                                value={relationTypeDrafts[relation.id] || relation.relation_type}
+                                                onChange={(event) => onRelationTypeDraftChange?.(relation.id, event.target.value)}
                                             >
-                                                <ShieldCheck size={14} /> Approve
-                                            </button>
-                                            <button
-                                                className={`btn btn-secondary btn-sm ${actionKey === `relation-request_changes-${relation.id}` ? 'animate-pulse' : ''}`}
-                                                disabled={!onRelationReview || !!actionKey}
-                                                onClick={() => onRelationReview?.(relation.id, 'request_changes')}
-                                            >
-                                                <AlertTriangle size={14} /> Request changes
-                                            </button>
+                                                <option value="overrides">overrides</option>
+                                                <option value="depends_on">depends_on</option>
+                                                <option value="parent_of">parent_of</option>
+                                                <option value="conflicts_with">conflicts_with</option>
+                                            </select>
+                                            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.7rem' }}>
+                                                <button
+                                                    className={`btn btn-primary btn-sm ${actionKey === `relation-approve-${relation.id}` ? 'animate-pulse' : ''}`}
+                                                    disabled={!onRelationReview || !!actionKey}
+                                                    onClick={() => onRelationReview?.(relation.id, 'approve')}
+                                                >
+                                                    <ShieldCheck size={14} /> Approve
+                                                </button>
+                                                <button
+                                                    className={`btn btn-secondary btn-sm ${actionKey === `relation-request_changes-${relation.id}` ? 'animate-pulse' : ''}`}
+                                                    disabled={!onRelationReview || !!actionKey}
+                                                    onClick={() => onRelationReview?.(relation.id, 'request_changes')}
+                                                >
+                                                    <AlertTriangle size={14} /> Request changes
+                                                </button>
+                                                <button
+                                                    className={`btn btn-secondary btn-sm ${actionKey === `relation-edit-${relation.id}` ? 'animate-pulse' : ''}`}
+                                                    disabled={!onRelationReview || !!actionKey || (relationTypeDrafts[relation.id] || relation.relation_type) === relation.relation_type}
+                                                    onClick={() => onRelationReview?.(relation.id, 'edit', { action: 'edit', notes: relationNoteDrafts[relation.id]?.trim() || undefined, edit: { relation_type: relationTypeDrafts[relation.id] || relation.relation_type } })}
+                                                >
+                                                    Save relation edit
+                                                </button>
+                                                <button
+                                                    className={`btn btn-secondary btn-sm ${actionKey === `relation-dismiss-${relation.id}` ? 'animate-pulse' : ''}`}
+                                                    disabled={!onRelationReview || !!actionKey}
+                                                    onClick={() => onRelationReview?.(relation.id, 'dismiss')}
+                                                >
+                                                    Dismiss relation
+                                                </button>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
 
@@ -470,6 +693,10 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
     const [message, setMessage] = useState<string | null>(null);
     const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
     const [relationNoteDrafts, setRelationNoteDrafts] = useState<Record<number, string>>({});
+    const [editorialDrafts, setEditorialDrafts] = useState<Record<number, string>>({});
+    const [mergeTargetDrafts, setMergeTargetDrafts] = useState<Record<number, string>>({});
+    const [splitDrafts, setSplitDrafts] = useState<Record<number, string>>({});
+    const [relationTypeDrafts, setRelationTypeDrafts] = useState<Record<number, string>>({});
     const requestIdRef = useRef(0);
 
     const loadPipeline = async (refresh = false) => {
@@ -477,6 +704,10 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
             setData(EMPTY_DATA);
             setNoteDrafts({});
             setRelationNoteDrafts({});
+            setEditorialDrafts({});
+            setMergeTargetDrafts({});
+            setSplitDrafts({});
+            setRelationTypeDrafts({});
             return;
         }
 
@@ -535,6 +766,34 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
                 });
                 return nextDrafts;
             });
+            setEditorialDrafts((current) => {
+                const nextDrafts: Record<number, string> = {};
+                reviewQueue.items.forEach((item) => {
+                    nextDrafts[item.id] = current[item.id] || '';
+                });
+                return nextDrafts;
+            });
+            setMergeTargetDrafts((current) => {
+                const nextDrafts: Record<number, string> = {};
+                reviewQueue.items.forEach((item) => {
+                    nextDrafts[item.id] = current[item.id] || '';
+                });
+                return nextDrafts;
+            });
+            setSplitDrafts((current) => {
+                const nextDrafts: Record<number, string> = {};
+                reviewQueue.items.forEach((item) => {
+                    nextDrafts[item.id] = current[item.id] || '';
+                });
+                return nextDrafts;
+            });
+            setRelationTypeDrafts((current) => {
+                const nextDrafts: Record<number, string> = {};
+                relationReviewQueue.items.forEach((item) => {
+                    nextDrafts[item.id] = current[item.id] || item.relation_type;
+                });
+                return nextDrafts;
+            });
         } catch (pipelineError) {
             if (requestId !== requestIdRef.current) {
                 return;
@@ -555,6 +814,10 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
             setMessage(null);
             setNoteDrafts({});
             setRelationNoteDrafts({});
+            setEditorialDrafts({});
+            setMergeTargetDrafts({});
+            setSplitDrafts({});
+            setRelationTypeDrafts({});
             return;
         }
         void loadPipeline();
@@ -578,7 +841,11 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
         }
     };
 
-    const handleReview = async (requirementId: number, action: ReviewAction) => {
+    const handleReview = async (
+        requirementId: number,
+        action: EditorialRequirementAction,
+        payload?: RequirementReviewPayload
+    ) => {
         if (!tenderId) {
             return;
         }
@@ -586,11 +853,15 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
         setError(null);
         setMessage(null);
         try {
-            const reviewResult = await tenderApi.reviewConsolidatedRequirement(tenderId, requirementId, {
+            const reviewPayload: RequirementReviewPayload = payload || {
                 action,
                 notes: noteDrafts[requirementId]?.trim() || undefined,
-            });
+            };
+            const reviewResult = await tenderApi.reviewConsolidatedRequirement(tenderId, requirementId, reviewPayload);
             setNoteDrafts((current) => ({ ...current, [requirementId]: '' }));
+            setEditorialDrafts((current) => ({ ...current, [requirementId]: '' }));
+            setMergeTargetDrafts((current) => ({ ...current, [requirementId]: '' }));
+            setSplitDrafts((current) => ({ ...current, [requirementId]: '' }));
             await loadPipeline(true);
             setMessage(`Requirement #${reviewResult.requirement.id} moved to ${statusLabel(reviewResult.review.new_review_state)}.`);
         } catch (reviewError) {
@@ -600,7 +871,11 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
         }
     };
 
-    const handleRelationReview = async (relationId: number, action: ReviewAction) => {
+    const handleRelationReview = async (
+        relationId: number,
+        action: EditorialRelationAction,
+        payload?: RelationReviewPayload
+    ) => {
         if (!tenderId) {
             return;
         }
@@ -608,11 +883,17 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
         setError(null);
         setMessage(null);
         try {
-            const reviewResult = await tenderApi.reviewConsolidatedRequirementRelation(tenderId, relationId, {
+            const reviewPayload: RelationReviewPayload = payload || {
                 action,
                 notes: relationNoteDrafts[relationId]?.trim() || undefined,
-            });
+            };
+            const reviewResult = await tenderApi.reviewConsolidatedRequirementRelation(tenderId, relationId, reviewPayload);
             setRelationNoteDrafts((current) => ({ ...current, [relationId]: '' }));
+            setRelationTypeDrafts((current) => {
+                const next = { ...current };
+                delete next[relationId];
+                return next;
+            });
             await loadPipeline(true);
             setMessage(`Relation #${reviewResult.relation.id} moved to ${statusLabel(reviewResult.review.new_review_state)}.`);
         } catch (reviewError) {
@@ -635,11 +916,27 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
             message={message}
             noteDrafts={noteDrafts}
             relationNoteDrafts={relationNoteDrafts}
+            editorialDrafts={editorialDrafts}
+            mergeTargetDrafts={mergeTargetDrafts}
+            splitDrafts={splitDrafts}
+            relationTypeDrafts={relationTypeDrafts}
             onNoteChange={(requirementId, value) => {
                 setNoteDrafts((current) => ({ ...current, [requirementId]: value }));
             }}
             onRelationNoteChange={(relationId, value) => {
                 setRelationNoteDrafts((current) => ({ ...current, [relationId]: value }));
+            }}
+            onEditorialDraftChange={(requirementId, value) => {
+                setEditorialDrafts((current) => ({ ...current, [requirementId]: value }));
+            }}
+            onMergeTargetDraftChange={(requirementId, value) => {
+                setMergeTargetDrafts((current) => ({ ...current, [requirementId]: value }));
+            }}
+            onSplitDraftChange={(requirementId, value) => {
+                setSplitDrafts((current) => ({ ...current, [requirementId]: value }));
+            }}
+            onRelationTypeDraftChange={(relationId, value) => {
+                setRelationTypeDrafts((current) => ({ ...current, [relationId]: value }));
             }}
             onRefresh={() => {
                 void loadPipeline(true);
@@ -647,11 +944,11 @@ export default function RequirementWorkbenchPanel({ tenderId, tenderTitle }: Req
             onRebuild={() => {
                 void handleRebuild();
             }}
-            onReview={(requirementId, action) => {
-                void handleReview(requirementId, action);
+            onReview={(requirementId, action, payload) => {
+                void handleReview(requirementId, action, payload);
             }}
-            onRelationReview={(relationId, action) => {
-                void handleRelationReview(relationId, action);
+            onRelationReview={(relationId, action, payload) => {
+                void handleRelationReview(relationId, action, payload);
             }}
         />
     );

@@ -43,6 +43,7 @@ import {
     TenderPermissionsPage,
     OperationalWorkspacePage,
     DataExplorerPage,
+    IngestionMonitorPage,
 } from './router/lazyRoutes';
 
 const navItems = [
@@ -50,6 +51,7 @@ const navItems = [
     { path: '/proposals', label: 'Proposals', icon: FileText },
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
+    { path: '/ingestion', label: 'Ingestion Monitor', icon: Activity },
     { path: '/tasks', label: 'Task Manager', icon: Play },
     { path: '/tender-access', label: 'Tender Access', icon: Shield, adminOnly: true },
     { path: '/observability-kpi', label: 'Observability KPI', icon: BarChart3, adminOnly: true },
@@ -217,6 +219,7 @@ function App() {
                                 <Route path="/proposals/:id" element={<ProposalEditorPage />} />
                                 <Route path="/library" element={<ContentLibraryPage />} />
                                 <Route path="/search" element={<SearchPage />} />
+                                <Route path="/ingestion" element={<IngestionMonitorPage />} />
                                 <Route path="/tasks" element={<TaskManagerPage />} />
                                 <Route path="/observability-kpi" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
                                 <Route path="/observability-kpi/:tenderId" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />

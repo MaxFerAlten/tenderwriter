@@ -37,13 +37,14 @@ def apply_extracted_requirement_candidates(
             continue
 
         reference = candidate.get("reference") or candidate.get("section") or candidate.get("source_section")
+        category = candidate.get("category") or reference
         priority = str(candidate.get("priority") or "medium").strip().casefold()
         if priority not in {"high", "medium", "low"}:
             priority = "medium"
 
         requirement = TenderRequirement(
             requirement_text=summary,
-            category=str(reference) if reference else None,
+            category=str(category) if category else None,
             priority=priority,
             compliance_status=ComplianceStatus.NOT_ADDRESSED,
         )

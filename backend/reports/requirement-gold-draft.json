@@ -1,0 +1,206 @@
+{
+  "cases": [
+    {
+      "draft_review_required": true,
+      "expected_relations": [],
+      "expected_requirements": [],
+      "id": "tender-1",
+      "negative_case": true,
+      "predicted_relations": [],
+      "predicted_requirements": [
+        {
+          "canonical_text": "cammino M-alternante P per poter collegare due vertici esposti deve essere",
+          "category": "12",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "cammino M-alternante P per poter collegare due vertici esposti deve essere",
+              "source_reference": "12"
+            }
+          ],
+          "key": "consolidated-1",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "che se a \u00e8 accoppiato da M, deve esserlo in Y , perch\u00e9 ogni arco di M ha",
+          "category": "14",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "che se a \u00e8 accoppiato da M, deve esserlo in Y , perch\u00e9 ogni arco di M ha",
+              "source_reference": "14"
+            }
+          ],
+          "key": "consolidated-2",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "Controllo prezzi. In assenza di un fornitore concorrente, l\u2019operatore deve",
+          "category": "37",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "Controllo prezzi. In assenza di un fornitore concorrente, l\u2019operatore deve",
+              "source_reference": "37"
+            }
+          ],
+          "key": "consolidated-3",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "coppia i, j l\u2019ammontare di materiale pi,j che deve essere trasportato dal",
+          "category": "23",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "coppia i, j l\u2019ammontare di materiale pi,j che deve essere trasportato dal",
+              "source_reference": "23"
+            }
+          ],
+          "key": "consolidated-4",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "di M e archi di M\u2032. Se una componente ha un vertice di grado 1 deve essere",
+          "category": "12",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "di M e archi di M\u2032. Se una componente ha un vertice di grado 1 deve essere",
+              "source_reference": "12"
+            }
+          ],
+          "key": "consolidated-5",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "l\u2019operatore deve risolvere il problema di ottimizzazione (2.3)",
+          "category": "23",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "l\u2019operatore deve risolvere il problema di ottimizzazione (2.3)",
+              "source_reference": "23"
+            }
+          ],
+          "key": "consolidated-6",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "que il problema di ottimizzazione che deve risolvere il fornitore si traduce",
+          "category": "38",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "que il problema di ottimizzazione che deve risolvere il fornitore si traduce",
+              "source_reference": "38"
+            }
+          ],
+          "key": "consolidated-7",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "tutti i vertici di grado 2 allora deve essere un ciclo pari che alterna tra archi",
+          "category": "12",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "tutti i vertici di grado 2 allora deve essere un ciclo pari che alterna tra archi",
+              "source_reference": "12"
+            }
+          ],
+          "key": "consolidated-8",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "una direzione di crescita per la funzione obiettivo primale, cio\u00e8 deve valere",
+          "category": "43",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "una direzione di crescita per la funzione obiettivo primale, cio\u00e8 deve valere",
+              "source_reference": "43"
+            }
+          ],
+          "key": "consolidated-9",
+          "priority": "high",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "da i a j \u00e8 esattamente il costo richiesto dalla compagnia di trasporto ci,j",
+          "category": "37",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "da i a j \u00e8 esattamente il costo richiesto dalla compagnia di trasporto ci,j",
+              "source_reference": "37"
+            }
+          ],
+          "key": "consolidated-10",
+          "priority": "medium",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "necessarie alla fabbrica j, il prezzo totale richiesto dal fornitore per risolvere",
+          "category": "37",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "necessarie alla fabbrica j, il prezzo totale richiesto dal fornitore per risolvere",
+              "source_reference": "37"
+            }
+          ],
+          "key": "consolidated-11",
+          "priority": "medium",
+          "review_state": "pending",
+          "source_count": 1
+        },
+        {
+          "canonical_text": "\u00e8 equa oppure no. Ricordiamo che fi \u00e8 il prezzo richiesto per prelevare l\u2019u-",
+          "category": "37",
+          "citations": [
+            {
+              "document_role": "other",
+              "quote": "\u00e8 equa oppure no. Ricordiamo che fi \u00e8 il prezzo richiesto per prelevare l\u2019u-",
+              "source_reference": "37"
+            }
+          ],
+          "key": "consolidated-12",
+          "priority": "medium",
+          "review_state": "pending",
+          "source_count": 1
+        }
+      ],
+      "tender_id": 1,
+      "title": "tesi"
+    }
+  ],
+  "description": "Draft requirement evaluation gold set exported from reviewed consolidated requirements.",
+  "metadata": {
+    "draft_review_required": true,
+    "expected_source": "approved_consolidated_requirements",
+    "exporter": "requirement_gold_export_v1",
+    "include_negative_cases": true,
+    "predicted_source": "active_consolidated_requirements"
+  },
+  "name": "requirement-evaluation-draft",
+  "schema_version": "requirement_evaluation.gold.v1"
+}

@@ -113,6 +113,44 @@ class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("graph_state", str(db.statement))
         self.assertIn(":graph_state_1", str(db.statement))
 
+    async def test_list_requirement_relations_for_review_prioritizes_cross_document_conflicts(self) -> None:
+        db = _FakeAsyncSession(
+            rows=[
+                RequirementRelation(
+                    id=4,
+                    tender_id=81,
+                    source_requirement_id=507,
+                    target_requirement_id=508,
+                    relation_type="conflicts_with",
+                    confidence=0.8,
+                    review_state="pending",
+                    graph_state="active",
+                ),
+                RequirementRelation(
+                    id=5,
+                    tender_id=81,
+                    source_requirement_id=509,
+                    target_requirement_id=510,
+                    relation_type="overrides",
+                    confidence=0.92,
+                    review_state="pending",
+                    graph_state="active",
+                ),
+            ]
+        )
+
+        relations = await list_requirement_relations_for_review(
+            db,
+            tender_id=81,
+            review_state="pending",
+            limit=2,
+        )
+
+        self.assertEqual(
+            [item.id for item in relations],
+            [4, 5],
+        )
+
     async def test_apply_requirement_relation_review_updates_state_and_creates_audit_row(self) -> None:
         db = _FakeAsyncSession()
         relation = RequirementRelation(
@@ -166,6 +204,103 @@ class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
                 actor_id=20,
                 action="archive",
             )
+
+    async def test_apply_requirement_relation_review_edits_relation_type_and_confidence_with_audit(self) -> None:
+        db = _FakeAsyncSession()
+        relation = RequirementRelation(
+            id=43,
+            tender_id=84,
+            source_requirement_id=801,
+            target_requirement_id=802,
+            relation_type="depends_on",
+            confidence=0.44,
+            review_state="approved",
+            graph_state="active",
+            metadata_json={"review_count": 1},
+        )
+
+        updated_relation, review = await apply_requirement_relation_review(
+            db,
+            relation=relation,
+            actor_id=21,
+            action="edit",
+            notes="Reviewer corrected the relation type.",
+            edit_payload={
+                "relation_type": "overrides",
+                "confidence": 0.91,
+            },
+        )
+
+        self.assertIs(updated_relation, relation)
+        self.assertEqual(relation.review_state, "pending")
+        self.assertEqual(relation.graph_state, "active")
+        self.assertEqual(relation.relation_type, "overrides")
+        self.assertEqual(relation.confidence, 0.91)
+        self.assertEqual(review.action, "edit")
+        self.assertEqual(review.previous_review_state, "approved")
+        self.assertEqual(review.new_review_state, "pending")
+        self.assertEqual(review.metadata_json["edit"]["before"]["relation_type"], "depends_on")
+        self.assertEqual(review.metadata_json["edit"]["after"]["relation_type"], "overrides")
+
+    async def test_apply_requirement_relation_review_edits_relation_type_to_conflict(self) -> None:
+        db = _FakeAsyncSession()
+        relation = RequirementRelation(
+            id=46,
+            tender_id=84,
+            source_requirement_id=803,
+            target_requirement_id=804,
+            relation_type="depends_on",
+            confidence=0.5,
+            review_state="approved",
+            graph_state="active",
+            metadata_json={"review_count": 1},
+        )
+
+        updated_relation, review = await apply_requirement_relation_review(
+            db,
+            relation=relation,
+            actor_id=21,
+            action="edit",
+            edit_payload={
+                "relation_type": "conflicts_with",
+                "confidence": 0.8,
+            },
+        )
+
+        self.assertIs(updated_relation, relation)
+        self.assertEqual(relation.relation_type, "conflicts_with")
+        self.assertEqual(relation.confidence, 0.8)
+        self.assertEqual(review.metadata_json["edit"]["after"]["relation_type"], "conflicts_with")
+
+    async def test_apply_requirement_relation_review_dismiss_marks_relation_obsolete(self) -> None:
+        db = _FakeAsyncSession()
+        relation = RequirementRelation(
+            id=44,
+            tender_id=85,
+            source_requirement_id=901,
+            target_requirement_id=902,
+            relation_type="overrides",
+            confidence=0.51,
+            review_state="pending",
+            graph_state="active",
+            metadata_json={"inference_method": "lexical_override_v1"},
+        )
+
+        updated_relation, review = await apply_requirement_relation_review(
+            db,
+            relation=relation,
+            actor_id=22,
+            action="dismiss",
+            notes="Not a real override.",
+        )
+
+        self.assertIs(updated_relation, relation)
+        self.assertEqual(relation.review_state, "dismissed")
+        self.assertEqual(relation.graph_state, "obsolete")
+        self.assertEqual(relation.metadata_json["lifecycle"]["reason"], "manual_dismissed")
+        self.assertEqual(relation.metadata_json["inference_method"], "lexical_override_v1")
+        self.assertEqual(review.action, "dismiss")
+        self.assertEqual(review.metadata_json["lifecycle"]["reason"], "manual_dismissed")
 
 
 if __name__ == "__main__":

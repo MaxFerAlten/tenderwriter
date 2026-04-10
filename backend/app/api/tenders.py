@@ -11,10 +11,14 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Any
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from minio import Minio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +37,8 @@ from app.models import (
     TenderPermission,
     RequirementCandidate,
     RequirementExtractionRun,
+    Document,
+    IngestionStatus,
 )
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
@@ -56,7 +62,11 @@ from app.services.kpi_reason_engine import (
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
-from app.services.compliance_observability import sync_requirement_compliance_and_gate
+from app.services.compliance_observability import (
+    ComplianceRequirementCoverage,
+    build_compliance_requirement_coverage,
+    sync_requirement_compliance_and_gate,
+)
 from app.services.requirement_candidates import (
     list_staged_requirement_candidate_runs,
     stage_extracted_requirement_candidates,
@@ -108,6 +118,26 @@ class TenderUpdate(BaseModel):
     budget_estimate: float | None = None
 
 
+class DocumentResponse(BaseModel):
+    id: int
+    filename: str
+    file_url: str
+    doc_type: str | None = None
+    file_size: int | None = None
+    mime_type: str | None = None
+    ingestion_status: str
+    ingestion_progress: float | None = 0.0
+    chunk_count: int
+    error_message: str | None = None
+    source_kind: str | None = None
+    ingestion_started_at: datetime | None = None
+    ingestion_completed_at: datetime | None = None
+    ingestion_job_id: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class RequirementResponse(BaseModel):
     id: int
     requirement_text: str
@@ -116,6 +146,7 @@ class RequirementResponse(BaseModel):
     compliance_status: str
     mapped_section_id: int | None = None
     mapped_section_title: str | None = None
+    coverage_source: str = "legacy"
 
     model_config = {"from_attributes": True}
 
@@ -136,6 +167,8 @@ class TenderResponse(BaseModel):
     created_by: int | None = None
     created_by_name: str | None = None
     lifecycle_metadata: dict[str, Any] | None = None
+    ingestion_status: str | None = None
+    ingestion_progress: float | None = 0.0
 
     model_config = {"from_attributes": True}
 
@@ -188,6 +221,11 @@ class ConsolidatedRequirementResponse(BaseModel):
     consolidation_method: str
     review_state: str
     graph_state: str
+    parent_requirement_id: int | None = None
+    parent_requirement_key: str | None = None
+    applicability: dict[str, Any] | None = None
+    conditions: list[str] = Field(default_factory=list)
+    exceptions: list[str] = Field(default_factory=list)
     metadata_json: dict[str, Any] | None = None
     created_at: datetime | None = None
 
@@ -199,9 +237,26 @@ class ConsolidatedRequirementListResponse(BaseModel):
     total_items: int
 
 
+class ConsolidatedRequirementEditRequest(BaseModel):
+    canonical_text: str | None = None
+    category: str | None = None
+    priority: str | None = None
+    parent_requirement_key: str | None = None
+    applicability: dict[str, Any] | None = None
+    conditions: list[str] | None = None
+    exceptions: list[str] | None = None
+
+
+class ConsolidatedRequirementSplitRequest(ConsolidatedRequirementEditRequest):
+    canonical_text: str
+
+
 class ConsolidatedRequirementReviewRequest(BaseModel):
     action: str
     notes: str | None = None
+    edit: ConsolidatedRequirementEditRequest | None = None
+    target_requirement_id: int | None = None
+    split_requirements: list[ConsolidatedRequirementSplitRequest] = Field(default_factory=list)
 
 
 class RequirementReviewResponse(BaseModel):
@@ -241,9 +296,17 @@ class RequirementRelationListResponse(BaseModel):
     total_items: int
 
 
+class RequirementRelationEditRequest(BaseModel):
+    source_requirement_id: int | None = None
+    target_requirement_id: int | None = None
+    relation_type: str | None = None
+    confidence: float | None = None
+
+
 class RequirementRelationReviewRequest(BaseModel):
     action: str
     notes: str | None = None
+    edit: RequirementRelationEditRequest | None = None
 
 
 class RequirementRelationReviewResponse(BaseModel):
@@ -333,6 +396,7 @@ async def check_tender_access(
         .where(Tender.id == tender_id)
         .options(
             selectinload(Tender.requirements).selectinload(TenderRequirement.proposal_section),
+            selectinload(Tender.consolidated_requirements),
             selectinload(Tender.created_by_user),
             selectinload(Tender.proposals),
         )
@@ -379,23 +443,65 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
     if 'proposals' not in insp.unloaded and tender.proposals and len(tender.proposals) > 0:
         prop_id = tender.proposals[0].id
 
+    ing_status = None
+    ing_progress = 0.0
+    if 'documents' not in insp.unloaded and tender.documents:
+        # Diagnostic print
+        # print(f"Processing documents for tender {tender.id}: {len(tender.documents)}")
+        statuses = [d.ingestion_status.value if hasattr(d.ingestion_status, 'value') else d.ingestion_status for d in tender.documents]
+        progress_vals = [d.ingestion_progress or 0.0 for d in tender.documents]
+        
+        if "processing" in statuses:
+            ing_status = "processing"
+            # Return mean progress of processing documents
+            processing_vals = [d.ingestion_progress or 0.0 for d in tender.documents if d.ingestion_status == IngestionStatus.PROCESSING]
+            ing_progress = sum(processing_vals) / len(processing_vals) if processing_vals else 0.0
+        elif "completed" in statuses:
+            ing_status = "completed"
+            ing_progress = 100.0
+        elif "failed" in statuses:
+            ing_status = "failed"
+            ing_progress = 100.0
+        elif "pending" in statuses:
+            ing_status = "pending"
+            ing_progress = 0.0
+
+    # Coerce tags to clean list of strings
+    clean_tags = [str(t) for t in (tender.tags or []) if t is not None]
+    
+    # Coerce metadata safely
+    metadata_raw = tender.metadata_json if isinstance(tender.metadata_json, dict) else {}
+    lifecycle = metadata_raw.get("lifecycle")
+    if lifecycle is not None and not isinstance(lifecycle, dict):
+        lifecycle = {"raw_value": str(lifecycle)}
+
     return TenderResponse(
         id=tender.id,
         title=tender.title,
         client=tender.client,
         description=tender.description,
         deadline=tender.deadline,
-        status=tender.status.value if tender.status else "draft",
+        status=tender.status.value if hasattr(tender.status, 'value') else str(tender.status or "draft"),
         category=tender.category,
-        tags=tender.tags or [],
+        tags=clean_tags,
         budget_estimate=tender.budget_estimate,
         created_at=tender.created_at,
         requirement_count=req_count,
         proposal_id=prop_id,
         created_by=tender.created_by,
         created_by_name=creator_name,
-        lifecycle_metadata=dict((tender.metadata_json or {}).get("lifecycle") or {}),
+        lifecycle_metadata=lifecycle,
+        ingestion_status=ing_status,
+        ingestion_progress=ing_progress,
     )
+
+def _safe_tender_to_response(tender: Tender) -> TenderResponse | None:
+    try:
+        return _tender_to_response(tender)
+    except Exception:
+        print(f"FAILED MAPPING FOR TENDER {tender.id}:")
+        traceback.print_exc()
+        return None
 
 
 def _requirement_to_response(requirement: TenderRequirement) -> RequirementResponse:
@@ -408,6 +514,20 @@ def _requirement_to_response(requirement: TenderRequirement) -> RequirementRespo
         compliance_status=requirement.compliance_status.value,
         mapped_section_id=requirement.proposal_section_id,
         mapped_section_title=mapped_section.title if mapped_section else None,
+        coverage_source="legacy",
+    )
+
+
+def _coverage_requirement_to_response(requirement: ComplianceRequirementCoverage) -> RequirementResponse:
+    return RequirementResponse(
+        id=requirement.id,
+        requirement_text=requirement.requirement_text,
+        category=requirement.category,
+        priority=requirement.priority,
+        compliance_status=requirement.compliance_status.value,
+        mapped_section_id=requirement.proposal_section_id,
+        mapped_section_title=requirement.proposal_section_title,
+        coverage_source=requirement.coverage_source,
     )
 
 
@@ -461,6 +581,11 @@ def _consolidated_requirement_to_response(
         consolidation_method=requirement.consolidation_method,
         review_state=requirement.review_state,
         graph_state=str(requirement.graph_state or "active"),
+        parent_requirement_id=requirement.parent_requirement_id,
+        parent_requirement_key=requirement.parent_requirement_key,
+        applicability=dict(requirement.applicability or {}),
+        conditions=list(requirement.conditions or []),
+        exceptions=list(requirement.exceptions or []),
         metadata_json=dict(requirement.metadata_json or {}),
         created_at=requirement.created_at,
     )
@@ -533,7 +658,10 @@ async def list_tenders(
     query = select(Tender).options(
         selectinload(Tender.created_by_user),
         selectinload(Tender.proposals),
+        selectinload(Tender.documents),
+        selectinload(Tender.requirements),
     )
+    # logger.info("Building tender list query", status=status, category=category, search=search)
 
     # RBAC filter: non-admin sees only own tenders + tenders with explicit permission
     if current_user.role != "admin":
@@ -556,16 +684,36 @@ async def list_tenders(
         escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         query = query.where(Tender.title.ilike(f"%{escaped_search}%", escape="\\"))
 
-    # Count total
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar() or 0
+    try:
+        # Count total - use a clean query for counting to avoid subquery issues with load options
+        count_q = select(func.count(Tender.id))
+        if current_user.role != "admin":
+             permitted_subq = select(TenderPermission.tender_id).where(TenderPermission.user_id == current_user.id)
+             count_q = count_q.where(or_(Tender.created_by == current_user.id, Tender.id.in_(permitted_subq)))
+        
+        if status: count_q = count_q.where(Tender.status == status)
+        if category: count_q = count_q.where(Tender.category == category)
+        if search:
+            escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            count_q = count_q.where(Tender.title.ilike(f"%{escaped_search}%", escape="\\"))
+            
+        total = (await db.execute(count_q)).scalar() or 0
 
-    # Fetch page
-    query = query.order_by(Tender.created_at.desc()).offset(skip).limit(limit)
-    result = await db.execute(query)
-    tenders = result.scalars().all()
+        # Fetch page
+        query = query.order_by(Tender.created_at.desc()).offset(skip).limit(limit)
+        result = await db.execute(query)
+        tenders = result.scalars().all()
+    except Exception as e:
+        print("ERROR IN list_tenders DB EXECUTION:")
+        traceback.print_exc()
+        raise e
 
-    items = [_tender_to_response(t) for t in tenders]
+    # items = [_tender_to_response(t) for t in tenders]
+    items = []
+    for t in tenders:
+        resp = _safe_tender_to_response(t)
+        if resp:
+            items.append(resp)
 
     return TenderListResponse(items=items, total=total)
 
@@ -628,7 +776,10 @@ async def get_tender(
     response = _tender_to_response(tender)
     return TenderDetailResponse(
         **response.model_dump(),
-        requirements=[_requirement_to_response(r) for r in tender.requirements],
+        requirements=[
+            _coverage_requirement_to_response(requirement)
+            for requirement in build_compliance_requirement_coverage(tender)
+        ],
     )
 
 
@@ -808,13 +959,35 @@ async def review_tender_consolidated_requirement(
     if requirement is None:
         raise HTTPException(status_code=404, detail="Consolidated requirement not found")
 
+    target_requirement = None
+    if data.target_requirement_id is not None:
+        target_requirement = await get_consolidated_requirement_for_tender(
+            db,
+            tender_id=tender_id,
+            requirement_id=data.target_requirement_id,
+        )
+        if target_requirement is None:
+            raise HTTPException(status_code=404, detail="Target consolidated requirement not found")
+
+    review_kwargs: dict[str, Any] = {
+        "requirement": requirement,
+        "actor_id": current_user.id,
+        "action": data.action,
+        "notes": data.notes,
+    }
+    if data.edit is not None:
+        review_kwargs["edit_payload"] = data.edit.model_dump(exclude_none=True)
+    if target_requirement is not None:
+        review_kwargs["target_requirement"] = target_requirement
+    if data.split_requirements:
+        review_kwargs["split_payloads"] = [
+            item.model_dump(exclude_none=True) for item in data.split_requirements
+        ]
+
     try:
         updated_requirement, review = await apply_requirement_review(
             db,
-            requirement=requirement,
-            actor_id=current_user.id,
-            action=data.action,
-            notes=data.notes,
+            **review_kwargs,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -848,13 +1021,36 @@ async def review_tender_consolidated_requirement_relation(
     if relation is None:
         raise HTTPException(status_code=404, detail="Requirement relation not found")
 
+    relation_edit_payload = data.edit.model_dump(exclude_none=True) if data.edit is not None else None
+    if relation_edit_payload:
+        for requirement_key in ("source_requirement_id", "target_requirement_id"):
+            requirement_id = relation_edit_payload.get(requirement_key)
+            if requirement_id is None:
+                continue
+            related_requirement = await get_consolidated_requirement_for_tender(
+                db,
+                tender_id=tender_id,
+                requirement_id=int(requirement_id),
+            )
+            if related_requirement is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Relation {requirement_key} requirement not found",
+                )
+
+    relation_review_kwargs: dict[str, Any] = {
+        "relation": relation,
+        "actor_id": current_user.id,
+        "action": data.action,
+        "notes": data.notes,
+    }
+    if relation_edit_payload:
+        relation_review_kwargs["edit_payload"] = relation_edit_payload
+
     try:
         updated_relation, review = await apply_requirement_relation_review(
             db,
-            relation=relation,
-            actor_id=current_user.id,
-            action=data.action,
-            notes=data.notes,
+            **relation_review_kwargs,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -970,8 +1166,8 @@ async def import_tender_document(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Upload and process a tender document (PDF/DOCX). RBAC-checked.
-    Triggers the ingestion pipeline: parse → extract requirements → index.
+    Upload a tender document (PDF/DOCX). RBAC-checked.
+    Creates a Document record and enqueues the ingestion task.
     """
     tender = await check_tender_access(tender_id, current_user, db)
     
@@ -982,7 +1178,22 @@ async def import_tender_document(
             detail=f"Cannot upload documents to a tender with status '{tender.status.value}'"
         )
 
-    # 1. Upload to MinIO
+    # 1. Create Document record in PENDING state
+    doc = Document(
+        filename=file.filename or "unknown",
+        file_url="",  # Will update after upload
+        doc_type="tender",
+        file_size=file.size or 0,
+        mime_type=file.content_type,
+        ingestion_status=IngestionStatus.PENDING,
+        uploaded_by=current_user.id,
+        tender_id=tender.id,
+        source_kind="upload",
+    )
+    db.add(doc)
+    await db.flush()
+
+    # 2. Upload to MinIO
     minio_client = Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key,
@@ -1018,121 +1229,166 @@ async def import_tender_document(
         content_type=file.content_type,
     )
 
-    # 2. Trigger Ingestion Pipeline
-    import tempfile
-    import os
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    rag_engine = request.app.state.rag_engine
-    await rag_engine.ensure_initialized()
-    
-    from app.ingestion.pipeline import IngestionPipeline
-    pipeline = IngestionPipeline(rag_engine)
-    
-    try:
-        stats = await pipeline.ingest_file(
-            file_path=tmp_path,
-            document_id=tender_id,
-            doc_type="tender",
-            metadata={"original_filename": file.filename}
-        )
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-    requirement_candidates = list(stats.get("requirement_candidates") or [])
-    await stage_extracted_requirement_candidates(
-        db,
-        tender_id=tender.id,
-        actor_id=current_user.id,
-        source_document_ref=object_name,
-        filename=file.filename,
-        extraction_method=str(stats.get("requirement_extraction_method") or "heuristic_v1"),
-        candidates=requirement_candidates,
-        metadata={
-            "content_type": file.content_type,
-            "requirements_detected": stats.get("requirements_detected"),
-            "sections_detected": stats.get("sections_detected"),
-            "ingestion_status": stats.get("status"),
-        },
-    )
-    created_requirements = apply_extracted_requirement_candidates(tender, requirement_candidates)
+    # 3. Update Document with storage metadata
+    doc.storage_bucket = bucket_name
+    doc.storage_object_name = object_name
+    doc.file_url = f"minio://{bucket_name}/{object_name}"
     await db.flush()
-    graph_synced = await sync_tender_requirements_to_graph(
-        rag_engine,
-        tender,
-        list(tender.requirements or created_requirements),
-    )
-    stats["graph_synced"] = graph_synced
-    compliance_events = await sync_requirement_compliance_and_gate(
-        db,
-        tender_id=tender.id,
-        actor_id=current_user.id,
-    )
-    # 3. Update status to ACTIVE if it was DRAFT
-    if tender.status == TenderStatus.DRAFT:
-        tender.status = TenderStatus.ACTIVE
-        await db.flush()
-        await db.refresh(tender)
 
-    # 4. Ensure official tender chat is open once the tender has started
-    if tender.status in [TenderStatus.ACTIVE, TenderStatus.IN_PROGRESS]:
-        await ensure_official_chat_room(
-            db,
-            tender_id=tender.id,
-            actor_id=current_user.id,
-            open_now=True,
-        )
-        await sync_chat_members_from_tender_permissions(
-            db,
-            tender_id=tender.id,
-            actor_id=current_user.id,
-        )
+    # 4. Enqueue Ingestion Task
+    from app.tasks import index_document_task
+    task = index_document_task.delay(doc.id)
 
-    await sync_tender_and_publish_event(
-        db,
-        tender_id=tender.id,
-        actor_id=current_user.id,
-        event_type="tender_document_ingested",
-        event_payload=build_tender_document_ingested_event_payload(
-            document_id=object_name,
-            filename=file.filename or "uploaded-document",
-            stats=stats,
-        ),
-    )
-
-    await publish_domain_event(
-        db,
-        tender_id=tender.id,
-        actor_id=current_user.id,
-        event_type="requirements_extracted",
-        payload=build_requirements_extracted_event_payload(
-            document_id=object_name,
-            filename=file.filename or "uploaded-document",
-            extracted_candidates=requirement_candidates,
-            created_requirements=created_requirements,
-        ),
-    )
-
-    for event_type, payload in compliance_events:
-        await publish_domain_event(
-            db,
-            tender_id=tender.id,
-            actor_id=current_user.id,
-            event_type=event_type,
-            payload=payload,
-        )
+    # 5. Save tracking information
+    doc.ingestion_job_id = task.id
+    
+    await db.commit()
 
     return {
-        "message": "Document uploaded and ingested successfully",
+        "message": "Document uploaded and ingestion queued successfully",
         "tender_id": tender_id,
+        "document_id": doc.id,
+        "task_id": task.id,
         "filename": file.filename,
-        "stats": stats,
+        "status": "queued",
     }
 
+
+
+
+@router.get("/{tender_id}/documents", response_model=list[DocumentResponse])
+async def list_tender_documents(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all documents for a tender."""
+    await check_tender_access(tender_id, current_user, db)
+    result = await db.execute(
+        select(Document)
+        .where(Document.tender_id == tender_id)
+        .order_by(Document.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.get("/{tender_id}/documents/{document_id}", response_model=DocumentResponse)
+async def get_tender_document(
+    tender_id: int,
+    document_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the status of a specific tender document."""
+    await check_tender_access(tender_id, current_user, db)
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tender_id == tender_id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this tender")
+    return doc
+
+
+@router.get("/{tender_id}/documents/{document_id}/stream")
+async def stream_document_status(
+    tender_id: int,
+    document_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """SSE endpoint to stream document ingestion status updates."""
+    from fastapi.responses import StreamingResponse
+    import json
+    import asyncio
+    from app.db.database import async_session_factory
+
+    await check_tender_access(tender_id, current_user, db)
+
+    async def event_generator():
+        async_session = async_session_factory
+        while True:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(Document).where(
+                        Document.id == document_id,
+                        Document.tender_id == tender_id
+                    )
+                )
+                doc = result.scalar_one_or_none()
+                if not doc:
+                    yield "event: error\ndata: {\"error\": \"Document not found\"}\n\n"
+                    break
+
+                status_val = doc.ingestion_status.value if hasattr(doc.ingestion_status, 'value') else doc.ingestion_status
+                payload = {
+                    "id": doc.id,
+                    "status": status_val,
+                    "progress": doc.ingestion_progress,
+                    "error_message": doc.error_message
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+
+                if status_val in ("completed", "failed"):
+                    break
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/{tender_id}/activate", response_model=TenderResponse)
+async def activate_tender(
+    tender_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Explicitly activate a tender (transits from DRAFT to ACTIVE).
+    Opens the chat room and ensures background tasks are initialized.
+    """
+    # Use check_tender_access which eager loads proposals for response mapping
+    tender = await check_tender_access(tender_id, current_user, db)
+    
+    if tender.status != TenderStatus.DRAFT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tender cannot be activated from status '{tender.status.value}'"
+        )
+        
+    # Lock for update
+    result = await db.execute(select(Tender).where(Tender.id == tender_id).with_for_update())
+    tender_db = result.scalar_one()
+
+    tender_db.status = TenderStatus.ACTIVE
+    await db.flush()
+    await db.refresh(tender_db)
+
+    # Note: Using tender_db but checking the pre-loaded tender to keep _tender_to_response happy
+    # since _tender_to_response checks lazy loads on the parameter passed.
+    tender.status = tender_db.status
+
+    await ensure_official_chat_room(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+        open_now=True,
+    )
+    await sync_chat_members_from_tender_permissions(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
+
+    await publish_tender_sync(
+        db,
+        tender_id=tender.id,
+        actor_id=current_user.id,
+    )
+
+    return _tender_to_response(tender)
 
 
 class TenderDecisionRequest(BaseModel):

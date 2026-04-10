@@ -1,5 +1,7 @@
 # Repomix outputs
 my-output.md
+tewnderclaw.md
+tewnderwriter.md
 repomix-output.md
 repomix-output.pdf
 repomix-output.xml
@@ -11,11 +13,13 @@ tenderwriter_presentazione_manageriale_tecnica.pptx
 my-output.md
 my-output-fix.md
 backend/app/ingestion/__pycache__/
-
+har_and_cookies
 # --- Virtual environments ---
 .claude/
 .codex/
 venv/
+.temp/
+.tmp/
 .venv/
 env/
 .conda/

@@ -13,8 +13,87 @@ import {
 import { systemApi, type SystemCapabilitiesData, type SystemContainer, type SystemContainerStats } from '../api/client';
 import { buildUnavailableCapabilities, isOpsMonitoringUnavailableError } from './systemMonitorUtils';
 
+type ComposeProfile = 'default' | 'keycloak' | 'videochat';
+
+interface ComposeComponent {
+    name: string;
+    service: string;
+    profile: ComposeProfile;
+}
+
+interface MonitorContainer extends SystemContainer {
+    service: string;
+    profile: ComposeProfile;
+    expected: boolean;
+}
+
+const COMPOSE_COMPONENTS: ComposeComponent[] = [
+    { name: 'postgres', service: 'postgres', profile: 'default' },
+    { name: 'qdrant', service: 'qdrant', profile: 'default' },
+    { name: 'neo4j', service: 'neo4j', profile: 'default' },
+    { name: 'llama-tender', service: 'llama-tender', profile: 'default' },
+    { name: 'gpt4free', service: 'gpt4free', profile: 'default' },
+    { name: 'redis', service: 'redis', profile: 'default' },
+    { name: 'redis-insight', service: 'redis-insight', profile: 'default' },
+    { name: 'celery-worker', service: 'celery-worker', profile: 'default' },
+    { name: 'celery-beat', service: 'celery-beat', profile: 'default' },
+    { name: 'mailpit', service: 'mailpit', profile: 'default' },
+    { name: 'ops-agent', service: 'ops-agent', profile: 'default' },
+    { name: 'backend', service: 'backend', profile: 'default' },
+    { name: 'onlyoffice', service: 'onlyoffice', profile: 'default' },
+    { name: 'kpi-reason-engine', service: 'kpi-reason-engine', profile: 'default' },
+    { name: 'frontend', service: 'frontend', profile: 'default' },
+    { name: 'mock-external-llm', service: 'mock-external-llm', profile: 'default' },
+    { name: 'gateway', service: 'gateway', profile: 'default' },
+    { name: 'anonymizer', service: 'anonymizer', profile: 'default' },
+    { name: 'kc-postgres', service: 'kc-postgres', profile: 'keycloak' },
+    { name: 'keycloak', service: 'keycloak', profile: 'keycloak' },
+    { name: 'keycloak-bootstrap', service: 'keycloak-bootstrap', profile: 'keycloak' },
+    { name: 'mm-postgres', service: 'mm-postgres', profile: 'videochat' },
+    { name: 'mm-plugin-oidc', service: 'mm-plugin-oidc', profile: 'videochat' },
+    { name: 'mattermost', service: 'mattermost', profile: 'videochat' },
+    { name: 'mattermost-bootstrap', service: 'mattermost-bootstrap', profile: 'videochat' },
+    { name: 'jitsi-prosody', service: 'jitsi-prosody', profile: 'videochat' },
+    { name: 'jitsi-jicofo', service: 'jitsi-jicofo', profile: 'videochat' },
+    { name: 'jitsi-jvb', service: 'jitsi-jvb', profile: 'videochat' },
+    { name: 'jitsi-web', service: 'jitsi-web', profile: 'videochat' },
+    { name: 'vosk', service: 'vosk', profile: 'videochat' },
+    { name: 'jitsi-jigasi', service: 'jitsi-jigasi', profile: 'videochat' },
+    { name: 'transcript-forwarder', service: 'transcript-forwarder', profile: 'videochat' },
+];
+
+function mergeComposeContainers(liveContainers: SystemContainer[]): MonitorContainer[] {
+    const liveByName = new Map(liveContainers.map((container) => [container.name, container]));
+    const merged: MonitorContainer[] = [];
+
+    for (const component of COMPOSE_COMPONENTS) {
+        const live = liveByName.get(component.name);
+        if (live) {
+            merged.push({
+                ...live,
+                service: component.service,
+                profile: component.profile,
+                expected: true,
+            });
+        } else {
+            merged.push({
+                id: `expected-${component.name}`,
+                name: component.name,
+                status: 'not_detected',
+                health: 'unknown',
+                service: component.service,
+                profile: component.profile,
+                expected: true,
+            });
+        }
+    }
+
+    return merged;
+}
+
 export default function SystemMonitor() {
-    const [containers, setContainers] = useState<SystemContainer[]>([]);
+    const [containers, setContainers] = useState<MonitorContainer[]>([]);
+    const [liveContainerByName, setLiveContainerByName] = useState<Record<string, SystemContainer>>({});
     const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
     const [logs, setLogs] = useState<string>('');
     const [stats, setStats] = useState<Record<string, SystemContainerStats>>({});
@@ -113,10 +192,13 @@ export default function SystemMonitor() {
         refreshInFlightRef.current = true;
         try {
             const data = await systemApi.getContainers();
-            setContainers(data);
+            setLiveContainerByName(Object.fromEntries(data.map((container) => [container.name, container])));
+            const merged = mergeComposeContainers(data);
+            setContainers(merged);
             setMonitorError(null);
-            if (data.length > 0 && !selectedContainer) {
-                setSelectedContainer(data[0].name);
+            if (merged.length > 0 && !selectedContainer) {
+                const preferred = merged.find((container) => container.status === 'running') ?? merged[0];
+                setSelectedContainer(preferred.name);
             }
             await fetchStatsForContainers(data);
         } catch (e) {
@@ -139,7 +221,8 @@ export default function SystemMonitor() {
         setIsRefreshing(true);
         try {
             const data = await systemApi.getContainers();
-            setContainers(data);
+            setLiveContainerByName(Object.fromEntries(data.map((container) => [container.name, container])));
+            setContainers(mergeComposeContainers(data));
             setMonitorError(null);
             await fetchStatsForContainers(data);
         } catch (e) {
@@ -151,10 +234,17 @@ export default function SystemMonitor() {
     };
 
     useEffect(() => {
-        if (selectedContainer && capabilities?.ops_monitoring.available) {
-            void fetchLogs(selectedContainer);
+        if (!selectedContainer || !capabilities?.ops_monitoring.available) {
+            return;
         }
-    }, [selectedContainer, capabilities?.ops_monitoring.available]);
+
+        if (liveContainerByName[selectedContainer]) {
+            void fetchLogs(selectedContainer);
+            return;
+        }
+
+        setLogs("Container non rilevato dall'ops-agent: log live non disponibili.");
+    }, [selectedContainer, capabilities?.ops_monitoring.available, liveContainerByName]);
 
     const fetchLogs = async (name: string) => {
         try {
@@ -235,7 +325,12 @@ export default function SystemMonitor() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                                 <Box size={20} color="var(--accent-blue)" />
-                                <h3 style={{ margin: 0, fontSize: '0.95rem' }}>{container.name}</h3>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '0.95rem' }}>{`tw-${container.name}`}</h3>
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                        service: {container.service}
+                                    </div>
+                                </div>
                             </div>
                             <span style={{
                                 display: 'flex',
@@ -245,11 +340,28 @@ export default function SystemMonitor() {
                                 color: container.status === 'running' ? 'var(--accent-green)' : 'var(--text-muted)'
                             }}>
                                 {container.status === 'running' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                                {container.status.toUpperCase()}
+                                {container.status === 'not_detected' ? 'NOT DETECTED' : container.status.toUpperCase()}
                             </span>
                         </div>
 
-                        {stats[container.name] ? (
+                        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                            <span className="badge badge-draft" style={{ fontSize: '0.65rem' }}>
+                                {container.profile}
+                            </span>
+                            {!container.expected && (
+                                <span className="badge badge-failed" style={{ fontSize: '0.65rem' }}>
+                                    extra
+                                </span>
+                            )}
+                        </div>
+
+                        {container.status !== 'running' ? (
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                                {container.status === 'not_detected'
+                                    ? 'Componente definito in docker-compose ma non rilevato/avviato.'
+                                    : 'Container non in esecuzione.'}
+                            </p>
+                        ) : stats[container.name] ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Cpu size={12} /> CPU</span>
@@ -285,7 +397,9 @@ export default function SystemMonitor() {
                 <div className="card" style={{ padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid #1e293b' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', background: '#1e293b', borderBottom: '1px solid #334155' }}>
                         <Terminal size={14} color="#60a5fa" />
-                        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>Logs: {selectedContainer}</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e2e8f0' }}>
+                            Logs: {selectedContainer ? `tw-${selectedContainer}` : '—'}
+                        </span>
                     </div>
                     <pre style={{
                         margin: 0,

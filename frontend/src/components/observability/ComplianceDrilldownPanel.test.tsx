@@ -33,6 +33,7 @@ const tenderDetail: TenderDetail = {
             compliance_status: 'fully_addressed',
             mapped_section_id: 33,
             mapped_section_title: 'Compliance matrix',
+            coverage_source: 'consolidated_approved',
         },
         {
             id: 102,
@@ -42,6 +43,7 @@ const tenderDetail: TenderDetail = {
             compliance_status: 'partially_addressed',
             mapped_section_id: null,
             mapped_section_title: null,
+            coverage_source: 'legacy',
         },
     ],
 };
@@ -125,6 +127,11 @@ const consolidatedRequirements: ConsolidatedRequirementRecord[] = [
         consolidation_method: 'staging_v1',
         review_state: 'pending',
         graph_state: 'active',
+        parent_requirement_id: 92,
+        parent_requirement_key: 'Provide signed annex A.',
+        applicability: { lot: '1' },
+        conditions: ['Before service start'],
+        exceptions: ['Optional modules excluded'],
         metadata_json: { sources: [{ candidate_id: 702 }] },
         created_at: '2026-04-04T10:30:00Z',
     },
@@ -139,7 +146,23 @@ const consolidatedRequirements: ConsolidatedRequirementRecord[] = [
         consolidation_method: 'staging_v1',
         review_state: 'approved',
         graph_state: 'active',
-        metadata_json: { sources: [{ candidate_id: 701 }] },
+        parent_requirement_id: null,
+        parent_requirement_key: null,
+        applicability: {},
+        conditions: [],
+        exceptions: [],
+        metadata_json: {
+            sources: [{ candidate_id: 701 }],
+            document_precedence: {
+                primary_role: 'clarification',
+                superseded_sources: [{ document_role: 'disciplinare' }],
+            },
+            source_variants: {
+                variant_count: 2,
+                has_variants: true,
+                examples: ['Provide signed annex A with wet signature.', 'Provide signed annex A.'],
+            },
+        },
         created_at: '2026-04-04T10:31:00Z',
     },
 ];
@@ -156,6 +179,11 @@ const obsoleteRequirements: ConsolidatedRequirementRecord[] = [
         consolidation_method: 'staging_v1',
         review_state: 'approved',
         graph_state: 'obsolete',
+        parent_requirement_id: null,
+        parent_requirement_key: null,
+        applicability: {},
+        conditions: [],
+        exceptions: [],
         metadata_json: { lifecycle: { graph_state: 'obsolete', reason: 'missing_from_latest_rebuild' } },
         created_at: '2026-04-08T10:20:00Z',
     },
@@ -175,6 +203,9 @@ const relations: RequirementRelationRecord[] = [
         metadata_json: {
             inference_method: 'lexical_override_v1',
             shared_terms: ['submit', 'insurance', 'certificate'],
+            source_role: 'clarification',
+            target_role: 'capitolato',
+            conflict_signals: ['numeric_mismatch'],
         },
         created_at: '2026-04-04T11:10:00Z',
     },
@@ -193,6 +224,24 @@ const relations: RequirementRelationRecord[] = [
             matched_clause: 'presenting the technical plan',
         },
         created_at: '2026-04-04T11:20:00Z',
+    },
+    {
+        id: 503,
+        source_requirement_id: 95,
+        source_requirement_text: 'Provide warranty coverage for 12 months.',
+        target_requirement_id: 96,
+        target_requirement_text: 'Provide warranty coverage for 24 months.',
+        relation_type: 'conflicts_with',
+        confidence: 0.8,
+        review_state: 'pending',
+        graph_state: 'active',
+        metadata_json: {
+            inference_method: 'cross_document_conflict_v1',
+            source_role: 'annex',
+            target_role: 'annex',
+            conflict_signals: ['numeric_mismatch'],
+        },
+        created_at: '2026-04-04T11:30:00Z',
     },
 ];
 
@@ -235,6 +284,7 @@ describe('ComplianceDrilldownPanel', () => {
         expect(html).toContain('Requirement coverage');
         expect(html).toContain('Automatic compliance gate');
         expect(html).toContain('Provide signed annex');
+        expect(html).toContain('consolidated approved');
         expect(html).toContain('Provide insurance');
         expect(html).toContain('Not mapped to a proposal section yet.');
         expect(html).toContain('automatic gate remains open');
@@ -248,6 +298,10 @@ describe('ComplianceDrilldownPanel', () => {
                 data={pipelineData}
                 noteDrafts={{ 91: 'Need legal confirmation.' }}
                 relationNoteDrafts={{ 501: 'Clarification should override the base clause.' }}
+                editorialDrafts={{ 91: 'Submit insurance certificate with broker attestation.' }}
+                mergeTargetDrafts={{ 91: '92' }}
+                splitDrafts={{ 91: 'Submit insurance certificate.\nProvide broker attestation.' }}
+                relationTypeDrafts={{ 501: 'overrides' }}
             />
         );
 
@@ -260,15 +314,37 @@ describe('ComplianceDrilldownPanel', () => {
         expect(html).toContain('Submit insurance certificate.');
         expect(html).toContain('Pending review');
         expect(html).toContain('Need legal confirmation.');
+        expect(html).toContain('Manual edit: corrected canonical requirement text');
+        expect(html).toContain('Submit insurance certificate with broker attestation.');
+        expect(html).toContain('Merge into requirement id');
+        expect(html).toContain('Split into atomic requirements');
+        expect(html).toContain('Save edit');
+        expect(html).toContain('Merge');
+        expect(html).toContain('Split');
+        expect(html).toContain('Dismiss');
         expect(html).toContain('Requirement relations');
         expect(html).toContain('Relation review queue');
         expect(html).toContain('Submit insurance certificate with broker attestation.');
         expect(html).toContain('Submit the final commercial offer after presenting the technical plan.');
         expect(html).toContain('Clarification should override the base clause.');
+        expect(html).toContain('Save relation edit');
+        expect(html).toContain('Dismiss relation');
         expect(html).toContain('Relations');
         expect(html).toContain('Relation review');
         expect(html).toContain('1 overrides');
         expect(html).toContain('1 depends on');
+        expect(html).toContain('1 conflicts');
+        expect(html).toContain('conflicts with');
+        expect(html).toContain('Precedence: clarification over disciplinare');
+        expect(html).toContain('Source variants: 2');
+        expect(html).toContain('Document route: clarification -&gt; capitolato');
+        expect(html).toContain('Document route: annex -&gt; annex');
+        expect(html).toContain('Conflict signals: numeric mismatch');
+        expect(html).toContain('Graph V2');
+        expect(html).toContain('parent Provide signed annex A.');
+        expect(html).toContain('applies to lot: 1');
+        expect(html).toContain('conditions Before service start');
+        expect(html).toContain('exceptions Optional modules excluded');
         expect(html).toContain('Obsolete graph');
         expect(html).toContain('Graph audit trail');
         expect(html).toContain('Obsolete consolidated requirements');

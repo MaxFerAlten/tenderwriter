@@ -77,6 +77,42 @@ class RequirementCandidateStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(staged_candidates[0].priority, "high")
         self.assertAlmostEqual(staged_candidates[0].confidence, 0.91)
 
+    async def test_stage_extracted_requirement_candidates_preserves_llm_v2_citations_in_raw_payload(self) -> None:
+        db = _FakeAsyncSession()
+
+        extraction_run, staged_candidates = await stage_extracted_requirement_candidates(
+            db,
+            tender_id=13,
+            actor_id=7,
+            source_document_ref="tenders/13/rfp.pdf",
+            filename="rfp.pdf",
+            extraction_method="llm_v2",
+            candidates=[
+                {
+                    "summary": "The bidder must provide ISO 27001 certification.",
+                    "reference": "Mandatory Requirements",
+                    "category": "certifications",
+                    "priority": "high",
+                    "confidence": 0.91,
+                    "schema_version": "requirement_extraction_v2.schema.v1",
+                    "citations": [
+                        {
+                            "source_document_ref": "tenders/13/rfp.pdf",
+                            "section_path": "Mandatory Requirements",
+                            "quote": "The bidder must provide ISO 27001 certification.",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        self.assertEqual(extraction_run.extraction_method, "llm_v2")
+        self.assertEqual(len(staged_candidates), 1)
+        self.assertEqual(staged_candidates[0].category, "certifications")
+        raw_candidate = staged_candidates[0].metadata_json["raw_candidate"]
+        self.assertEqual(raw_candidate["schema_version"], "requirement_extraction_v2.schema.v1")
+        self.assertEqual(raw_candidate["citations"][0]["quote"], "The bidder must provide ISO 27001 certification.")
+
     async def test_stage_extracted_requirement_candidates_filters_duplicates_and_short_rows(self) -> None:
         db = _FakeAsyncSession()
 

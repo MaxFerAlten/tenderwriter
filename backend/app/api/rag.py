@@ -7,6 +7,8 @@ check compliance, and analyze requirements.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -196,13 +198,25 @@ async def rag_query(
         # Streaming response
         async def stream_generator():
             full_response = ""
-            async for token in engine.query_stream(rag_query):
-                full_response += token
-                yield _encode_sse_data(token)
+            stream_error: Exception | None = None
+            try:
+                async for token in engine.query_stream(rag_query):
+                    full_response += token
+                    yield _encode_sse_data(token)
+            except Exception as exc:  # pragma: no cover - covered via streamed response tests
+                stream_error = exc
+                yield _encode_sse_data(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": str(exc),
+                        }
+                    )
+                )
 
             # Save history when stream completes
             try:
-                if _should_save_search_history(data):
+                if stream_error is None and _should_save_search_history(data):
                     history = SearchHistory(
                         user_id=current_user.id,
                         query=data.query,
@@ -217,7 +231,12 @@ async def rag_query(
                     policy=policy,
                     llm_route=None,
                     anonymized=policy.mode == "external_anonymized",
-                    payload={"mode": mode.value, "stream": True, "policy": policy.as_dict()},
+                    payload={
+                        "mode": mode.value,
+                        "stream": True,
+                        "policy": policy.as_dict(),
+                        "error": str(stream_error) if stream_error else None,
+                    },
                 )
                 await db.commit()
             except Exception:

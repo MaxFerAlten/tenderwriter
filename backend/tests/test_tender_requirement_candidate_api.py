@@ -92,6 +92,72 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("requirement_candidates", payload)
         self.assertNotIn("requirement_extraction_runs", payload)
 
+    async def test_get_tender_prefers_approved_consolidated_requirements_for_coverage(self) -> None:
+        tender = Tender(id=47, title="Framework Tender", status=TenderStatus.ACTIVE)
+        tender.requirements = [
+            TenderRequirement(
+                id=41,
+                tender_id=47,
+                requirement_text="Submit insurance certificate.",
+                category="risk",
+                priority="medium",
+                compliance_status=ComplianceStatus.FULLY_ADDRESSED,
+                proposal_section_id=501,
+            )
+        ]
+        tender.requirements[0].proposal_section = _TENDERS_MODULES.models.ProposalSection(
+            id=501,
+            proposal_id=61,
+            title="Compliance matrix",
+        )
+        tender.consolidated_requirements = [
+            ConsolidatedRequirement(
+                id=901,
+                tender_id=47,
+                canonical_text="Submit cyber insurance certificate.",
+                normalized_text="submit cyber insurance certificate.",
+                category="risk",
+                priority="high",
+                source_count=1,
+                consolidation_method="staging_v1",
+                review_state="approved",
+                graph_state="active",
+                metadata_json={"sources": [{"legacy_requirement_id": 41}]},
+            ),
+            ConsolidatedRequirement(
+                id=902,
+                tender_id=47,
+                canonical_text="Pending consolidated requirement.",
+                normalized_text="pending consolidated requirement.",
+                priority="high",
+                source_count=1,
+                consolidation_method="staging_v1",
+                review_state="pending",
+                graph_state="active",
+            ),
+        ]
+        current_user = SimpleNamespace(id=7, role="admin")
+
+        with patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)):
+            response = await get_tender(
+                tender_id=47,
+                current_user=current_user,
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(len(response.requirements), 2)
+        approved_response = next(item for item in response.requirements if item.id == 901)
+        pending_response = next(item for item in response.requirements if item.id == 902)
+        self.assertEqual(approved_response.requirement_text, "Submit cyber insurance certificate.")
+        self.assertEqual(approved_response.priority, "high")
+        self.assertEqual(approved_response.compliance_status, "fully_addressed")
+        self.assertEqual(approved_response.mapped_section_id, 501)
+        self.assertEqual(approved_response.mapped_section_title, "Compliance matrix")
+        self.assertEqual(approved_response.coverage_source, "consolidated_approved")
+        self.assertEqual(pending_response.compliance_status, "not_addressed")
+        self.assertEqual(pending_response.coverage_source, "consolidated_review_pending")
+        self.assertIsNone(pending_response.mapped_section_id)
+
     async def test_get_tender_requirement_candidates_keeps_staged_contract_when_consolidated_rows_exist(self) -> None:
         tender = Tender(id=33, title="Services Tender", status=TenderStatus.ACTIVE)
         tender.consolidated_requirements = [
@@ -232,6 +298,11 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
             source_count=2,
             consolidation_method="staging_v1",
             review_state="pending",
+            parent_requirement_id=80,
+            parent_requirement_key="Security governance",
+            applicability={"lot": "1"},
+            conditions=["Before service start"],
+            exceptions=["Optional modules excluded"],
             metadata_json={
                 "sources": [{"candidate_id": 1}, {"candidate_id": 2}],
                 "primary_source": {"candidate_id": 2, "document_role": "clarification"},
@@ -272,6 +343,11 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].canonical_text, "Provide ISO 27001 certificate.")
         self.assertEqual(response.items[0].source_count, 2)
         self.assertEqual(response.items[0].graph_state, "active")
+        self.assertEqual(response.items[0].parent_requirement_id, 80)
+        self.assertEqual(response.items[0].parent_requirement_key, "Security governance")
+        self.assertEqual(response.items[0].applicability, {"lot": "1"})
+        self.assertEqual(response.items[0].conditions, ["Before service start"])
+        self.assertEqual(response.items[0].exceptions, ["Optional modules excluded"])
         self.assertEqual(len(response.items[0].metadata_json["sources"]), 2)
         self.assertEqual(response.items[0].metadata_json["primary_source"]["document_role"], "clarification")
         self.assertEqual(response.items[0].metadata_json["precedence_policy"], "document_role_v1")
@@ -453,6 +529,71 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].review_state, "pending")
         self.assertEqual(response.items[0].graph_state, "active")
         self.assertEqual(response.items[0].metadata_json["inference_method"], "dependency_clause_v1")
+
+    async def test_get_tender_consolidated_requirement_relations_filters_cross_document_conflicts(self) -> None:
+        tender = Tender(id=41, title="Complex Tender", status=TenderStatus.ACTIVE)
+        current_user = SimpleNamespace(id=18, role="admin")
+        fake_db = SimpleNamespace()
+        source_requirement = ConsolidatedRequirement(
+            id=141,
+            tender_id=41,
+            canonical_text="Provide warranty coverage for 12 months.",
+            normalized_text="provide warranty coverage for 12 months",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        target_requirement = ConsolidatedRequirement(
+            id=142,
+            tender_id=41,
+            canonical_text="Provide warranty coverage for 24 months.",
+            normalized_text="provide warranty coverage for 24 months",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        relation = RequirementRelation(
+            id=503,
+            tender_id=41,
+            source_requirement_id=141,
+            target_requirement_id=142,
+            relation_type="conflicts_with",
+            confidence=0.8,
+            metadata_json={
+                "inference_method": "cross_document_conflict_v1",
+                "conflict_signals": ["numeric_mismatch"],
+            },
+        )
+        relation.source_requirement = source_requirement
+        relation.target_requirement = target_requirement
+
+        with (
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(
+                _TENDERS_MODULE,
+                "list_requirement_relations",
+                AsyncMock(return_value=[relation]),
+            ) as list_mock,
+        ):
+            response = await get_tender_consolidated_requirement_relations(
+                tender_id=41,
+                relation_type="conflicts_with",
+                current_user=current_user,
+                db=fake_db,
+            )
+
+        list_mock.assert_awaited_once_with(
+            fake_db,
+            tender_id=41,
+            relation_type="conflicts_with",
+            graph_state="active",
+        )
+        self.assertEqual(response.total_items, 1)
+        self.assertEqual(response.items[0].relation_type, "conflicts_with")
+        self.assertEqual(response.items[0].metadata_json["inference_method"], "cross_document_conflict_v1")
+        self.assertEqual(response.items[0].metadata_json["conflict_signals"], ["numeric_mismatch"])
 
     async def test_get_tender_consolidated_requirement_relations_can_return_obsolete_edges(self) -> None:
         tender = Tender(id=44, title="Complex Tender", status=TenderStatus.ACTIVE)
@@ -730,6 +871,148 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.review.new_review_state, "approved")
         self.assertEqual(response.review.notes, "Verified manually.")
 
+    async def test_review_tender_consolidated_requirement_passes_editorial_edit_payload(self) -> None:
+        tender = Tender(id=44, title="Complex Tender", status=TenderStatus.ACTIVE)
+        current_user = SimpleNamespace(id=23, role="admin")
+        fake_db = SimpleNamespace()
+        requirement = ConsolidatedRequirement(
+            id=210,
+            tender_id=44,
+            canonical_text="Provide old insurance certificate.",
+            normalized_text="provide old insurance certificate",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        review = RequirementReview(
+            id=801,
+            tender_id=44,
+            consolidated_requirement_id=210,
+            actor_id=23,
+            action="edit",
+            previous_review_state="pending",
+            new_review_state="pending",
+            notes="Edited manually.",
+            metadata_json={"edit": {"fields": ["canonical_text"]}},
+        )
+
+        with (
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(
+                _TENDERS_MODULE,
+                "get_consolidated_requirement_for_tender",
+                AsyncMock(return_value=requirement),
+            ),
+            patch.object(
+                _TENDERS_MODULE,
+                "apply_requirement_review",
+                AsyncMock(return_value=(requirement, review)),
+            ) as review_mock,
+        ):
+            response = await review_tender_consolidated_requirement(
+                tender_id=44,
+                requirement_id=210,
+                data=_TENDERS_MODULE.ConsolidatedRequirementReviewRequest(
+                    action="edit",
+                    notes="Edited manually.",
+                    edit=_TENDERS_MODULE.ConsolidatedRequirementEditRequest(
+                        canonical_text="Provide updated insurance certificate.",
+                        priority="high",
+                        conditions=["Before contract signature"],
+                    ),
+                ),
+                current_user=current_user,
+                db=fake_db,
+            )
+
+        review_mock.assert_awaited_once_with(
+            fake_db,
+            requirement=requirement,
+            actor_id=23,
+            action="edit",
+            notes="Edited manually.",
+            edit_payload={
+                "canonical_text": "Provide updated insurance certificate.",
+                "priority": "high",
+                "conditions": ["Before contract signature"],
+            },
+        )
+        self.assertEqual(response.review.action, "edit")
+
+    async def test_review_tender_consolidated_requirement_loads_merge_target(self) -> None:
+        tender = Tender(id=45, title="Complex Tender", status=TenderStatus.ACTIVE)
+        current_user = SimpleNamespace(id=24, role="admin")
+        fake_db = SimpleNamespace()
+        source = ConsolidatedRequirement(
+            id=211,
+            tender_id=45,
+            canonical_text="Provide insurance.",
+            normalized_text="provide insurance",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        target = ConsolidatedRequirement(
+            id=212,
+            tender_id=45,
+            canonical_text="Provide cyber insurance certificate.",
+            normalized_text="provide cyber insurance certificate",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        review = RequirementReview(
+            id=802,
+            tender_id=45,
+            consolidated_requirement_id=211,
+            actor_id=24,
+            action="merge",
+            previous_review_state="pending",
+            new_review_state="merged",
+            notes="Merged duplicate.",
+            metadata_json={"merge_target": {"id": 212}},
+        )
+        load_mock = AsyncMock(side_effect=[source, target])
+
+        with (
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(
+                _TENDERS_MODULE,
+                "get_consolidated_requirement_for_tender",
+                load_mock,
+            ),
+            patch.object(
+                _TENDERS_MODULE,
+                "apply_requirement_review",
+                AsyncMock(return_value=(source, review)),
+            ) as review_mock,
+        ):
+            response = await review_tender_consolidated_requirement(
+                tender_id=45,
+                requirement_id=211,
+                data=_TENDERS_MODULE.ConsolidatedRequirementReviewRequest(
+                    action="merge",
+                    notes="Merged duplicate.",
+                    target_requirement_id=212,
+                ),
+                current_user=current_user,
+                db=fake_db,
+            )
+
+        self.assertEqual(load_mock.await_count, 2)
+        review_mock.assert_awaited_once_with(
+            fake_db,
+            requirement=source,
+            actor_id=24,
+            action="merge",
+            notes="Merged duplicate.",
+            target_requirement=target,
+        )
+        self.assertEqual(response.review.new_review_state, "merged")
+
     async def test_review_tender_consolidated_requirement_relation_returns_updated_relation_and_review(self) -> None:
         tender = Tender(id=42, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=21, role="admin")
@@ -816,6 +1099,89 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.relation.review_state, "approved")
         self.assertEqual(response.review.new_review_state, "approved")
         self.assertEqual(response.review.notes, "Dependency confirmed manually.")
+
+    async def test_review_tender_consolidated_requirement_relation_passes_editorial_edit_payload(self) -> None:
+        tender = Tender(id=46, title="Complex Tender", status=TenderStatus.ACTIVE)
+        current_user = SimpleNamespace(id=25, role="admin")
+        fake_db = SimpleNamespace()
+        relation = RequirementRelation(
+            id=602,
+            tender_id=46,
+            source_requirement_id=251,
+            target_requirement_id=252,
+            relation_type="depends_on",
+            confidence=0.42,
+            review_state="pending",
+        )
+        relation.source_requirement = ConsolidatedRequirement(
+            id=251,
+            tender_id=46,
+            canonical_text="Clarification updates the insurance certificate.",
+            normalized_text="clarification updates the insurance certificate",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        relation.target_requirement = ConsolidatedRequirement(
+            id=252,
+            tender_id=46,
+            canonical_text="Submit insurance certificate.",
+            normalized_text="submit insurance certificate",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+        )
+        review = RequirementRelationReview(
+            id=702,
+            tender_id=46,
+            requirement_relation_id=602,
+            actor_id=25,
+            action="edit",
+            previous_review_state="pending",
+            new_review_state="pending",
+            notes="Corrected relation type.",
+            metadata_json={"edit": {"fields": ["relation_type"]}},
+        )
+
+        with (
+            patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
+            patch.object(
+                _TENDERS_MODULE,
+                "get_requirement_relation_for_tender",
+                AsyncMock(return_value=relation),
+            ),
+            patch.object(
+                _TENDERS_MODULE,
+                "apply_requirement_relation_review",
+                AsyncMock(return_value=(relation, review)),
+            ) as review_mock,
+        ):
+            response = await review_tender_consolidated_requirement_relation(
+                tender_id=46,
+                relation_id=602,
+                data=_TENDERS_MODULE.RequirementRelationReviewRequest(
+                    action="edit",
+                    notes="Corrected relation type.",
+                    edit=_TENDERS_MODULE.RequirementRelationEditRequest(
+                        relation_type="overrides",
+                        confidence=0.9,
+                    ),
+                ),
+                current_user=current_user,
+                db=fake_db,
+            )
+
+        review_mock.assert_awaited_once_with(
+            fake_db,
+            relation=relation,
+            actor_id=25,
+            action="edit",
+            notes="Corrected relation type.",
+            edit_payload={"relation_type": "overrides", "confidence": 0.9},
+        )
+        self.assertEqual(response.review.action, "edit")
 
     async def test_review_tender_consolidated_requirement_rejects_missing_row(self) -> None:
         tender = Tender(id=38, title="Complex Tender", status=TenderStatus.ACTIVE)

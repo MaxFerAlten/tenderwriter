@@ -604,6 +604,38 @@ describe('tenderApi', () => {
         );
     });
 
+    it('preserves the async tender import response contract returning 202 Accepted', async () => {
+        const file = new File(['demo'], 'rfp.pdf', { type: 'application/pdf' });
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                message: 'Document uploaded and ingestion queued successfully',
+                tender_id: 12,
+                document_id: 99,
+                task_id: 'task-abc',
+                filename: 'rfp.pdf',
+                status: 'queued',
+            }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await tenderApi.uploadDocument(12, file);
+
+        expect(response.tender_id).toBe(12);
+        expect(response.document_id).toBe(99);
+        expect(response.status).toBe('queued');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/import',
+            expect.objectContaining({
+                method: 'POST',
+                body: expect.any(FormData),
+            })
+        );
+    });
+
+
+
     it('loads staged requirement extraction runs through the tender pipeline endpoint', async () => {
         fetchMock.mockResolvedValue(
             new Response(JSON.stringify({
@@ -765,6 +797,69 @@ describe('tenderApi', () => {
                 body: JSON.stringify({
                     action: 'approve',
                     notes: 'Verified manually.',
+                }),
+            })
+        );
+    });
+
+    it('sends editorial requirement review payloads', async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(JSON.stringify({
+                requirement: {
+                    id: 91,
+                    canonical_text: 'Submit updated insurance certificate.',
+                    normalized_text: 'submit updated insurance certificate',
+                    category: 'Section 7',
+                    priority: 'high',
+                    confidence: 0.83,
+                    source_count: 1,
+                    consolidation_method: 'staging_v1',
+                    review_state: 'pending',
+                    graph_state: 'active',
+                    parent_requirement_id: null,
+                    parent_requirement_key: null,
+                    applicability: {},
+                    conditions: ['Before contract signature'],
+                    exceptions: [],
+                    metadata_json: { review_count: 2 },
+                    created_at: '2026-04-04T10:30:00Z',
+                },
+                review: {
+                    id: 302,
+                    action: 'edit',
+                    previous_review_state: 'approved',
+                    new_review_state: 'pending',
+                    notes: 'Edited manually.',
+                    actor_id: 1,
+                    metadata_json: { edit: { fields: ['canonical_text'] } },
+                    created_at: '2026-04-04T11:05:00Z',
+                },
+            }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        await tenderApi.reviewConsolidatedRequirement(12, 91, {
+            action: 'edit',
+            notes: 'Edited manually.',
+            edit: {
+                canonical_text: 'Submit updated insurance certificate.',
+                conditions: ['Before contract signature'],
+            },
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/consolidated-requirements/91/review',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'edit',
+                    notes: 'Edited manually.',
+                    edit: {
+                        canonical_text: 'Submit updated insurance certificate.',
+                        conditions: ['Before contract signature'],
+                    },
                 }),
             })
         );
@@ -1019,6 +1114,63 @@ describe('tenderApi', () => {
         );
     });
 
+    it('sends editorial relation review payloads', async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(JSON.stringify({
+                relation: {
+                    id: 503,
+                    source_requirement_id: 91,
+                    source_requirement_text: 'Clarification updates the insurance certificate.',
+                    target_requirement_id: 92,
+                    target_requirement_text: 'Submit insurance certificate.',
+                    relation_type: 'overrides',
+                    confidence: 0.9,
+                    review_state: 'pending',
+                    graph_state: 'active',
+                    metadata_json: { review_count: 2 },
+                    created_at: '2026-04-04T11:25:00Z',
+                },
+                review: {
+                    id: 902,
+                    action: 'edit',
+                    previous_review_state: 'approved',
+                    new_review_state: 'pending',
+                    notes: 'Corrected relation type.',
+                    actor_id: 1,
+                    metadata_json: { edit: { fields: ['relation_type'] } },
+                    created_at: '2026-04-04T11:35:00Z',
+                },
+            }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        await tenderApi.reviewConsolidatedRequirementRelation(12, 503, {
+            action: 'edit',
+            notes: 'Corrected relation type.',
+            edit: {
+                relation_type: 'overrides',
+                confidence: 0.9,
+            },
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/tenders/12/consolidated-requirements/relations/503/review',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'edit',
+                    notes: 'Corrected relation type.',
+                    edit: {
+                        relation_type: 'overrides',
+                        confidence: 0.9,
+                    },
+                }),
+            })
+        );
+    });
+
     it('records coordination risk through the tender lifecycle endpoint', async () => {
         fetchMock.mockResolvedValue(
             new Response(JSON.stringify({ status: 'accepted', event_type: 'coordination_risk_raised', tender_id: 12, payload: {} }), {
@@ -1185,6 +1337,32 @@ describe('ragApi streaming', () => {
         );
 
         expect(tokens).toEqual([' Prima riga\nseconda riga', ' ']);
+    });
+
+    it('throws when the SSE stream emits a structured error event', async () => {
+        fetchMock.mockResolvedValue(
+            createStreamResponse([
+                'data: {"type":"error","message":"NoValidHarFileError: No .har file found"}\n\n',
+                'data: [DONE]\n\n',
+            ])
+        );
+
+        await expect(
+            ragApi.streamQuery({ query: 'assignment', mode: 'qa' })
+        ).rejects.toThrow('NoValidHarFileError: No .har file found');
+    });
+
+    it('throws when the SSE stream emits a nested provider error payload', async () => {
+        fetchMock.mockResolvedValue(
+            createStreamResponse([
+                'data: {"error":{"message":"NoValidHarFileError: No .har file found"},"model":"gpt-4o-mini"}\n\n',
+                'data: [DONE]\n\n',
+            ])
+        );
+
+        await expect(
+            ragApi.streamQuery({ query: 'assignment', mode: 'qa' })
+        ).rejects.toThrow('NoValidHarFileError: No .har file found');
     });
 
     it('passes save_history=false through JSON queries used for technical source fetches', async () => {

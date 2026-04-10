@@ -12,10 +12,11 @@ declare global {
 }
 
 export interface OnlyOfficeEditorProps {
-    mode?: 'proposal' | 'library' | 'create';
+    mode?: 'proposal' | 'library' | 'create' | 'tender_document';
     proposalId?: number;
     sectionId?: number;
     libraryBlockId?: number;
+    documentId?: number;
     title: string;
     onlyofficeApiUrl: string;
     onConfigLoaded?: (config: any) => void;
@@ -98,6 +99,7 @@ export default function OnlyOfficeEditor({
     proposalId,
     sectionId,
     libraryBlockId,
+    documentId,
     title,
     onlyofficeApiUrl,
     onConfigLoaded,
@@ -113,8 +115,9 @@ export default function OnlyOfficeEditor({
     const editorContainerId = useMemo(() => {
         if (mode === 'create') return `onlyoffice-editor-create-${Math.random().toString(36).substring(7)}`;
         if (mode === 'library') return `onlyoffice-editor-lib-${libraryBlockId}`;
+        if (mode === 'tender_document') return `onlyoffice-editor-doc-${documentId}`;
         return `onlyoffice-editor-${proposalId}-${sectionId}`;
-    }, [mode, libraryBlockId, proposalId, sectionId]);
+    }, [mode, libraryBlockId, documentId, proposalId, sectionId]);
 
     // Initialize editor when script is loaded
     const initEditor = useCallback(async () => {
@@ -136,6 +139,8 @@ export default function OnlyOfficeEditor({
                 apiUrl = '/api/onlyoffice/document/create';
             } else if (mode === 'library') {
                 apiUrl = `/api/onlyoffice/document/library/${libraryBlockId}`;
+            } else if (mode === 'tender_document') {
+                apiUrl = `/api/onlyoffice/document/tender/${documentId}`;
             } else {
                 apiUrl = `/api/onlyoffice/document/proposal/${proposalId}/${sectionId}`;
             }
@@ -241,6 +246,7 @@ export default function OnlyOfficeEditor({
         proposalId,
         sectionId,
         libraryBlockId,
+        documentId,
         editorContainerId,
         onConfigLoaded,
         onDocumentStateChange,

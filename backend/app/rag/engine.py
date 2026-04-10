@@ -147,6 +147,26 @@ EXPANDED_EXPLANATION_QUERY_RE = re.compile(
     r"\b(?:riassum\w*|spiega\w*|descriv\w*|sintetizza\w*|summari[sz]\w*|explain\w*|describe\w*)\b",
     re.IGNORECASE,
 )
+SUMMARY_INTENT_QUERY_RE = re.compile(
+    r"\b(?:riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*)\b",
+    re.IGNORECASE,
+)
+STRUCTURED_OVERVIEW_QUERY_RE = re.compile(
+    r"\b(?:elenco|lista|punti?\s+chiave|dettagliat\w*|complet\w*|strutturat\w*)\b",
+    re.IGNORECASE,
+)
+TENDER_DOCUMENT_QUERY_RE = re.compile(
+    r"\b(?:gara|bando|capitolato|disciplinare|documentazione|procedura|lotto|tender|rfp|avviso)\b",
+    re.IGNORECASE,
+)
+RETRIEVAL_INTENT_STRIP_RE = re.compile(
+    r"\b(?:fai|fammi|dammi|fornisci|scrivi|prepara|genera|riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|elenco|lista|punti?\s+chiave|dettagliat\w*|complet\w*|strutturat\w*)\b",
+    re.IGNORECASE,
+)
+RETRIEVAL_STOPWORD_STRIP_RE = re.compile(
+    r"\b(?:un|una|uno|del|della|delle|dei|degli|dello|di|da|dei|della)\b",
+    re.IGNORECASE,
+)
 TERMINAL_SENTENCE_CHARS = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
 INCOMPLETE_SENTENCE_END_TOKENS = {
     "a",
@@ -202,6 +222,12 @@ LENGTH_META_PARAGRAPH_RE = re.compile(
 APPROX_WORDS_PER_LINE = 8
 LONG_FORM_INTERNAL_PASS_TOKEN_CAP = 512
 LOCAL_CONTEXT_CHAR_BUDGET = 4500
+SUMMARY_LOCAL_CONTEXT_CHAR_BUDGET = 12000
+BROAD_SUMMARY_TOP_K_FINAL = 10
+DETAILED_OVERVIEW_TOP_K_FINAL = 12
+DETAILED_OVERVIEW_RETRIEVAL_TOP_K = 30
+BROAD_SUMMARY_DEFAULT_MAX_TOKENS = 768
+DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS = 1024
 DEANONYMIZED_STREAM_FLUSH_CHARS = 96
 DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS = 220
 
@@ -477,10 +503,10 @@ class HybridRAGEngine:
         self,
         rag_query: RAGQuery,
     ) -> RetrievedContext:
-        retrieval_query = self._query_text_without_length_request(rag_query.text)
+        retrieval_query = self._query_text_for_retrieval(rag_query.text)
         retriever_selection = self._resolve_retriever_selection(rag_query)
         rank_fusion = self._build_rank_fusion_for_query(rag_query)
-        retrieval_top_k = rag_query.retrieval_top_k
+        retrieval_top_k = self._effective_retrieval_top_k(rag_query)
 
         dense_results = []
         sparse_results = []
@@ -528,17 +554,18 @@ class HybridRAGEngine:
             except Exception as e:
                 logger.warning("Graph retrieval failed", error=str(e))
 
+        top_k_final = self._effective_final_top_k(rag_query)
+
         fused = rank_fusion.fuse(
             dense_results=dense_results,
             sparse_results=sparse_results,
             graph_results=graph_results,
             top_k=max(
-                rag_query.top_k or settings.rag_top_k_final,
+                top_k_final,
                 retrieval_top_k or settings.rag_top_k_dense,
             ),
         )
 
-        top_k_final = rag_query.top_k or settings.rag_top_k_final
         reranked = []
         if fused:
             try:
@@ -679,7 +706,11 @@ class HybridRAGEngine:
             target_provider=rag_query.external_target_provider,
         )
 
-        fitted_context = self._fit_context_for_generator(context, generator=generator)
+        fitted_context = self._fit_context_for_generator(
+            context,
+            generator=generator,
+            rag_query=rag_query,
+        )
         if fitted_context != context:
             context = fitted_context
             variables = {**variables, "context": fitted_context}
@@ -832,7 +863,11 @@ class HybridRAGEngine:
             _anonymizer_enabled,
         ) = await self._prepare_generation_route(rag_query, variables)
 
-        fitted_context = self._fit_context_for_generator(context, generator=generator)
+        fitted_context = self._fit_context_for_generator(
+            context,
+            generator=generator,
+            rag_query=rag_query,
+        )
         if fitted_context != context:
             context = fitted_context
             stream_variables = {**stream_variables, "context": fitted_context}
@@ -1597,17 +1632,23 @@ class HybridRAGEngine:
         context: str,
         *,
         generator: Generator,
+        rag_query: RAGQuery | None = None,
     ) -> str:
         if self._supports_large_long_form_generation(generator):
             return context
 
         normalized = (context or "").strip()
-        if len(normalized) <= LOCAL_CONTEXT_CHAR_BUDGET:
+        context_budget = (
+            SUMMARY_LOCAL_CONTEXT_CHAR_BUDGET
+            if rag_query and self._query_requests_broad_summary(rag_query.text)
+            else LOCAL_CONTEXT_CHAR_BUDGET
+        )
+        if len(normalized) <= context_budget:
             return normalized
 
         parts = [part.strip() for part in normalized.split("\n\n---\n\n") if part.strip()]
         if not parts:
-            return normalized[:LOCAL_CONTEXT_CHAR_BUDGET].rstrip()
+            return normalized[:context_budget].rstrip()
 
         kept_parts: list[str] = []
         current_len = 0
@@ -1615,8 +1656,8 @@ class HybridRAGEngine:
 
         for part in parts:
             additional = len(part) if not kept_parts else separator_len + len(part)
-            if current_len + additional > LOCAL_CONTEXT_CHAR_BUDGET:
-                remaining = LOCAL_CONTEXT_CHAR_BUDGET - current_len
+            if current_len + additional > context_budget:
+                remaining = context_budget - current_len
                 if not kept_parts and remaining > 120:
                     kept_parts.append(part[:remaining].rstrip())
                 break
@@ -1625,7 +1666,7 @@ class HybridRAGEngine:
             current_len += additional
 
         fitted = "\n\n---\n\n".join(kept_parts).strip()
-        return fitted or normalized[:LOCAL_CONTEXT_CHAR_BUDGET].rstrip()
+        return fitted or normalized[:context_budget].rstrip()
 
     def _clean_continuation_text(self, text: str) -> str:
         lines = (text or "").strip().splitlines()
@@ -1785,6 +1826,52 @@ class HybridRAGEngine:
     def _query_requests_expanded_explanation(self, query_text: str) -> bool:
         return bool(EXPANDED_EXPLANATION_QUERY_RE.search(query_text or ""))
 
+    def _query_requests_broad_summary(self, query_text: str) -> bool:
+        normalized_query = self._query_text_without_length_request(query_text or "")
+        return bool(
+            (SUMMARY_INTENT_QUERY_RE.search(normalized_query) or STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query))
+            and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
+        )
+
+    def _query_requests_structured_tender_overview(self, query_text: str) -> bool:
+        normalized_query = self._query_text_without_length_request(query_text or "")
+        return bool(
+            STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query)
+            and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
+        )
+
+    def _effective_final_top_k(self, rag_query: RAGQuery) -> int:
+        requested_top_k = rag_query.top_k or settings.rag_top_k_final
+        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_structured_tender_overview(
+            rag_query.text
+        ):
+            return max(requested_top_k, DETAILED_OVERVIEW_TOP_K_FINAL)
+        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_broad_summary(
+            rag_query.text
+        ):
+            return max(requested_top_k, BROAD_SUMMARY_TOP_K_FINAL)
+        return requested_top_k
+
+    def _effective_retrieval_top_k(self, rag_query: RAGQuery) -> int | None:
+        requested_retrieval_top_k = rag_query.retrieval_top_k
+        if requested_retrieval_top_k is not None:
+            return requested_retrieval_top_k
+        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_structured_tender_overview(
+            rag_query.text
+        ):
+            return max(settings.rag_top_k_dense, DETAILED_OVERVIEW_RETRIEVAL_TOP_K)
+        return None
+
+    def _query_text_for_retrieval(self, query_text: str) -> str:
+        normalized_query = self._query_text_without_length_request(query_text or "")
+        if not self._query_requests_broad_summary(normalized_query):
+            return normalized_query
+
+        stripped = RETRIEVAL_INTENT_STRIP_RE.sub(" ", normalized_query)
+        stripped = RETRIEVAL_STOPWORD_STRIP_RE.sub(" ", stripped)
+        stripped = re.sub(r"\s+", " ", stripped).strip(" ,.;:-")
+        return stripped or normalized_query
+
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
         length_target = self._extract_requested_length_target(rag_query.text)
         constraints = [
@@ -1823,6 +1910,16 @@ class HybridRAGEngine:
                 constraints.append(
                     "Se il contesto lo consente, sviluppa una risposta un po' piu completa del minimo, coprendo definizione, contesto e punti chiave invece di fermarti a una sola frase breve."
                 )
+            if self._query_requests_broad_summary(rag_query.text):
+                constraints.append(
+                    "Se il contesto recuperato copre solo una parte della gara, fornisci comunque la migliore sintesi possibile dei punti emersi e aggiungi solo alla fine una breve nota sugli aspetti non coperti, invece di fermarti a dire soltanto che il contesto e insufficiente."
+                )
+            if self._query_requests_structured_tender_overview(rag_query.text):
+                constraints.extend([
+                    "Organizza la risposta come elenco strutturato della gara, privilegiando: oggetto, stazione appaltante, procedura, criterio di aggiudicazione, durata, documenti citati, requisiti o obblighi principali emersi dal contesto.",
+                    "Non copiare segnaposto, slash isolati, date incomplete o frammenti OCR palesemente rotti.",
+                    "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
+                ])
 
         if self._query_requests_math_rendering(rag_query.text):
             constraints.extend([
@@ -1968,7 +2065,8 @@ class HybridRAGEngine:
         else:
             return "general_qa", {
                 "context": context,
-                "query": rag_query.text,
+                "query": self._query_text_without_length_request(rag_query.text),
+                "response_constraints": self._build_response_constraints(rag_query),
             }
 
     # ──────────────────────────────────────────────

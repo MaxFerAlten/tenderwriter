@@ -186,15 +186,40 @@ async function streamRequest(
             return true;
         }
 
-        try {
-            const parsed = JSON.parse(payload) as { type?: string; token?: string };
-            if (parsed.type === 'token' && typeof parsed.token === 'string') {
-                options.onToken?.(parsed.token);
-                return false;
+        let parsedPayload:
+            | {
+                type?: string;
+                token?: string;
+                message?: string;
+                detail?: string;
+                error?: { message?: string; detail?: string } | string;
             }
+            | null = null;
+        try {
+            parsedPayload = JSON.parse(payload) as {
+                type?: string;
+                token?: string;
+                message?: string;
+                detail?: string;
+                error?: { message?: string; detail?: string } | string;
+            };
         } catch {
             options.onToken?.(payload);
             return false;
+        }
+
+        if (parsedPayload.type === 'token' && typeof parsedPayload.token === 'string') {
+            options.onToken?.(parsedPayload.token);
+            return false;
+        }
+        const nestedError = typeof parsedPayload.error === 'string'
+            ? parsedPayload.error
+            : parsedPayload.error?.message || parsedPayload.error?.detail;
+        const streamError =
+            (parsedPayload.type === 'error' && (parsedPayload.message || parsedPayload.detail))
+            || nestedError;
+        if (typeof streamError === 'string' && streamError.trim()) {
+            throw new Error(streamError.trim());
         }
 
         return false;
@@ -364,7 +389,11 @@ export const tenderApi = {
         request<TenderLifecycleActionResponse>(`/tenders/${id}/clarifications/${clarificationId}/close`, { method: 'POST', body: data }),
     fullchat: (id: number) =>
         request<{ mm_url: string; mm_token: string; channel_name: string; mm_user_id: string; auth_mode: string }>(`/tenders/${id}/fullchat`, { method: 'POST' }),
-    uploadDocument: async (id: number, file: File) => {
+        activate: (id: number) => request<TenderDetail>(`/tenders/${id}/activate`, { method: 'POST' }),
+    listDocuments: (id: number) => request<DocumentResponse[]>(`/tenders/${id}/documents`),
+    getDocument: (id: number, documentId: number) => request<DocumentResponse>(`/tenders/${id}/documents/${documentId}`),
+    streamDocumentStatusUrl: (id: number, documentId: number) => `${API_BASE}/tenders/${id}/documents/${documentId}/stream`,
+    uploadDocument: async (id: number, file: File): Promise<TenderImportResponse> => {
         const formData = new FormData();
         formData.append('file', file);
         const token = await resolveAuthToken();
@@ -378,7 +407,7 @@ export const tenderApi = {
             const error = await response.json().catch(() => ({ detail: 'Upload error' }));
             throw new Error(error.detail || `HTTP ${response.status}`);
         }
-        return response.json();
+        return response.json() as Promise<TenderImportResponse>;
     },
 };
 
@@ -1173,6 +1202,8 @@ export interface Tender {
     created_by_name: string | null;
     requirement_count?: number;
     lifecycle_metadata?: TenderLifecycleMetadata | null;
+    ingestion_status?: string | null;
+    ingestion_progress?: number | null;
 }
 
 export interface TenderDetail extends Tender {
@@ -1187,6 +1218,7 @@ export interface Requirement {
     compliance_status: string;
     mapped_section_id: number | null;
     mapped_section_title: string | null;
+    coverage_source?: string;
 }
 
 export interface RequirementCandidateRecord {
@@ -1218,6 +1250,60 @@ export interface RequirementExtractionRunListResponse {
     total_runs: number;
 }
 
+export interface TenderImportWarning {
+    code: string;
+    title?: string | null;
+    message: string;
+    source?: string | null;
+    severity?: string | null;
+    status_code?: number | null;
+    fallback_applied?: boolean;
+    fallback_method?: string | null;
+    fallback_message?: string | null;
+}
+
+export interface TenderImportStats {
+    status: string;
+    chunks?: number;
+    entities?: number;
+    point_ids?: string[];
+    requirements_detected?: number;
+    requirement_candidates?: Array<Record<string, unknown>>;
+    requirement_extraction_method?: string;
+    sections_detected?: number;
+    graph_synced?: number | boolean | null;
+    warnings: TenderImportWarning[];
+    [key: string]: unknown;
+}
+
+export interface TenderImportResponse {
+    message: string;
+    tender_id: number;
+    document_id: number;
+    task_id: string;
+    filename: string;
+    status: string;
+}
+
+export interface DocumentResponse {
+    id: number;
+    filename: string;
+    file_url: string;
+    doc_type: string | null;
+    file_size: number | null;
+    mime_type: string | null;
+    ingestion_status: string;
+    ingestion_progress: number | null;
+    chunk_count: number;
+    error_message: string | null;
+    source_kind: string | null;
+    ingestion_started_at: string | null;
+    ingestion_completed_at: string | null;
+    ingestion_job_id: string | null;
+    created_at: string | null;
+}
+
+
 export interface ConsolidatedRequirementRecord {
     id: number;
     canonical_text: string;
@@ -1229,6 +1315,11 @@ export interface ConsolidatedRequirementRecord {
     consolidation_method: string;
     review_state: string;
     graph_state: string;
+    parent_requirement_id: number | null;
+    parent_requirement_key: string | null;
+    applicability: Record<string, unknown> | null;
+    conditions: string[];
+    exceptions: string[];
     metadata_json: Record<string, unknown> | null;
     created_at: string | null;
 }
@@ -1260,6 +1351,12 @@ export interface RequirementRelationListResponse {
 export interface RequirementRelationReviewRequest {
     action: string;
     notes?: string;
+    edit?: {
+        source_requirement_id?: number;
+        target_requirement_id?: number;
+        relation_type?: string;
+        confidence?: number;
+    };
 }
 
 export interface RequirementRelationReviewRecord {
@@ -1281,6 +1378,25 @@ export interface RequirementRelationReviewActionResponse {
 export interface ConsolidatedRequirementReviewRequest {
     action: string;
     notes?: string;
+    edit?: {
+        canonical_text?: string;
+        category?: string;
+        priority?: string;
+        parent_requirement_key?: string;
+        applicability?: Record<string, unknown>;
+        conditions?: string[];
+        exceptions?: string[];
+    };
+    target_requirement_id?: number;
+    split_requirements?: Array<{
+        canonical_text: string;
+        category?: string;
+        priority?: string;
+        parent_requirement_key?: string;
+        applicability?: Record<string, unknown>;
+        conditions?: string[];
+        exceptions?: string[];
+    }>;
 }
 
 export interface RequirementReviewRecord {
@@ -2273,4 +2389,36 @@ export const dataExplorerApi = {
         request<{ nodes: Neo4jGraphNode[]; edges: Neo4jGraphEdge[] }>(
             `/data-explorer/neo4j/graph-snapshot?limit=${limit}`
         ),
+};
+
+export interface IngestionMonitorRecord {
+    id: number;
+    filename: string;
+    status: string;
+    progress: number;
+    error_message: string | null;
+    created_at: string;
+    tender_id: number | null;
+    tender_title: string | null;
+    uploaded_by: number | null;
+}
+
+export interface IngestionStats {
+    total: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    success_rate: number;
+}
+
+export const ingestionApi = {
+    list: async (status?: string): Promise<IngestionMonitorRecord[]> => {
+        const params = new URLSearchParams();
+        if (status) params.append('status', status);
+        const query = params.toString();
+        return request<IngestionMonitorRecord[]>(`/ingestions${query ? `?${query}` : ''}`);
+    },
+    getStats: async (): Promise<IngestionStats> => {
+        return request<IngestionStats>('/ingestions/stats');
+    },
 };

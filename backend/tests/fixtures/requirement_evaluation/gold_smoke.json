@@ -1,0 +1,42 @@
+{
+  "schema_version": "requirement_evaluation.gold.v1",
+  "name": "requirement-evaluation-smoke",
+  "description": "Synthetic smoke fixture for the requirement evaluation runner. Do not treat this as a real quality benchmark.",
+  "cases": [
+    {
+      "id": "smoke-iso-certification",
+      "expected_requirements": [
+        {
+          "key": "iso-27001",
+          "text": "The bidder must provide ISO 27001 certification."
+        }
+      ],
+      "predicted_requirements": [
+        {
+          "canonical_text": "The bidder must provide ISO 27001 certification.",
+          "citations": [
+            {
+              "quote": "The bidder must provide ISO 27001 certification.",
+              "source_reference": "Section 2.1"
+            }
+          ],
+          "review_state": "approved"
+        }
+      ],
+      "expected_relations": [
+        {
+          "source_text": "The clarification replaces the prior clause and requires ISO 27001 certification.",
+          "target_text": "The bidder must provide ISO 27001 certification.",
+          "relation_type": "overrides"
+        }
+      ],
+      "predicted_relations": [
+        {
+          "source_requirement_text": "The clarification replaces the prior clause and requires ISO 27001 certification.",
+          "target_requirement_text": "The bidder must provide ISO 27001 certification.",
+          "relation_type": "overrides"
+        }
+      ]
+    }
+  ]
+}

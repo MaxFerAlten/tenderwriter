@@ -32,7 +32,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db.database import get_db
 from app.db.redis import redis_client
-from app.models import Proposal, ProposalSection, ContentBlock
+from app.models import Proposal, ProposalSection, ContentBlock, Document
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import sanitize_name, get_structured_minio_path
 from app.services.compliance_observability import sync_requirement_compliance_and_gate
@@ -630,6 +630,77 @@ async def get_library_document_config(
         user_id=str(current_user.id),
         user_name=current_user.name
     )
+    
+    token = jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
+    
+    return OnlyOfficeConfigResponse(
+        config=config,
+        token=token,
+        onlyoffice_url=settings.onlyoffice_url,
+    )
+
+
+@router.get("/document/tender/{document_id}", response_model=OnlyOfficeConfigResponse)
+async def get_tender_document_config(
+    document_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a document config for OnlyOffice editor for a Tender Document (View Only).
+    """
+    result = await db.execute(
+        select(Document).where(Document.id == document_id)
+    )
+    doc_entity = result.scalar_one_or_none()
+    if not doc_entity:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if not doc_entity.storage_object_name:
+        raise HTTPException(status_code=400, detail="Document does not have an attached file")
+
+    # Generate key for cache (read-only doesn't strictly need a strict versioning since it doesn't change, but we use updated_at)
+    doc_key = _generate_library_document_key(doc_entity.id, doc_entity.updated_at or doc_entity.created_at)
+    
+    # We do NOT save it to the minio _document_store as docx bytes because it's ALREADY in MinIO in the system bucket (or tender bucket).
+    # Wait, the onlyoffice download_token uses _document_store to fetch by object name!
+    # The `serve_document` endpoint uses `_document_store.get(object_name)`. It will work!
+    
+    # Store metadata in Redis for OnlyOffice to fetch
+    await save_session_metadata(doc_key, {
+        "type": "tender_document",
+        "document_id": document_id,
+        "object_name": doc_entity.storage_object_name,
+        "owner_user_id": current_user.id,
+    })
+    
+    download_token = _build_download_token(doc_key=doc_key, user_id=current_user.id)
+    file_url = _build_signed_file_url(doc_key, download_token=download_token)
+    callback_url = f"{settings.backend_public_url}/api/onlyoffice/callback"
+    
+    config = _build_config_dict(
+        doc_key=doc_key,
+        title=doc_entity.filename,
+        file_url=file_url,
+        callback_url=callback_url,
+        user_id=str(current_user.id),
+        user_name=current_user.name
+    )
+    
+    # Force read-only override
+    config["document"]["permissions"] = {
+        "edit": False,
+        "download": True,
+        "chat": False,
+        "comment": False,
+        "fillForms": False,
+        "modifyFilter": False,
+        "modifyContentControl": False,
+        "review": False,
+        "print": True,
+        "copy": True,
+    }
+    config["editorConfig"]["mode"] = "view"
     
     token = jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
     

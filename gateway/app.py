@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -70,6 +71,7 @@ def _safe_headers(headers: dict[str, str]) -> dict[str, str]:
     hop_by_hop = {
         "connection",
         "keep-alive",
+        "host",
         "proxy-authenticate",
         "proxy-authorization",
         "te",
@@ -230,15 +232,14 @@ def _transform_llama_completion_body(body: bytes, candidate: dict, *, mode: str)
         return body
 
     model_name = payload.get("model") or candidate.get("model_name")
-    if not model_name:
-        raise ValueError("OpenAI-compatible llama targets require a model_name.")
 
     if mode == "openai_completion":
         transformed = {
-            "model": model_name,
             "prompt": payload.get("prompt", ""),
             "stream": bool(payload.get("stream", False)),
         }
+        if model_name:
+            transformed["model"] = model_name
         if payload.get("temperature") is not None:
             transformed["temperature"] = payload.get("temperature")
         if payload.get("n_predict") is not None:
@@ -248,10 +249,11 @@ def _transform_llama_completion_body(body: bytes, candidate: dict, *, mode: str)
         return json.dumps(transformed).encode("utf-8")
 
     transformed = {
-        "model": model_name,
         "messages": [{"role": "user", "content": payload.get("prompt", "")}],
         "stream": bool(payload.get("stream", False)),
     }
+    if model_name:
+        transformed["model"] = model_name
     if payload.get("temperature") is not None:
         transformed["temperature"] = payload.get("temperature")
     if payload.get("n_predict") is not None:
@@ -269,6 +271,68 @@ def _request_wants_stream(path: str, body: bytes) -> bool:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return False
     return isinstance(payload, dict) and bool(payload.get("stream"))
+
+
+def _extract_stream_error_message(chunk: bytes) -> str | None:
+    try:
+        text = chunk.decode("utf-8", "ignore")
+    except Exception:
+        return None
+
+    events = re.split(r"\r?\n\r?\n", text)
+    for raw_event in events:
+        if not raw_event.strip():
+            continue
+        data_lines = []
+        for line in raw_event.splitlines():
+            if not line.startswith("data:"):
+                continue
+            remainder = line[5:]
+            data_lines.append(remainder[1:] if remainder.startswith(" ") else remainder)
+        if not data_lines:
+            continue
+        payload = "\n".join(data_lines).strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(obj, dict):
+            error_payload = obj.get("error")
+            if isinstance(error_payload, str) and error_payload.strip():
+                return error_payload.strip()
+            if isinstance(error_payload, dict):
+                for key in ("message", "detail", "error"):
+                    candidate = error_payload.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        return candidate.strip()
+            if str(obj.get("type") or "").strip().lower() == "error":
+                for key in ("message", "detail"):
+                    candidate = obj.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        return candidate.strip()
+
+    return None
+
+
+def _should_try_next_candidate(
+    *,
+    provider: str,
+    llama_mode: str | None,
+    status_code: int,
+) -> bool:
+    if status_code in {502, 503, 504}:
+        return True
+
+    if provider in {"openrouter", "openai", "anthropic"} and status_code in {400, 401, 403, 429, 431}:
+        return True
+
+    if provider == "llama" and llama_mode in {"openai_chat", "openai_completion"} and status_code in {400, 401, 403, 429, 431}:
+        return True
+
+    return False
 
 
 async def _proxy_request(
@@ -353,7 +417,11 @@ async def _proxy_request(
                     resp = await client.send(req, stream=True)
                     last_response = resp
 
-                    if resp.status_code in {502, 503, 504}:
+                    if _should_try_next_candidate(
+                        provider=provider,
+                        llama_mode=llama_mode,
+                        status_code=resp.status_code,
+                    ):
                         if attempt < max_attempts:
                             await resp.aclose()
                             await client.aclose()
@@ -368,7 +436,11 @@ async def _proxy_request(
                         )
                         break
 
-                    if provider in {"openrouter", "openai", "anthropic"} and resp.status_code in {400, 401, 403}:
+                    if _should_try_next_candidate(
+                        provider=provider,
+                        llama_mode=llama_mode,
+                        status_code=resp.status_code,
+                    ):
                         detail = await resp.aread()
                         await resp.aclose()
                         await client.aclose()
@@ -381,9 +453,35 @@ async def _proxy_request(
                         if k.lower() in {"content-type", "cache-control"}
                     }
 
+                    upstream_iter = resp.aiter_bytes()
+                    first_chunk = b""
+                    error_message = None
+                    async for chunk in upstream_iter:
+                        if not chunk:
+                            continue
+                        first_chunk = chunk
+                        error_message = _extract_stream_error_message(chunk)
+                        break
+
+                    if error_message and _should_try_next_candidate(
+                        provider=provider,
+                        llama_mode=llama_mode,
+                        status_code=401,
+                    ):
+                        await resp.aclose()
+                        await client.aclose()
+                        last_response = Response(
+                            content=first_chunk,
+                            status_code=200,
+                            media_type=resp.headers.get("content-type"),
+                        )
+                        break
+
                     async def iter_upstream():
                         try:
-                            async for chunk in resp.aiter_bytes():
+                            if first_chunk:
+                                yield first_chunk
+                            async for chunk in upstream_iter:
                                 if chunk:
                                     yield chunk
                         finally:
@@ -408,14 +506,15 @@ async def _proxy_request(
 
                 last_response = resp
 
-                if resp.status_code in {502, 503, 504}:
+                if _should_try_next_candidate(
+                    provider=provider,
+                    llama_mode=llama_mode,
+                    status_code=resp.status_code,
+                ):
                     # Retry same target before falling back to next candidate
                     if attempt < max_attempts:
                         await asyncio.sleep(0.4 * attempt)
                         continue
-                    break
-
-                if provider in {"openrouter", "openai", "anthropic"} and resp.status_code in {400, 401, 403}:
                     break
 
                 filtered_headers = {
@@ -538,6 +637,7 @@ def _make_app(route_kind: str) -> FastAPI:
                     "via_anonymizer": settings.anonymizer_url is not None,
                     "anonymizer_url": settings.anonymizer_url,
                     "api_key": None,
+                    "provider": "llama",
                     "timeout_sec": settings.gateway_timeout,
                     "max_attempts": 2,
                 }

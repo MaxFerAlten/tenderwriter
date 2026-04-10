@@ -64,6 +64,15 @@ class _FakeDeleteResult:
 
 
 class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
+    async def _collect_streaming_body(self, response) -> str:
+        chunks: list[str] = []
+        async for item in response.body_iterator:
+            if isinstance(item, bytes):
+                chunks.append(item.decode("utf-8"))
+            else:
+                chunks.append(str(item))
+        return "".join(chunks)
+
     async def test_query_does_not_persist_history_when_disabled(self) -> None:
         engine = SimpleNamespace(
             query=AsyncMock(
@@ -168,6 +177,63 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(forwarded.temperature, 0.45)
         self.assertEqual(forwarded.retrievers, {"dense": True, "sparse": False, "graph": True})
         self.assertEqual(forwarded.fusion_weights, {"dense": 0.55, "sparse": 0.2, "graph": 0.45})
+
+    async def test_stream_query_persists_history_when_generation_succeeds(self) -> None:
+        async def _fake_query_stream(_rag_query):
+            yield "Prima parte"
+            yield " finale"
+
+        engine = SimpleNamespace(query_stream=_fake_query_stream)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rag_engine=engine)))
+        current_user = SimpleNamespace(id=7)
+        db = _FakeDb()
+
+        with (
+            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
+        ):
+            response = await rag_query(
+                data=RAGQueryRequest(query="assignment", mode="qa", stream=True),
+                request=request,
+                current_user=current_user,
+                db=db,
+            )
+
+        body = await self._collect_streaming_body(response)
+        self.assertIn("data: Prima parte", body)
+        self.assertIn("data:  finale", body)
+        self.assertIn("data: [DONE]", body)
+        self.assertEqual(len(db.added), 1)
+        self.assertEqual(getattr(db.added[0], "response", None), "Prima parte finale")
+        self.assertEqual(db.commit_calls, 1)
+
+    async def test_stream_query_emits_structured_error_and_skips_history_on_generation_failure(self) -> None:
+        async def _failing_query_stream(_rag_query):
+            raise RuntimeError("NoValidHarFileError: No .har file found")
+            yield  # pragma: no cover
+
+        engine = SimpleNamespace(query_stream=_failing_query_stream)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(rag_engine=engine)))
+        current_user = SimpleNamespace(id=7)
+        db = _FakeDb()
+
+        with (
+            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
+        ):
+            response = await rag_query(
+                data=RAGQueryRequest(query="assignment", mode="qa", stream=True),
+                request=request,
+                current_user=current_user,
+                db=db,
+            )
+
+        body = await self._collect_streaming_body(response)
+        self.assertIn('"type": "error"', body)
+        self.assertIn("NoValidHarFileError: No .har file found", body)
+        self.assertIn("data: [DONE]", body)
+        self.assertEqual(db.added, [])
+        self.assertEqual(db.commit_calls, 1)
 
     async def test_clear_search_history_deletes_only_current_user_rows(self) -> None:
         db = _FakeDb()

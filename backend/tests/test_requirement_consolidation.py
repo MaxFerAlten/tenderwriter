@@ -26,10 +26,15 @@ _SERVICE_MODULE = load_service_test_module("app.services.requirement_consolidati
 RequirementCandidate = _MODELS.RequirementCandidate
 RequirementExtractionRun = _MODELS.RequirementExtractionRun
 build_consolidated_requirement_payloads = _SERVICE_MODULE.build_consolidated_requirement_payloads
+build_consolidated_requirement_payloads_from_legacy = (
+    _SERVICE_MODULE.build_consolidated_requirement_payloads_from_legacy
+)
 rebuild_consolidated_requirements_from_staging = _SERVICE_MODULE.rebuild_consolidated_requirements_from_staging
 build_requirement_relation_payloads = _SERVICE_MODULE.build_requirement_relation_payloads
 replace_consolidated_requirements = _SERVICE_MODULE.replace_consolidated_requirements
 replace_requirement_relations = _SERVICE_MODULE.replace_requirement_relations
+TenderRequirement = _MODELS.TenderRequirement
+ComplianceStatus = _MODELS.ComplianceStatus
 
 
 class _FakeAsyncSession:
@@ -174,6 +179,15 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             ["clarification", "disciplinare"],
         )
         self.assertTrue(payloads[0]["metadata_json"]["cross_document"])
+        self.assertEqual(
+            payloads[0]["metadata_json"]["document_precedence"]["primary_role"],
+            "clarification",
+        )
+        self.assertEqual(
+            payloads[0]["metadata_json"]["document_precedence"]["superseded_sources"][0]["document_role"],
+            "disciplinare",
+        )
+        self.assertEqual(payloads[0]["metadata_json"]["source_variants"]["variant_count"], 2)
 
     async def test_build_requirement_relation_payloads_infers_override_from_clarification(self) -> None:
         base_requirement = _MODELS.ConsolidatedRequirement(
@@ -239,6 +253,118 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             "lexical_override_v1",
         )
         self.assertIn("annex", relation_payloads[0]["metadata_json"]["shared_terms"])
+        self.assertEqual(relation_payloads[0]["metadata_json"]["precedence_policy"], "document_role_v1")
+
+    async def test_build_requirement_relation_payloads_flags_cross_document_override_conflict(self) -> None:
+        base_requirement = _MODELS.ConsolidatedRequirement(
+            id=421,
+            tender_id=78,
+            canonical_text="Maintain support service for 12 months.",
+            normalized_text="maintain support service for 12 months",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            metadata_json={
+                "primary_source": {
+                    "document_role": "capitolato",
+                    "precedence_rank": 40,
+                    "source_document_ref": "tenders/78/capitolato.pdf",
+                }
+            },
+        )
+        clarification_requirement = _MODELS.ConsolidatedRequirement(
+            id=422,
+            tender_id=78,
+            canonical_text="The clarification replaces the prior clause: maintain support service for 24 months.",
+            normalized_text="the clarification replaces the prior clause maintain support service for 24 months",
+            priority="high",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            metadata_json={
+                "primary_source": {
+                    "document_role": "clarification",
+                    "precedence_rank": 60,
+                    "source_document_ref": "tenders/78/chiarimenti-01.pdf",
+                }
+            },
+        )
+
+        relation_payloads = build_requirement_relation_payloads(
+            [base_requirement, clarification_requirement]
+        )
+
+        self.assertEqual(len(relation_payloads), 1)
+        self.assertEqual(relation_payloads[0]["relation_type"], "overrides")
+        self.assertEqual(relation_payloads[0]["source_requirement_id"], 422)
+        self.assertEqual(relation_payloads[0]["target_requirement_id"], 421)
+        self.assertEqual(
+            relation_payloads[0]["metadata_json"]["inference_method"],
+            "explicit_precedence_override_v1",
+        )
+        self.assertIn("numeric_mismatch", relation_payloads[0]["metadata_json"]["conflict_signals"])
+        self.assertIn("replaces", relation_payloads[0]["metadata_json"]["override_markers"])
+        self.assertEqual(
+            relation_payloads[0]["metadata_json"]["source_document_ref"],
+            "tenders/78/chiarimenti-01.pdf",
+        )
+        self.assertEqual(
+            relation_payloads[0]["metadata_json"]["target_document_ref"],
+            "tenders/78/capitolato.pdf",
+        )
+
+    async def test_build_requirement_relation_payloads_infers_conflict_for_same_precedence_documents(self) -> None:
+        first_annex_requirement = _MODELS.ConsolidatedRequirement(
+            id=431,
+            tender_id=78,
+            canonical_text="Provide warranty coverage for 12 months.",
+            normalized_text="provide warranty coverage for 12 months",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            metadata_json={
+                "primary_source": {
+                    "document_role": "annex",
+                    "precedence_rank": 20,
+                    "source_document_ref": "tenders/78/allegato-a.pdf",
+                }
+            },
+        )
+        second_annex_requirement = _MODELS.ConsolidatedRequirement(
+            id=432,
+            tender_id=78,
+            canonical_text="Provide warranty coverage for 24 months.",
+            normalized_text="provide warranty coverage for 24 months",
+            priority="medium",
+            source_count=1,
+            consolidation_method="staging_v1",
+            review_state="pending",
+            metadata_json={
+                "primary_source": {
+                    "document_role": "annex",
+                    "precedence_rank": 20,
+                    "source_document_ref": "tenders/78/allegato-b.pdf",
+                }
+            },
+        )
+
+        relation_payloads = build_requirement_relation_payloads(
+            [first_annex_requirement, second_annex_requirement]
+        )
+
+        self.assertEqual(len(relation_payloads), 1)
+        self.assertEqual(relation_payloads[0]["relation_type"], "conflicts_with")
+        self.assertEqual(relation_payloads[0]["source_requirement_id"], 431)
+        self.assertEqual(relation_payloads[0]["target_requirement_id"], 432)
+        self.assertEqual(
+            relation_payloads[0]["metadata_json"]["inference_method"],
+            "cross_document_conflict_v1",
+        )
+        self.assertIn("numeric_mismatch", relation_payloads[0]["metadata_json"]["conflict_signals"])
+        self.assertEqual(relation_payloads[0]["metadata_json"]["source_role"], "annex")
+        self.assertEqual(relation_payloads[0]["metadata_json"]["target_role"], "annex")
 
     async def test_build_requirement_relation_payloads_infers_depends_on_from_explicit_clause(self) -> None:
         dependency_requirement = _MODELS.ConsolidatedRequirement(
@@ -357,6 +483,165 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         relation_rows = [item for item in db.added if item.__class__.__name__ == "RequirementRelation"]
         self.assertEqual(len(relation_rows), 0)
         self.assertGreaterEqual(db.flush_count, 1)
+
+    async def test_build_consolidated_requirement_payloads_skips_rejected_llm_candidates(self) -> None:
+        extraction_run = RequirementExtractionRun(id=33, tender_id=54, extraction_method="llm_v2", filename="rfp.pdf")
+        extraction_run.candidates = [
+            RequirementCandidate(
+                id=301,
+                tender_id=54,
+                extraction_run_id=33,
+                candidate_position=1,
+                source_document_ref="tenders/54/rfp.pdf",
+                source_reference="Section 1",
+                summary_text="The bidder must provide ISO 27001 certification.",
+                normalized_text="the bidder must provide iso 27001 certification",
+                priority="high",
+                confidence=0.91,
+                metadata_json={
+                    "raw_candidate": {
+                        "extraction_method": "llm_v2",
+                        "verification_state": "verified",
+                        "verification": {"state": "verified", "score": 1.0},
+                    }
+                },
+            ),
+            RequirementCandidate(
+                id=302,
+                tender_id=54,
+                extraction_run_id=33,
+                candidate_position=2,
+                source_document_ref="tenders/54/rfp.pdf",
+                source_reference="Section 2",
+                summary_text="The bidder must provide unsupported cyber insurance.",
+                normalized_text="the bidder must provide unsupported cyber insurance",
+                priority="high",
+                confidence=0.0,
+                metadata_json={
+                    "raw_candidate": {
+                        "extraction_method": "llm_v2",
+                        "verification_state": "rejected",
+                        "verification": {"state": "rejected", "score": 0.0},
+                    }
+                },
+            ),
+        ]
+
+        payloads = build_consolidated_requirement_payloads([extraction_run])
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["canonical_text"], "The bidder must provide ISO 27001 certification.")
+        self.assertEqual(payloads[0]["metadata_json"]["sources"][0]["verification"]["state"], "verified")
+
+    async def test_build_consolidated_requirement_payloads_carries_graph_v2_fields_from_llm_candidates(self) -> None:
+        extraction_run = RequirementExtractionRun(id=34, tender_id=55, extraction_method="llm_v2", filename="rfp.pdf")
+        extraction_run.candidates = [
+            RequirementCandidate(
+                id=401,
+                tender_id=55,
+                extraction_run_id=34,
+                candidate_position=1,
+                source_document_ref="tenders/55/rfp.pdf",
+                source_reference="Section 1",
+                summary_text="The bidder must provide the security plan.",
+                normalized_text="the bidder must provide the security plan",
+                priority="high",
+                confidence=0.91,
+                metadata_json={
+                    "raw_candidate": {
+                        "extraction_method": "llm_v2",
+                        "applicability": {"lot": "1", "phase": "delivery"},
+                        "conditions": ["Before service start"],
+                        "exceptions": ["Not required for optional modules"],
+                        "parent_requirement_key": "Security governance",
+                        "verification": {"state": "verified", "score": 1.0},
+                    }
+                },
+            )
+        ]
+
+        payloads = build_consolidated_requirement_payloads([extraction_run])
+
+        self.assertEqual(payloads[0]["applicability"], {"lot": "1", "phase": "delivery"})
+        self.assertEqual(payloads[0]["conditions"], ["Before service start"])
+        self.assertEqual(payloads[0]["exceptions"], ["Not required for optional modules"])
+        self.assertEqual(payloads[0]["parent_requirement_key"], "Security governance")
+        self.assertEqual(payloads[0]["metadata_json"]["graph_v2"]["conditions"], ["Before service start"])
+
+    async def test_replace_consolidated_requirements_resolves_parent_links_and_parent_relation(self) -> None:
+        db = _FakeAsyncSession()
+
+        with patch.object(
+            _SERVICE_MODULE,
+            "_load_existing_consolidated_requirements",
+            AsyncMock(return_value=[]),
+        ):
+            rows = await replace_consolidated_requirements(
+                db,
+                tender_id=56,
+                consolidated_items=[
+                    {
+                        "canonical_text": "Security governance",
+                        "normalized_text": "security governance",
+                        "priority": "high",
+                        "source_count": 1,
+                        "consolidation_method": "staging_v1",
+                        "metadata_json": {},
+                    },
+                    {
+                        "canonical_text": "The bidder must provide the security plan.",
+                        "normalized_text": "the bidder must provide the security plan",
+                        "priority": "high",
+                        "source_count": 1,
+                        "consolidation_method": "staging_v1",
+                        "parent_requirement_key": "Security governance",
+                        "applicability": {"lot": "1"},
+                        "conditions": ["Before service start"],
+                        "exceptions": ["Optional modules excluded"],
+                        "metadata_json": {},
+                    },
+                ],
+            )
+
+        self.assertEqual(rows[1].parent_requirement_id, rows[0].id)
+        self.assertEqual(rows[1].applicability, {"lot": "1"})
+        self.assertEqual(rows[1].conditions, ["Before service start"])
+        self.assertEqual(rows[1].exceptions, ["Optional modules excluded"])
+
+        relation_payloads = build_requirement_relation_payloads(rows)
+        parent_relations = [item for item in relation_payloads if item["relation_type"] == "parent_of"]
+        self.assertEqual(len(parent_relations), 1)
+        self.assertEqual(parent_relations[0]["source_requirement_id"], rows[0].id)
+        self.assertEqual(parent_relations[0]["target_requirement_id"], rows[1].id)
+
+    async def test_build_consolidated_requirement_payloads_from_legacy_preserves_source_audit(self) -> None:
+        payloads = build_consolidated_requirement_payloads_from_legacy(
+            [
+                TenderRequirement(
+                    id=301,
+                    tender_id=53,
+                    requirement_text="Submit insurance certificate.",
+                    category="Legacy Section 7",
+                    priority="high",
+                    compliance_status=ComplianceStatus.NOT_ADDRESSED,
+                ),
+                TenderRequirement(
+                    id=302,
+                    tender_id=53,
+                    requirement_text="Submit insurance certificate.",
+                    category="Legacy Section 7",
+                    priority="medium",
+                    compliance_status=ComplianceStatus.NOT_ADDRESSED,
+                ),
+            ]
+        )
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["consolidation_method"], "legacy_tender_requirements_v1")
+        self.assertEqual(payloads[0]["source_count"], 2)
+        self.assertEqual(payloads[0]["priority"], "high")
+        self.assertEqual(payloads[0]["metadata_json"]["legacy_requirement_ids"], [301, 302])
+        self.assertEqual(payloads[0]["metadata_json"]["sources"][0]["legacy_requirement_id"], 301)
 
     async def test_replace_consolidated_requirements_preserves_review_state_and_obsoletes_missing_rows(self) -> None:
         db = _FakeAsyncSession()

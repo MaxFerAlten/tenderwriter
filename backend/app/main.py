@@ -120,7 +120,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, anonymizer_admin, auth, chat, content_library, data_explorer, gateway_admin, hooks_api, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
+    from app.api import admin, anonymizer_admin, auth, chat, content_library, data_explorer, gateway_admin, hooks_api, ingestions, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -140,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(data_explorer.router, prefix="/api/data-explorer", tags=["Data Explorer"])
     app.include_router(hooks_api.router, prefix="/api/hooks", tags=["Hooks"])
+    app.include_router(ingestions.router, prefix="/api/ingestions", tags=["Ingestion Monitor"])
 
     @app.get("/health", tags=["Health"])
     async def health_check():

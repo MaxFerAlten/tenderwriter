@@ -15,6 +15,7 @@ from app.models import (
     RequirementCandidate,
     RequirementExtractionRun,
     RequirementRelation,
+    TenderRequirement,
 )
 from app.services.requirement_candidates import list_staged_requirement_candidate_runs
 from app.services.tender_requirements import normalize_requirement_text
@@ -63,6 +64,45 @@ _DEPENDENCY_MARKERS: tuple[str, ...] = (
     "subordinato a",
 )
 _DEPENDENCY_OVERLAP_THRESHOLD = 0.6
+_GRAPH_V2_METADATA_KEYS = ("applicability", "conditions", "exceptions", "parent_requirement_key")
+_CONFLICT_NUMBER_RE = re.compile(
+    r"\b\d+(?:[,.]\d+)?(?:\s?(?:%|months?|mesi|days?|giorni|hours?|ore|years?|anni))?\b"
+)
+_NEGATION_MARKERS: tuple[str, ...] = (
+    "not required",
+    "not mandatory",
+    "shall not",
+    "must not",
+    "non richiesto",
+    "non obbligatorio",
+    "non deve",
+    "non dovra",
+    "facoltativo",
+    "optional",
+)
+_MANDATORY_MARKERS: tuple[str, ...] = (
+    "required",
+    "mandatory",
+    "must",
+    "shall",
+    "deve",
+    "dovra",
+    "obbligatorio",
+    "richiesto",
+)
+_OVERRIDE_MARKERS: tuple[str, ...] = (
+    "replaces",
+    "supersedes",
+    "overrides",
+    "amends",
+    "updates",
+    "instead of",
+    "sostituisce",
+    "rettifica",
+    "modifica",
+    "aggiorna",
+    "prevale",
+)
 
 
 def _normalize_priority(value: Any) -> str:
@@ -116,14 +156,102 @@ def _extract_document_role_hint(*payloads: Mapping[str, Any] | None) -> str | No
     return None
 
 
+def _raw_candidate_payload(candidate: RequirementCandidate) -> Mapping[str, Any]:
+    if isinstance(candidate.metadata_json, Mapping):
+        raw_candidate = candidate.metadata_json.get("raw_candidate") or {}
+        if isinstance(raw_candidate, Mapping):
+            return raw_candidate
+    return {}
+
+
+def _candidate_is_rejected_by_verifier(candidate: RequirementCandidate) -> bool:
+    raw_candidate = _raw_candidate_payload(candidate)
+    verification = raw_candidate.get("verification") if isinstance(raw_candidate, Mapping) else None
+    verification_state = raw_candidate.get("verification_state")
+    if isinstance(verification, Mapping):
+        verification_state = verification.get("state") or verification_state
+    return str(verification_state or "").strip().casefold() == "rejected"
+
+
+def _clean_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    cleaned: list[str] = []
+    for item in values:
+        normalized = _WHITESPACE_RE.sub(" ", str(item or "").strip())
+        if normalized and normalized not in cleaned:
+            cleaned.append(normalized)
+    return cleaned
+
+
+def _clean_applicability(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items() if item not in (None, "", [], {})}
+    if isinstance(value, list):
+        cleaned_values = _clean_text_list(value)
+        return {"values": cleaned_values} if cleaned_values else {}
+    cleaned = _WHITESPACE_RE.sub(" ", str(value or "").strip())
+    return {"text": cleaned} if cleaned else {}
+
+
+def _clean_parent_requirement_key(value: Any) -> str | None:
+    cleaned = _WHITESPACE_RE.sub(" ", str(value or "").strip())
+    return cleaned or None
+
+
+def _extract_graph_v2_payload_from_candidate(candidate: RequirementCandidate) -> dict[str, Any]:
+    raw_candidate = _raw_candidate_payload(candidate)
+    graph_payload = {
+        "applicability": _clean_applicability(raw_candidate.get("applicability")),
+        "conditions": _clean_text_list(raw_candidate.get("conditions")),
+        "exceptions": _clean_text_list(raw_candidate.get("exceptions")),
+        "parent_requirement_key": _clean_parent_requirement_key(raw_candidate.get("parent_requirement_key")),
+    }
+    return graph_payload
+
+
+def _merge_text_lists(left: Any, right: Any) -> list[str]:
+    merged = _clean_text_list(left)
+    for item in _clean_text_list(right):
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _merge_applicability(left: Any, right: Any) -> dict[str, Any]:
+    merged = _clean_applicability(left)
+    for key, value in _clean_applicability(right).items():
+        if key not in merged or not merged[key]:
+            merged[key] = value
+        elif merged[key] != value:
+            existing_values = merged[key] if isinstance(merged[key], list) else [merged[key]]
+            incoming_values = value if isinstance(value, list) else [value]
+            merged[key] = [*existing_values, *[item for item in incoming_values if item not in existing_values]]
+    return merged
+
+
+def _merge_graph_v2_payload(existing: dict[str, Any], incoming: Mapping[str, Any]) -> None:
+    existing["conditions"] = _merge_text_lists(existing.get("conditions"), incoming.get("conditions"))
+    existing["exceptions"] = _merge_text_lists(existing.get("exceptions"), incoming.get("exceptions"))
+    existing["applicability"] = _merge_applicability(existing.get("applicability"), incoming.get("applicability"))
+    if not existing.get("parent_requirement_key") and incoming.get("parent_requirement_key"):
+        existing["parent_requirement_key"] = _clean_parent_requirement_key(incoming.get("parent_requirement_key"))
+
+    metadata_json = dict(existing.get("metadata_json") or {})
+    graph_v2 = dict(metadata_json.get("graph_v2") or {})
+    for key in _GRAPH_V2_METADATA_KEYS:
+        if existing.get(key) not in (None, "", [], {}):
+            graph_v2[key] = existing[key]
+    metadata_json["graph_v2"] = graph_v2
+    existing["metadata_json"] = metadata_json
+
+
 def _infer_document_role(
     extraction_run: RequirementExtractionRun,
     candidate: RequirementCandidate,
 ) -> str:
-    raw_candidate = {}
-    if isinstance(candidate.metadata_json, Mapping):
-        raw_candidate = candidate.metadata_json.get("raw_candidate") or {}
-    raw_candidate = raw_candidate if isinstance(raw_candidate, Mapping) else {}
+    raw_candidate = _raw_candidate_payload(candidate)
 
     hinted_role = _extract_document_role_hint(
         raw_candidate,
@@ -165,7 +293,8 @@ def _build_source_payload(
     candidate: RequirementCandidate,
 ) -> dict[str, Any]:
     document_role = _infer_document_role(extraction_run, candidate)
-    return {
+    raw_candidate = _raw_candidate_payload(candidate)
+    payload = {
         "candidate_id": candidate.id,
         "extraction_run_id": extraction_run.id,
         "source_document_ref": candidate.source_document_ref or extraction_run.source_document_ref,
@@ -177,6 +306,10 @@ def _build_source_payload(
         "precedence_rank": _DOCUMENT_ROLE_RANK.get(document_role, _DOCUMENT_ROLE_RANK["other"]),
         "summary_text": str(candidate.summary_text or "").strip(),
     }
+    verification = raw_candidate.get("verification")
+    if isinstance(verification, Mapping):
+        payload["verification"] = dict(verification)
+    return payload
 
 
 def _merge_graph_metadata(
@@ -224,6 +357,12 @@ def _refresh_metadata(existing: dict[str, Any]) -> None:
         for index, source in enumerate(sources):
             source["is_primary"] = index == 0
 
+    variant_summaries: list[str] = []
+    for source in sources:
+        summary_text = _WHITESPACE_RE.sub(" ", str(source.get("summary_text") or "").strip())
+        if summary_text and summary_text not in variant_summaries:
+            variant_summaries.append(summary_text)
+
     metadata_json["sources"] = sources
     metadata_json["primary_source"] = primary_source
     metadata_json["source_document_roles"] = document_roles
@@ -231,6 +370,37 @@ def _refresh_metadata(existing: dict[str, Any]) -> None:
     metadata_json["cross_document"] = len(document_refs) > 1
     metadata_json["merge_kind"] = "cross_document_duplicate" if len(document_refs) > 1 else "single_document"
     metadata_json["precedence_policy"] = _PRECEDENCE_POLICY_VERSION
+    metadata_json["document_precedence"] = {
+        "policy": _PRECEDENCE_POLICY_VERSION,
+        "primary_role": primary_source.get("document_role") if isinstance(primary_source, Mapping) else None,
+        "primary_precedence_rank": (
+            primary_source.get("precedence_rank") if isinstance(primary_source, Mapping) else None
+        ),
+        "primary_source_document_ref": (
+            primary_source.get("source_document_ref") if isinstance(primary_source, Mapping) else None
+        ),
+        "ordered_roles": document_roles,
+        "superseded_sources": [
+            {
+                "document_role": source.get("document_role") or "other",
+                "precedence_rank": source.get("precedence_rank"),
+                "source_document_ref": source.get("source_document_ref"),
+                "source_reference": source.get("source_reference"),
+                "summary_text": source.get("summary_text"),
+            }
+            for source in sources[1:]
+        ],
+        "resolution": (
+            "source_precedence"
+            if len(sources) > 1 and len({source.get("precedence_rank") for source in sources}) > 1
+            else "same_precedence_or_single_source"
+        ),
+    }
+    metadata_json["source_variants"] = {
+        "variant_count": len(variant_summaries),
+        "has_variants": len(variant_summaries) > 1,
+        "examples": variant_summaries[:5],
+    }
     existing["metadata_json"] = metadata_json
 
 
@@ -246,6 +416,112 @@ def _extract_primary_document_role(requirement: ConsolidatedRequirement) -> str:
     if role:
         return role
     return "other"
+
+
+def _requirement_relation_text(requirement: ConsolidatedRequirement) -> str:
+    return normalize_requirement_text(requirement.normalized_text or requirement.canonical_text or "")
+
+
+def _extract_primary_document_ref(requirement: ConsolidatedRequirement) -> str | None:
+    primary_source = _extract_primary_source(requirement)
+    ref = primary_source.get("source_document_ref")
+    return str(ref).strip() if ref else None
+
+
+def _requirements_are_cross_document(
+    left_requirement: ConsolidatedRequirement,
+    right_requirement: ConsolidatedRequirement,
+) -> bool:
+    left_ref = _extract_primary_document_ref(left_requirement)
+    right_ref = _extract_primary_document_ref(right_requirement)
+    if left_ref and right_ref:
+        return left_ref != right_ref
+    return _extract_primary_document_role(left_requirement) != _extract_primary_document_role(right_requirement)
+
+
+def _contains_marker(value: str, markers: Sequence[str]) -> bool:
+    return any(marker in value for marker in markers)
+
+
+def _extract_override_markers(*requirements: ConsolidatedRequirement) -> list[str]:
+    text = " ".join(_requirement_relation_text(requirement) for requirement in requirements)
+    return [marker for marker in _OVERRIDE_MARKERS if marker in text]
+
+
+def _extract_conflict_signals(
+    left_requirement: ConsolidatedRequirement,
+    right_requirement: ConsolidatedRequirement,
+) -> list[str]:
+    left_text = _requirement_relation_text(left_requirement)
+    right_text = _requirement_relation_text(right_requirement)
+    signals: list[str] = []
+
+    left_numbers = set(_CONFLICT_NUMBER_RE.findall(left_text))
+    right_numbers = set(_CONFLICT_NUMBER_RE.findall(right_text))
+    if left_numbers and right_numbers and left_numbers != right_numbers:
+        signals.append("numeric_mismatch")
+
+    left_negated = _contains_marker(left_text, _NEGATION_MARKERS)
+    right_negated = _contains_marker(right_text, _NEGATION_MARKERS)
+    left_mandatory = _contains_marker(left_text, _MANDATORY_MARKERS)
+    right_mandatory = _contains_marker(right_text, _MANDATORY_MARKERS)
+    if left_negated != right_negated and (left_mandatory or right_mandatory or left_negated or right_negated):
+        signals.append("polarity_mismatch")
+
+    return signals
+
+
+def _relation_document_metadata(
+    source_requirement: ConsolidatedRequirement,
+    target_requirement: ConsolidatedRequirement,
+    *,
+    source_role: str,
+    target_role: str,
+    source_rank: int,
+    target_rank: int,
+) -> dict[str, Any]:
+    return {
+        "precedence_policy": _PRECEDENCE_POLICY_VERSION,
+        "source_role": source_role,
+        "target_role": target_role,
+        "source_precedence_rank": source_rank,
+        "target_precedence_rank": target_rank,
+        "source_document_ref": _extract_primary_document_ref(source_requirement),
+        "target_document_ref": _extract_primary_document_ref(target_requirement),
+    }
+
+
+def _requirement_parent_lookup_keys(requirement: ConsolidatedRequirement) -> set[str]:
+    keys = {
+        normalize_requirement_text(requirement.normalized_text or requirement.canonical_text or ""),
+        normalize_requirement_text(requirement.canonical_text or ""),
+        str(requirement.id or "").strip().casefold(),
+    }
+    metadata_json = requirement.metadata_json if isinstance(requirement.metadata_json, Mapping) else {}
+    graph_v2 = metadata_json.get("graph_v2") if isinstance(metadata_json.get("graph_v2"), Mapping) else {}
+    for key in ("requirement_key", "parent_requirement_key"):
+        value = graph_v2.get(key)
+        if value:
+            keys.add(normalize_requirement_text(str(value)))
+    return {key for key in keys if key}
+
+
+def _resolve_parent_requirement_links(requirements: Sequence[ConsolidatedRequirement]) -> None:
+    lookup: dict[str, ConsolidatedRequirement] = {}
+    for requirement in requirements:
+        for key in _requirement_parent_lookup_keys(requirement):
+            lookup.setdefault(key, requirement)
+
+    for requirement in requirements:
+        parent_key = _clean_parent_requirement_key(getattr(requirement, "parent_requirement_key", None))
+        if not parent_key:
+            requirement.parent_requirement_id = None
+            continue
+        parent = lookup.get(normalize_requirement_text(parent_key))
+        if parent is None or parent is requirement or not getattr(parent, "id", None):
+            requirement.parent_requirement_id = None
+            continue
+        requirement.parent_requirement_id = parent.id
 
 
 def _tokenize_relation_text(value: str | None) -> set[str]:
@@ -313,11 +589,27 @@ def build_requirement_relation_payloads(
     relation_items: list[dict[str, Any]] = []
     ordered_requirements = list(requirements)
 
+    for child_requirement in ordered_requirements:
+        parent_requirement_id = int(getattr(child_requirement, "parent_requirement_id", None) or 0)
+        child_requirement_id = int(getattr(child_requirement, "id", None) or 0)
+        if not parent_requirement_id or not child_requirement_id or parent_requirement_id == child_requirement_id:
+            continue
+        relation_items.append(
+            {
+                "source_requirement_id": parent_requirement_id,
+                "target_requirement_id": child_requirement_id,
+                "relation_type": "parent_of",
+                "confidence": 1.0,
+                "metadata_json": {
+                    "inference_method": "explicit_parent_requirement_key_v1",
+                    "parent_requirement_key": getattr(child_requirement, "parent_requirement_key", None),
+                },
+            }
+        )
+
     for index, left_requirement in enumerate(ordered_requirements):
         left_id = getattr(left_requirement, "id", None)
-        left_text = normalize_requirement_text(
-            left_requirement.normalized_text or left_requirement.canonical_text or ""
-        )
+        left_text = _requirement_relation_text(left_requirement)
         if not left_id or not left_text:
             continue
 
@@ -326,19 +618,41 @@ def build_requirement_relation_payloads(
 
         for right_requirement in ordered_requirements[index + 1:]:
             right_id = getattr(right_requirement, "id", None)
-            right_text = normalize_requirement_text(
-                right_requirement.normalized_text or right_requirement.canonical_text or ""
-            )
+            right_text = _requirement_relation_text(right_requirement)
             if not right_id or not right_text or left_text == right_text:
                 continue
 
             right_role = _extract_primary_document_role(right_requirement)
             right_rank = _DOCUMENT_ROLE_RANK.get(right_role, _DOCUMENT_ROLE_RANK["other"])
-            if left_rank == right_rank:
-                continue
 
             overlap, shared_tokens = _relation_overlap(left_requirement, right_requirement)
             if overlap < _RELATION_OVERLAP_THRESHOLD:
+                continue
+
+            conflict_signals = _extract_conflict_signals(left_requirement, right_requirement)
+            if left_rank == right_rank:
+                if conflict_signals and _requirements_are_cross_document(left_requirement, right_requirement):
+                    relation_items.append(
+                        {
+                            "source_requirement_id": left_requirement.id,
+                            "target_requirement_id": right_requirement.id,
+                            "relation_type": "conflicts_with",
+                            "confidence": round(overlap, 4),
+                            "metadata_json": {
+                                "inference_method": "cross_document_conflict_v1",
+                                "shared_terms": shared_tokens,
+                                "conflict_signals": conflict_signals,
+                                **_relation_document_metadata(
+                                    left_requirement,
+                                    right_requirement,
+                                    source_role=left_role,
+                                    target_role=right_role,
+                                    source_rank=left_rank,
+                                    target_rank=right_rank,
+                                ),
+                            },
+                        }
+                    )
                 continue
 
             if left_rank > right_rank:
@@ -356,6 +670,7 @@ def build_requirement_relation_payloads(
                 target_role = left_role
                 target_rank = left_rank
 
+            override_markers = _extract_override_markers(source_requirement, target_requirement)
             relation_items.append(
                 {
                     "source_requirement_id": source_requirement.id,
@@ -363,12 +678,20 @@ def build_requirement_relation_payloads(
                     "relation_type": "overrides",
                     "confidence": round(overlap, 4),
                     "metadata_json": {
-                        "inference_method": "lexical_override_v1",
+                        "inference_method": (
+                            "explicit_precedence_override_v1" if override_markers else "lexical_override_v1"
+                        ),
                         "shared_terms": shared_tokens,
-                        "source_role": source_role,
-                        "target_role": target_role,
-                        "source_precedence_rank": source_rank,
-                        "target_precedence_rank": target_rank,
+                        "conflict_signals": conflict_signals,
+                        "override_markers": override_markers,
+                        **_relation_document_metadata(
+                            source_requirement,
+                            target_requirement,
+                            source_role=source_role,
+                            target_role=target_role,
+                            source_rank=source_rank,
+                            target_rank=target_rank,
+                        ),
                     },
                 }
             )
@@ -445,12 +768,15 @@ def build_consolidated_requirement_payloads(
             key=lambda candidate: (candidate.candidate_position or 0, candidate.id or 0),
         )
         for candidate in ordered_candidates:
+            if _candidate_is_rejected_by_verifier(candidate):
+                continue
             normalized_text = normalize_requirement_text(candidate.normalized_text or candidate.summary_text or "")
             canonical_text = str(candidate.summary_text or "").strip()
             if not normalized_text or not canonical_text:
                 continue
 
             source_payload = _build_source_payload(extraction_run, candidate)
+            graph_v2_payload = _extract_graph_v2_payload_from_candidate(candidate)
 
             existing = consolidated_by_text.get(normalized_text)
             if existing is None:
@@ -463,15 +789,21 @@ def build_consolidated_requirement_payloads(
                     "source_count": 1,
                     "consolidation_method": "staging_v1",
                     "review_state": "pending",
+                    "applicability": graph_v2_payload["applicability"],
+                    "conditions": graph_v2_payload["conditions"],
+                    "exceptions": graph_v2_payload["exceptions"],
+                    "parent_requirement_key": graph_v2_payload["parent_requirement_key"],
                     "metadata_json": {
                         "sources": [source_payload],
                         "extraction_run_ids": [extraction_run.id],
                     },
                 }
+                _merge_graph_v2_payload(consolidated_by_text[normalized_text], graph_v2_payload)
                 _refresh_metadata(consolidated_by_text[normalized_text])
                 continue
 
             existing["source_count"] += 1
+            _merge_graph_v2_payload(existing, graph_v2_payload)
             if (
                 candidate.confidence is not None
                 and (existing["confidence"] is None or candidate.confidence > existing["confidence"])
@@ -502,6 +834,74 @@ def build_consolidated_requirement_payloads(
                     existing["category"] = candidate.category
             elif not existing.get("category") and candidate.category:
                 existing["category"] = candidate.category
+
+    consolidated_items = list(consolidated_by_text.values())
+    consolidated_items.sort(
+        key=lambda item: (-_PRIORITY_RANK[item["priority"]], item["canonical_text"].casefold()),
+    )
+    return consolidated_items
+
+
+def _build_legacy_source_payload(requirement: TenderRequirement) -> dict[str, Any]:
+    return {
+        "legacy_requirement_id": requirement.id,
+        "source_document_ref": None,
+        "source_reference": requirement.category,
+        "filename": None,
+        "priority": _normalize_priority(requirement.priority),
+        "confidence": None,
+        "document_role": "other",
+        "precedence_rank": _DOCUMENT_ROLE_RANK["other"],
+        "summary_text": str(requirement.requirement_text or "").strip(),
+        "compliance_status": getattr(requirement.compliance_status, "value", requirement.compliance_status),
+    }
+
+
+def build_consolidated_requirement_payloads_from_legacy(
+    requirements: Sequence[TenderRequirement],
+) -> list[dict[str, Any]]:
+    """Convert legacy tender_requirements rows into graph-ready payloads."""
+
+    consolidated_by_text: dict[str, dict[str, Any]] = {}
+    for requirement in sorted(list(requirements or []), key=lambda item: (item.id or 0)):
+        normalized_text = normalize_requirement_text(requirement.requirement_text or "")
+        canonical_text = str(requirement.requirement_text or "").strip()
+        if not normalized_text or not canonical_text:
+            continue
+
+        source_payload = _build_legacy_source_payload(requirement)
+        existing = consolidated_by_text.get(normalized_text)
+        if existing is None:
+            consolidated_by_text[normalized_text] = {
+                "canonical_text": canonical_text,
+                "normalized_text": normalized_text,
+                "category": requirement.category,
+                "priority": _normalize_priority(requirement.priority),
+                "confidence": None,
+                "source_count": 1,
+                "consolidation_method": "legacy_tender_requirements_v1",
+                "review_state": "pending",
+                "metadata_json": {
+                    "sources": [source_payload],
+                    "legacy_requirement_ids": [requirement.id],
+                },
+            }
+            _refresh_metadata(consolidated_by_text[normalized_text])
+            continue
+
+        existing["source_count"] += 1
+        if _PRIORITY_RANK[_normalize_priority(requirement.priority)] > _PRIORITY_RANK[existing["priority"]]:
+            existing["priority"] = _normalize_priority(requirement.priority)
+        metadata_json = dict(existing.get("metadata_json") or {})
+        sources = list(metadata_json.get("sources") or [])
+        sources.append(source_payload)
+        legacy_requirement_ids = list(metadata_json.get("legacy_requirement_ids") or [])
+        if requirement.id not in legacy_requirement_ids:
+            legacy_requirement_ids.append(requirement.id)
+        metadata_json["sources"] = sources
+        metadata_json["legacy_requirement_ids"] = legacy_requirement_ids
+        existing["metadata_json"] = metadata_json
+        _refresh_metadata(existing)
 
     consolidated_items = list(consolidated_by_text.values())
     consolidated_items.sort(
@@ -565,6 +965,10 @@ async def replace_consolidated_requirements(
             existing_row.consolidation_method = str(item.get("consolidation_method") or consolidation_method)
             existing_row.review_state = str(existing_row.review_state or review_state)
             existing_row.graph_state = _ACTIVE_GRAPH_STATE
+            existing_row.parent_requirement_key = _clean_parent_requirement_key(item.get("parent_requirement_key"))
+            existing_row.applicability = _clean_applicability(item.get("applicability"))
+            existing_row.conditions = _clean_text_list(item.get("conditions"))
+            existing_row.exceptions = _clean_text_list(item.get("exceptions"))
             existing_row.metadata_json = _merge_graph_metadata(
                 existing_row.metadata_json if isinstance(existing_row.metadata_json, Mapping) else None,
                 fresh_metadata,
@@ -584,6 +988,10 @@ async def replace_consolidated_requirements(
             consolidation_method=str(item.get("consolidation_method") or consolidation_method),
             review_state=review_state,
             graph_state=_ACTIVE_GRAPH_STATE,
+            parent_requirement_key=_clean_parent_requirement_key(item.get("parent_requirement_key")),
+            applicability=_clean_applicability(item.get("applicability")),
+            conditions=_clean_text_list(item.get("conditions")),
+            exceptions=_clean_text_list(item.get("exceptions")),
             metadata_json=_merge_graph_metadata(
                 None,
                 fresh_metadata,
@@ -607,6 +1015,8 @@ async def replace_consolidated_requirements(
             reason="missing_from_latest_rebuild",
         )
 
+    await db.flush()
+    _resolve_parent_requirement_links(rows)
     await db.flush()
     return rows
 
@@ -707,6 +1117,34 @@ async def rebuild_consolidated_requirements_from_staging(
         limit_runs=limit_runs,
     )
     consolidated_items = build_consolidated_requirement_payloads(extraction_runs)
+    consolidated_rows = await replace_consolidated_requirements(
+        db,
+        tender_id=tender_id,
+        consolidated_items=consolidated_items,
+    )
+    relation_items = build_requirement_relation_payloads(consolidated_rows)
+    await replace_requirement_relations(
+        db,
+        tender_id=tender_id,
+        relation_items=relation_items,
+    )
+    return consolidated_rows
+
+
+async def rebuild_consolidated_requirements_from_legacy(
+    db: AsyncSession,
+    *,
+    tender_id: int,
+) -> list[ConsolidatedRequirement]:
+    """Rebuild consolidated requirements for a tender from legacy materialized rows."""
+
+    result = await db.execute(
+        select(TenderRequirement)
+        .where(TenderRequirement.tender_id == tender_id)
+        .order_by(TenderRequirement.id.asc())
+    )
+    legacy_requirements = list(result.scalars().all())
+    consolidated_items = build_consolidated_requirement_payloads_from_legacy(legacy_requirements)
     consolidated_rows = await replace_consolidated_requirements(
         db,
         tender_id=tender_id,

@@ -127,6 +127,12 @@ class Settings(BaseSettings):
     rag_dense_weight: float = 0.4
     rag_sparse_weight: float = 0.3
     rag_graph_weight: float = 1.5
+    requirement_extraction_llm_v2_enabled: bool = False
+    requirement_extraction_llm_v2_rollout_percent: int = 100
+    requirement_extraction_llm_v2_tender_ids: str = ""
+    requirement_extraction_llm_v2_blocked_tender_ids: str = ""
+    requirement_extraction_llm_v2_max_sections: int = 12
+    requirement_extraction_llm_v2_max_tokens: int = 2048
 
     # --- Chunking ---
     chunk_min_size: int = 200

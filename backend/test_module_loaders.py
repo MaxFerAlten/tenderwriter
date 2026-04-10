@@ -156,8 +156,93 @@ def _build_fake_kpi_module():
     return fake_kpi
 
 
-def _build_fake_compliance_module():
+def _build_fake_compliance_module(models_module=None):
     fake_compliance = types.ModuleType("app.services.compliance_observability")
+
+    @dataclass
+    class _ComplianceRequirementCoverage:
+        id: int
+        requirement_text: str
+        category: str | None
+        priority: str
+        compliance_status: object
+        proposal_section_id: int | None = None
+        proposal_section_title: str | None = None
+        coverage_source: str = "legacy"
+
+    def _source_payloads(metadata_json):
+        if not isinstance(metadata_json, dict):
+            return []
+        payloads = []
+        primary_source = metadata_json.get("primary_source")
+        if isinstance(primary_source, dict):
+            payloads.append(primary_source)
+        payloads.extend(source for source in metadata_json.get("sources") or [] if isinstance(source, dict))
+        return payloads
+
+    def _coverage_from_legacy(requirement):
+        mapped_section = getattr(requirement, "proposal_section", None)
+        return _ComplianceRequirementCoverage(
+            id=int(getattr(requirement, "id", 0) or 0),
+            requirement_text=str(getattr(requirement, "requirement_text", "") or ""),
+            category=getattr(requirement, "category", None),
+            priority=str(getattr(requirement, "priority", None) or "medium"),
+            compliance_status=getattr(requirement, "compliance_status", None),
+            proposal_section_id=getattr(requirement, "proposal_section_id", None),
+            proposal_section_title=getattr(mapped_section, "title", None) if mapped_section else None,
+            coverage_source="legacy",
+        )
+
+    def _build_compliance_requirement_coverage(tender):
+        legacy_requirements = list(getattr(tender, "requirements", None) or [])
+        active_consolidated = [
+            requirement
+            for requirement in list(getattr(tender, "consolidated_requirements", None) or [])
+            if str(getattr(requirement, "graph_state", None) or "active").casefold() == "active"
+        ]
+        if not any(str(getattr(requirement, "review_state", None) or "pending").casefold() == "approved" for requirement in active_consolidated):
+            return [_coverage_from_legacy(requirement) for requirement in legacy_requirements]
+
+        legacy_by_id = {
+            int(getattr(requirement, "id")): requirement
+            for requirement in legacy_requirements
+            if getattr(requirement, "id", None) is not None
+        }
+        not_addressed = getattr(models_module, "ComplianceStatus", SimpleNamespace(NOT_ADDRESSED="not_addressed")).NOT_ADDRESSED
+        coverage_items = []
+        for requirement in active_consolidated:
+            is_approved = str(getattr(requirement, "review_state", None) or "pending").casefold() == "approved"
+            legacy_requirement = None
+            for payload in _source_payloads(getattr(requirement, "metadata_json", None)):
+                legacy_id = payload.get("legacy_requirement_id")
+                if legacy_id is not None and int(legacy_id) in legacy_by_id:
+                    legacy_requirement = legacy_by_id[int(legacy_id)]
+                    break
+            mapped_section = getattr(legacy_requirement, "proposal_section", None) if legacy_requirement else None
+            coverage_items.append(
+                _ComplianceRequirementCoverage(
+                    id=int(getattr(requirement, "id", 0) or 0),
+                    requirement_text=str(getattr(requirement, "canonical_text", "") or ""),
+                    category=getattr(requirement, "category", None)
+                    or (getattr(legacy_requirement, "category", None) if legacy_requirement else None),
+                    priority=str(
+                        getattr(requirement, "priority", None)
+                        or (getattr(legacy_requirement, "priority", None) if legacy_requirement else "medium")
+                    ),
+                    compliance_status=(
+                        getattr(legacy_requirement, "compliance_status", None)
+                        if is_approved and legacy_requirement is not None
+                        else not_addressed
+                    ),
+                    proposal_section_id=getattr(legacy_requirement, "proposal_section_id", None) if is_approved and legacy_requirement else None,
+                    proposal_section_title=getattr(mapped_section, "title", None) if is_approved and mapped_section else None,
+                    coverage_source="consolidated_approved" if is_approved else "consolidated_review_pending",
+                )
+            )
+        return coverage_items
+
+    fake_compliance.ComplianceRequirementCoverage = _ComplianceRequirementCoverage
+    fake_compliance.build_compliance_requirement_coverage = Mock(side_effect=_build_compliance_requirement_coverage)
     fake_compliance.sync_requirement_compliance_and_gate = AsyncMock(return_value=[])
     return fake_compliance
 
@@ -212,7 +297,7 @@ def load_tenders_test_modules():
         "app.api.auth": _build_fake_auth_dependency_module(),
         "app.services.chat": _build_fake_chat_module(),
         "app.services.kpi_reason_engine": _build_fake_kpi_module(),
-        "app.services.compliance_observability": _build_fake_compliance_module(),
+        "app.services.compliance_observability": _build_fake_compliance_module(models_module),
         "app.services.requirement_candidates": _build_fake_requirement_candidates_module(),
         "app.services.requirement_consolidation": _build_fake_requirement_consolidation_module(),
         "app.services.requirement_review": _build_fake_requirement_review_module(),

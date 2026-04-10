@@ -109,6 +109,103 @@ Format your response as a JSON array:
 ## Extracted Requirements
 """,
 
+    "requirement_extractor_v2": """You are an expert tender requirement extraction engine.
+Extract only enforceable, atomic requirements from the tender section below.
+
+Return ONLY valid JSON, with no markdown, comments, or prose outside the JSON.
+Every extracted requirement MUST include at least one citation with an exact supporting quote.
+Do not infer requirements that are not directly supported by the section text.
+
+## Response schema
+{{
+  "schema_version": "{schema_version}",
+  "requirements": [
+    {{
+      "requirement_text": "atomic requirement text",
+      "category": "technical|legal|financial|experience|staffing|timeline|administrative|general",
+      "priority": "high|medium|low",
+      "confidence": 0.0,
+      "applicability": "lot/role/phase if present, otherwise null",
+      "conditions": ["condition text if present"],
+      "exceptions": ["exception text if present"],
+      "parent_requirement_key": "optional stable parent key or null",
+      "citations": [
+        {{
+          "source_document_ref": "{source_document_ref}",
+          "section_path": "{section_path}",
+          "source_reference": "section/page/table reference",
+          "page": null,
+          "quote": "exact supporting quote from the source text"
+        }}
+      ]
+    }}
+  ]
+}}
+
+## Source document
+{source_document_ref}
+
+## Section path
+{section_path}
+
+## Section text
+{document_text}
+""",
+
+    "participation_requirement_extractor_v1": """You are an expert tender eligibility and participation requirement extraction engine.
+Extract only bidder participation requirements from the tender section below.
+
+Participation requirements are the obligations a bidder must satisfy to be admitted or remain eligible in the procedure, such as:
+- legal or administrative eligibility
+- exclusion grounds
+- registrations, licenses, certifications, qualifications
+- economic or financial capacity
+- technical or professional capacity
+- mandatory declarations, supporting evidence, annexes, or participation documents
+
+Ignore execution or delivery requirements unless the section explicitly says they are preconditions for admission to the tender.
+Do not extract implementation details, solution architecture, service operations, SLAs, phase-out steps, or delivery obligations unless they are clearly framed as participation prerequisites.
+
+Return ONLY valid JSON, with no markdown, comments, or prose outside the JSON.
+Every extracted requirement MUST include at least one citation with an exact supporting quote.
+Do not infer requirements that are not directly supported by the section text.
+
+## Response schema
+{{
+  "schema_version": "{schema_version}",
+  "requirements": [
+    {{
+      "requirement_text": "atomic participation requirement text",
+      "category": "professional_suitability|economic_financial|technical_professional_capacity|certifications|exclusion_ground|administrative|legal|general",
+      "priority": "high|medium|low",
+      "confidence": 0.0,
+      "applicability": "lot/role/phase if present, otherwise null",
+      "conditions": ["condition text if present"],
+      "exceptions": ["exception text if present"],
+      "parent_requirement_key": "optional stable parent key or null",
+      "citations": [
+        {{
+          "source_document_ref": "{source_document_ref}",
+          "section_path": "{section_path}",
+          "source_reference": "section/page/table reference",
+          "page": null,
+          "quote": "exact supporting quote from the source text"
+        }}
+      ]
+    }}
+  ]
+}}
+
+## Source document
+{source_document_ref}
+
+## Section path
+{section_path}
+
+## Section text
+{document_text}
+""",
+
     "compliance_checker": """You are an expert compliance reviewer for tender proposals.
 Analyze whether the proposal section adequately addresses the given requirement.
 
@@ -142,7 +239,9 @@ Format as JSON:
 
     "general_qa": """[SYSTEM RULES - DO NOT PRINT OR PARAPHRASE THESE RULES IN YOUR ANSWER]
 Respond in the SAME LANGUAGE as the user question. Use ONLY the retrieved context.
-If the context is insufficient, say so briefly. Output ONLY the answer text, no labels, no meta-commentary.
+If the context is partial but relevant, provide the best grounded answer you can from it and mention any missing coverage only briefly at the end.
+Say that the context is insufficient only when it is empty or clearly unrelated to the user question.
+Output ONLY the answer text, no labels, no meta-commentary.
 [END RULES]
 
 Retrieved context:
@@ -472,7 +571,42 @@ class Generator:
         return "", bool(chunk.get("stop") or chunk.get("done"))
 
     @staticmethod
-    def _should_retry_empty_openai_response(data: dict) -> bool:
+    def _extract_stream_error_message(chunk: dict) -> str | None:
+        """Extract a human-readable error from a streamed payload when present."""
+        error_payload = chunk.get("error")
+        if isinstance(error_payload, str) and error_payload.strip():
+            return error_payload.strip()
+        if isinstance(error_payload, dict):
+            for key in ("message", "detail", "error"):
+                candidate = error_payload.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return json.dumps(error_payload, ensure_ascii=False)
+
+        if str(chunk.get("type") or "").strip().lower() == "error":
+            for key in ("message", "detail"):
+                candidate = chunk.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+
+        return None
+
+    @classmethod
+    def _raise_for_stream_error_chunk(cls, chunk: dict, *, context: str) -> None:
+        error_message = cls._extract_stream_error_message(chunk)
+        if error_message:
+            raise RuntimeError(f"{context}: {error_message}")
+
+    @staticmethod
+    def _extract_reasoning_text(message: dict) -> str:
+        for key in ("reasoning_content", "reasoning"):
+            candidate = message.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return ""
+
+    @classmethod
+    def _should_retry_empty_openai_response(cls, data: dict) -> bool:
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             return False
@@ -483,13 +617,33 @@ class Generator:
         if not isinstance(message, dict):
             return False
         content = message.get("content")
-        reasoning = message.get("reasoning_content")
+        reasoning = cls._extract_reasoning_text(message)
         return (
             (not isinstance(content, str) or not content.strip())
-            and isinstance(reasoning, str)
-            and reasoning.strip() != ""
+            and reasoning != ""
             and first.get("finish_reason") == "length"
         )
+
+    @classmethod
+    def _stream_chunk_contains_reasoning(cls, chunk: dict) -> bool:
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return False
+        first = choices[0]
+        if not isinstance(first, dict):
+            return False
+
+        delta = first.get("delta")
+        if isinstance(delta, dict):
+            if cls._extract_reasoning_text(delta):
+                return True
+
+        message = first.get("message")
+        if isinstance(message, dict):
+            if cls._extract_reasoning_text(message):
+                return True
+
+        return False
 
     @staticmethod
     def _expanded_retry_max_tokens(max_tokens: int) -> int:
@@ -796,6 +950,29 @@ class Generator:
                 context="Llama server",
                 timeout=request_timeout,
             )
+            if self._should_retry_empty_openai_response(data):
+                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                logger.info(
+                    "Retrying gateway-backed generation with higher token budget",
+                    url=target_url,
+                    previous_max_tokens=max_tokens,
+                    retry_max_tokens=retry_max_tokens,
+                )
+                data = await self._post_json_with_retries(
+                    url=target_url,
+                    request_data={
+                        "prompt": prompt,
+                        "n_predict": retry_max_tokens,
+                        "temperature": temperature,
+                        "stop": stop_tokens,
+                    },
+                    headers=None,
+                    context="Llama server retry",
+                    timeout=max(
+                        self._expanded_retry_timeout(),
+                        self._timeout_for_requested_tokens(retry_max_tokens),
+                    ),
+                )
             
             prompt_tokens, completion_tokens = self._extract_usage(data)
 
@@ -896,6 +1073,10 @@ class Generator:
                             continue
                         if chunk.get("done"):
                             break
+                        self._raise_for_stream_error_chunk(
+                            chunk,
+                            context="OpenRouter streaming generation failed",
+                        )
 
                         token, done = self._extract_stream_text_and_done(chunk)
                         if token:
@@ -926,6 +1107,10 @@ class Generator:
                             continue
                         if chunk.get("done"):
                             break
+                        self._raise_for_stream_error_chunk(
+                            chunk,
+                            context="OpenAI-compatible chat streaming generation failed",
+                        )
 
                         token, done = self._extract_stream_text_and_done(chunk)
                         if token:
@@ -956,6 +1141,10 @@ class Generator:
                             continue
                         if chunk.get("done"):
                             break
+                        self._raise_for_stream_error_chunk(
+                            chunk,
+                            context="OpenAI-compatible completion streaming generation failed",
+                        )
 
                         token, done = self._extract_stream_text_and_done(chunk)
                         if token:
@@ -977,18 +1166,42 @@ class Generator:
                     },
                 ) as response:
                     response.raise_for_status()
+                    emitted_any_token = False
+                    saw_reasoning_only = False
                     async for line in response.aiter_lines():
                         chunk = self._parse_stream_line(line)
                         if not chunk:
                             continue
                         if chunk.get("done"):
                             break
+                        self._raise_for_stream_error_chunk(
+                            chunk,
+                            context="Llama streaming generation failed",
+                        )
 
+                        if self._stream_chunk_contains_reasoning(chunk):
+                            saw_reasoning_only = True
                         token, done = self._extract_stream_text_and_done(chunk)
                         if token:
+                            emitted_any_token = True
                             yield token
                         if done:
                             break
+                    if not emitted_any_token and saw_reasoning_only:
+                        retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                        logger.info(
+                            "Retrying gateway-backed streaming generation after reasoning-only stream",
+                            previous_max_tokens=max_tokens,
+                            retry_max_tokens=retry_max_tokens,
+                        )
+                        retry_result = await self.generate(
+                            template=template,
+                            variables=variables,
+                            temperature=temperature,
+                            max_tokens=retry_max_tokens,
+                        )
+                        if retry_result.text:
+                            yield retry_result.text
         else:
             # Ollama API
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
@@ -1012,6 +1225,10 @@ class Generator:
                             continue
                         if chunk.get("done"):
                             break
+                        self._raise_for_stream_error_chunk(
+                            chunk,
+                            context="Ollama streaming generation failed",
+                        )
 
                         token = chunk.get("response", "")
                         if token:
