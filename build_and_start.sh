@@ -29,6 +29,25 @@ if [ $? -ne 0 ]; then
     echo "[ERROR] Failed to start services. Exiting."
     exit 1
 fi
-echo "[SUCCESS] All services started successfully."
+
+echo "[Wait] Waiting for containers to become healthy (this may take a minute)..."
+ATTEMPTS=0
+MAX_ATTEMPTS=60
+while docker compose --profile keycloak --profile videochat ps | grep -qi "starting"; do
+    if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+        echo "[ERROR] Timeout waiting for containers to start. Checking for unhealthy containers..."
+        break
+    fi
+    sleep 2
+    ATTEMPTS=$((ATTEMPTS+1))
+done
+
+if docker compose --profile keycloak --profile videochat ps | grep -qi "unhealthy"; then
+    echo "[ERROR] Some containers are unhealthy:"
+    docker compose --profile keycloak --profile videochat ps | grep -i "unhealthy"
+    exit 1
+fi
+
+echo "[SUCCESS] All services started and are healthy."
 echo ""
 echo "Process completed!"
