@@ -4,10 +4,10 @@ ENV MODEL_VERSION 0.22
 
 RUN mkdir /opt/vosk-model-it \
     && cd /opt/vosk-model-it \
-    && wget -q https://alphacephei.com/vosk/models/vosk-model-small-it-${MODEL_VERSION}.zip \
-    && unzip vosk-model-small-it-${MODEL_VERSION}.zip \
-    && mv vosk-model-small-it-${MODEL_VERSION} model \
-    && rm vosk-model-small-it-${MODEL_VERSION}.zip
+    && wget -q https://alphacephei.com/vosk/models/vosk-model-it-${MODEL_VERSION}.zip \
+    && unzip vosk-model-it-${MODEL_VERSION}.zip \
+    && mv vosk-model-it-${MODEL_VERSION} model \
+    && rm vosk-model-it-${MODEL_VERSION}.zip
 
 EXPOSE 2700
 
