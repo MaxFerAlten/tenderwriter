@@ -133,6 +133,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         let cancelled = false;
 
+        // Max time to wait for Keycloak silent SSO before showing login page
+        const KEYCLOAK_INIT_TIMEOUT_MS = 3_000;
+
+        function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+            return Promise.race([
+                promise,
+                new Promise<T>((resolve) => {
+                    setTimeout(() => {
+                        console.warn(`[auth] keycloak init timed out after ${ms}ms, proceeding without SSO`);
+                        resolve(fallback);
+                    }, ms);
+                }),
+            ]);
+        }
+
         const bootstrapAuth = async () => {
             const runtimeConfig = await getAuthRuntimeConfig();
             if (cancelled) {
@@ -142,7 +157,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setAuthMode(runtimeConfig.auth_mode);
 
             if (runtimeConfig.auth_mode === 'keycloak') {
-                await initKeycloakAuth(runtimeConfig, { clearLegacyToken: true });
+                await withTimeout(
+                    initKeycloakAuth(runtimeConfig, { clearLegacyToken: true }),
+                    KEYCLOAK_INIT_TIMEOUT_MS,
+                    false,
+                );
                 if (!cancelled) {
                     setIsLoading(false);
                 }
@@ -154,7 +173,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 if (restoredSession === 'keycloak') {
                     void initKeycloakAuth(runtimeConfig, { clearLegacyToken: false });
                 } else if (!restoredSession) {
-                    await initKeycloakAuth(runtimeConfig, { clearLegacyToken: false });
+                    await withTimeout(
+                        initKeycloakAuth(runtimeConfig, { clearLegacyToken: false }),
+                        KEYCLOAK_INIT_TIMEOUT_MS,
+                        false,
+                    );
                 }
                 if (!cancelled) {
                     setIsLoading(false);
