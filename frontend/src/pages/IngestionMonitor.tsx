@@ -17,6 +17,81 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { ingestionApi, IngestionMonitorRecord, IngestionStats } from '../api/client';
 
+type IngestionStageSnapshot = {
+    label?: string;
+    status?: string;
+    detail?: string;
+    stats?: Record<string, unknown>;
+};
+
+type IngestionObservability = {
+    current_stage?: string | null;
+    current_stage_label?: string | null;
+    current_stage_status?: string | null;
+    current_stage_detail?: string | null;
+    stages?: Record<string, IngestionStageSnapshot>;
+};
+
+const INGESTION_STAGE_ORDER = [
+    'download',
+    'parse',
+    'requirement_extraction',
+    'chunking',
+    'index_qdrant',
+    'sync_neo4j',
+    'compliance',
+    'completed',
+] as const;
+
+const STAGE_LABELS: Record<string, string> = {
+    download: 'Download file',
+    parse: 'Parse document',
+    requirement_extraction: 'Requirement extraction',
+    chunking: 'Chunking',
+    index_qdrant: 'Index Qdrant',
+    sync_neo4j: 'Sync Neo4j',
+    compliance: 'Compliance sync',
+    completed: 'Completed',
+};
+
+const humanizeToken = (value: string) =>
+    value
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (match) => match.toUpperCase());
+
+const getObservability = (ingestion: IngestionMonitorRecord): IngestionObservability | null => {
+    const raw = ingestion.metadata_json?.ingestion_observability;
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+    return raw as IngestionObservability;
+};
+
+const formatStageStats = (stats?: Record<string, unknown>) => {
+    if (!stats || typeof stats !== 'object') {
+        return null;
+    }
+
+    const entries = Object.entries(stats).filter(([, value]) =>
+        ['string', 'number', 'boolean'].includes(typeof value)
+    );
+    if (entries.length === 0) {
+        return null;
+    }
+
+    return entries
+        .slice(0, 3)
+        .map(([key, value]) => `${humanizeToken(key)}: ${String(value)}`)
+        .join(' · ');
+};
+
+const getStageAccent = (status?: string, isCurrent = false) => {
+    if (status === 'failed') return '#ef4444';
+    if (status === 'completed' || status === 'skipped') return '#10b981';
+    if (status === 'started' || isCurrent) return '#3b82f6';
+    return '#64748b';
+};
+
 export default function IngestionMonitor() {
     const [ingestions, setIngestions] = useState<IngestionMonitorRecord[]>([]);
     const [stats, setStats] = useState<IngestionStats | null>(null);
@@ -163,7 +238,13 @@ export default function IngestionMonitor() {
                                 </td>
                             </tr>
                         ) : (
-                            filteredIngestions.map(ing => (
+                            filteredIngestions.map(ing => {
+                                const observability = getObservability(ing);
+                                const currentStage = ing.current_stage || observability?.current_stage || null;
+                                const currentStageLabel = ing.current_stage_label || observability?.current_stage_label || null;
+                                const currentStageDetail = ing.current_stage_detail || observability?.current_stage_detail || null;
+
+                                return (
                                 <React.Fragment key={ing.id}>
                                     <tr 
                                         style={{ 
@@ -201,6 +282,11 @@ export default function IngestionMonitor() {
                                                         }} 
                                                     />
                                                 </div>
+                                                {currentStageLabel && (
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.35 }}>
+                                                        {currentStageLabel}
+                                                    </div>
+                                                )}
                                             </div>
                                         </td>
                                         <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -242,16 +328,64 @@ export default function IngestionMonitor() {
                                                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Uploader ID</div>
                                                                     <div>{ing.uploaded_by || 'Unknown'}</div>
                                                                 </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Stage</div>
+                                                                    <div>{currentStageLabel || 'N/A'}</div>
+                                                                </div>
                                                             </div>
                                                         </div>
                                                         <div>
                                                             <h4 style={{ marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>Status & Logs</h4>
                                                             {ing.status === 'failed' ? (
                                                                 <div style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', fontSize: '0.85rem' }}>
+                                                                    {currentStageLabel && (
+                                                                        <div style={{ marginBottom: '0.75rem' }}>
+                                                                            <strong>Failed Stage:</strong> {currentStageLabel}
+                                                                        </div>
+                                                                    )}
                                                                     <strong>Error Message:</strong>
                                                                     <pre style={{ marginTop: '0.5rem', whiteSpace: 'pre-wrap', fontSize: '0.8rem', opacity: 0.9 }}>
                                                                         {ing.error_message || 'No detailed error message provided by the worker.'}
                                                                     </pre>
+                                                                </div>
+                                                            ) : observability?.stages ? (
+                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                                                    {currentStageDetail && (
+                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                                                            {currentStageDetail}
+                                                                        </div>
+                                                                    )}
+                                                                    {INGESTION_STAGE_ORDER.map((stageKey) => {
+                                                                        const stage = observability.stages?.[stageKey];
+                                                                        const isCurrent = currentStage === stageKey;
+                                                                        const stageLabel = stage?.label || STAGE_LABELS[stageKey] || humanizeToken(stageKey);
+                                                                        const stageCaption =
+                                                                            stage?.detail ||
+                                                                            formatStageStats(stage?.stats) ||
+                                                                            (stage?.status ? humanizeToken(stage.status) : 'Waiting');
+                                                                        return (
+                                                                            <div key={stageKey} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                                                                                <div
+                                                                                    style={{
+                                                                                        width: '10px',
+                                                                                        height: '10px',
+                                                                                        borderRadius: '999px',
+                                                                                        marginTop: '0.35rem',
+                                                                                        flexShrink: 0,
+                                                                                        background: getStageAccent(stage?.status, isCurrent),
+                                                                                    }}
+                                                                                />
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                                                                    <div style={{ fontWeight: isCurrent ? 600 : 500 }}>
+                                                                                        {stageLabel}{isCurrent ? ' (current)' : ''}
+                                                                                    </div>
+                                                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                                                        {stageCaption}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
                                                                 </div>
                                                             ) : (
                                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -280,7 +414,7 @@ export default function IngestionMonitor() {
                                         )}
                                     </AnimatePresence>
                                 </React.Fragment>
-                            ))
+                            )})
                         )}
                     </tbody>
                 </table>

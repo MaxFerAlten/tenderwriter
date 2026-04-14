@@ -19,7 +19,10 @@ logger = structlog.get_logger()
 class ChunkMetadata:
     """Metadata attached to each chunk."""
     document_id: int | None = None
+    tender_id: int | None = None
     source_file: str = ""
+    source_document_ref: str = ""
+    filename: str = ""
     section_title: str = ""
     page_number: int | None = None
     chunk_index: int = 0

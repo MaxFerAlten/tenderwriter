@@ -739,16 +739,16 @@ class Generator:
             prompt = template.format(**variables)
             template_name = "custom"
         
-        # For general_qa, detect language and add explicit instruction
+        # For general_qa, determine system message to pass via chat completions API.
+        # Do NOT wrap with ChatML tokens — Gemma 4 uses a different template and echoes
+        # unrecognised tokens back as garbage ("own own own", "s own language://", etc.)
+        _system_message: str | None = None
         if template_name == "general_qa" and "query" in variables:
             user_query = variables["query"]
-            # Simple language detection based on common words
             if any(word in user_query.lower() for word in ["chi", "cosa", "come", "quando", "dove", "perché", "descrivi", "spiega"]):
-                # Italian detected - add strong Italian instruction
-                prompt = f"<|im_start|>system\nSei un assistente AI. Devi rispondere SEMPRE in ITALIANO.<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+                _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
             else:
-                # Default to English
-                prompt = f"<|im_start|>system\nYou are an AI assistant. Always respond in the same language as the user's question.<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+                _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
 
         logger.debug("Generating with LLM", model=self.model, template=template_name)
 
@@ -925,22 +925,34 @@ class Generator:
                 completion_tokens=completion_tokens,
                 template_used=template_name,
             )
-        # Check if using llama.cpp (OpenAI-compatible) or Ollama
+        # Internal llama.cpp server - use /v1/chat/completions so the server applies
+        # the correct model chat template automatically (e.g. Gemma's <start_of_turn>).
+        # Raw /completion with manual ChatML wrapping causes prompt leakage on non-ChatML models.
         elif "/v1" in self.base_url:
-            # Internal llama.cpp server - use /completion endpoint.
-            request_data = {
-                "prompt": prompt,
-                "n_predict": max_tokens,
-                "temperature": temperature,
-                "stop": stop_tokens,
+            _llama_messages: list[dict] = []
+            if _system_message:
+                _llama_messages.append({"role": "system", "content": _system_message})
+            _llama_messages.append({"role": "user", "content": prompt})
+            _llama_sampler: dict = {
+                "repeat_penalty": 1.1,
+                "repeat_last_n": 256,
+                "dry_multiplier": 0.8,
+                "dry_base": 1.75,
+                "dry_allowed_length": 2,
             }
-            target_url = self._legacy_llama_completion_url()
+            request_data = {
+                "messages": _llama_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                **_llama_sampler,
+            }
+            target_url = f"{self.base_url}/chat/completions"
 
             logger.debug(
-                "Sending request to llama server",
+                "Sending request to llama server (chat completions)",
                 url=target_url,
                 prompt_len=len(prompt),
-                n_predict=max_tokens,
+                max_tokens=max_tokens,
             )
 
             data = await self._post_json_with_retries(
@@ -961,10 +973,10 @@ class Generator:
                 data = await self._post_json_with_retries(
                     url=target_url,
                     request_data={
-                        "prompt": prompt,
-                        "n_predict": retry_max_tokens,
+                        "messages": _llama_messages,
+                        "max_tokens": retry_max_tokens,
                         "temperature": temperature,
-                        "stop": stop_tokens,
+                        **_llama_sampler,
                     },
                     headers=None,
                     context="Llama server retry",
@@ -1040,6 +1052,15 @@ class Generator:
             template_name = "custom"
 
         logger.debug("Streaming generation", model=self.model, template=template_name)
+
+        # Same system message extraction as generate() — needed for llama chat completions path
+        _system_message: str | None = None
+        if template_name == "general_qa" and "query" in variables:
+            user_query = variables["query"]
+            if any(word in user_query.lower() for word in ["chi", "cosa", "come", "quando", "dove", "perché", "descrivi", "spiega"]):
+                _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
+            else:
+                _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
 
         # Resolve runtime params from settings overrides
         max_tokens = max_tokens or getattr(settings, "llama_max_tokens", 256)
@@ -1151,18 +1172,26 @@ class Generator:
                             yield token
                         if done:
                             break
-        # Check if using llama.cpp or Ollama
+        # Internal llama.cpp server - use /v1/chat/completions (same rationale as generate())
         elif "/v1" in self.base_url:
+            _stream_messages: list[dict] = []
+            if _system_message:
+                _stream_messages.append({"role": "system", "content": _system_message})
+            _stream_messages.append({"role": "user", "content": prompt})
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
-                    self._legacy_llama_completion_url(),
+                    f"{self.base_url}/chat/completions",
                     json={
-                        "prompt": prompt,
-                        "n_predict": max_tokens,
+                        "messages": _stream_messages,
+                        "max_tokens": max_tokens,
                         "temperature": temperature,
                         "stream": True,
-                        "stop": stop_tokens,
+                        "repeat_penalty": 1.1,
+                        "repeat_last_n": 256,
+                        "dry_multiplier": 0.8,
+                        "dry_base": 1.75,
+                        "dry_allowed_length": 2,
                     },
                 ) as response:
                     response.raise_for_status()

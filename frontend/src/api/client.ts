@@ -1240,7 +1240,7 @@ export interface RequirementExtractionRunRecord {
     filename: string | null;
     extraction_method: string;
     candidate_count: number;
-    metadata_json: Record<string, unknown> | null;
+    metadata_json?: Record<string, unknown> | null;
     created_at: string | null;
     candidates: RequirementCandidateRecord[];
 }
@@ -1301,6 +1301,7 @@ export interface DocumentResponse {
     ingestion_completed_at: string | null;
     ingestion_job_id: string | null;
     created_at: string | null;
+    metadata_json: Record<string, unknown> | null;
 }
 
 
@@ -2401,6 +2402,11 @@ export interface IngestionMonitorRecord {
     tender_id: number | null;
     tender_title: string | null;
     uploaded_by: number | null;
+    metadata_json?: Record<string, unknown> | null;
+    current_stage?: string | null;
+    current_stage_label?: string | null;
+    current_stage_status?: string | null;
+    current_stage_detail?: string | null;
 }
 
 export interface IngestionStats {

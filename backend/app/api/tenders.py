@@ -43,6 +43,7 @@ from app.models import (
 from app.api.auth import get_current_user, UserResponse
 from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.ingestion.observability import extract_ingestion_observability
 from app.services.kpi_reason_engine import (
     build_bid_plan_event_payload,
     build_bid_team_assigned_event_payload,
@@ -134,6 +135,7 @@ class DocumentResponse(BaseModel):
     ingestion_completed_at: datetime | None = None
     ingestion_job_id: str | None = None
     created_at: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -1324,11 +1326,18 @@ async def stream_document_status(
                     break
 
                 status_val = doc.ingestion_status.value if hasattr(doc.ingestion_status, 'value') else doc.ingestion_status
+                metadata_json = dict(doc.metadata_json or {}) if isinstance(doc.metadata_json, dict) else {}
+                observability = extract_ingestion_observability(metadata_json)
                 payload = {
                     "id": doc.id,
                     "status": status_val,
                     "progress": doc.ingestion_progress,
-                    "error_message": doc.error_message
+                    "error_message": doc.error_message,
+                    "metadata_json": metadata_json,
+                    "current_stage": observability.get("current_stage"),
+                    "current_stage_label": observability.get("current_stage_label"),
+                    "current_stage_status": observability.get("current_stage_status"),
+                    "current_stage_detail": observability.get("current_stage_detail"),
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
 
@@ -2046,7 +2055,6 @@ async def close_tender_clarification(
         occurred_at=occurred_at,
     )
     return TenderLifecycleActionResponse(status="accepted", event_type="clarification_closed", tender_id=tender.id, payload={**payload, "clarification": clarification})
-
 
 
 

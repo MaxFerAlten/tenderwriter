@@ -11,6 +11,8 @@ Processes uploaded documents (PDF, DOCX, PPTX) through:
 
 from __future__ import annotations
 
+import inspect
+import os
 import re
 
 import structlog
@@ -251,6 +253,7 @@ class IngestionPipeline:
         document_id: int,
         doc_type: str = "general",
         metadata: dict | None = None,
+        progress_callback=None,
     ) -> dict:
         """
         Process a single file through the full ingestion pipeline.
@@ -271,9 +274,44 @@ class IngestionPipeline:
         logger.info("Ingesting document", file_path=file_path, doc_type=doc_type)
 
         # Step 1: Parse document
+        await self._emit_progress(
+            progress_callback,
+            stage="parse",
+            status="started",
+            detail="Parsing structured content from the source document.",
+        )
         elements = self._parse_document(file_path)
+        full_text, section_texts = self._structure_elements(elements)
+        await self._emit_progress(
+            progress_callback,
+            stage="parse",
+            status="completed",
+            detail="Document parsing completed.",
+            stats={
+                "elements_detected": len(elements),
+                "sections_detected": len(section_texts),
+            },
+        )
         if not elements:
             logger.warning("No content extracted from document", file_path=file_path)
+            await self._emit_progress(
+                progress_callback,
+                stage="requirement_extraction",
+                status="skipped",
+                detail="Skipping requirement extraction because no parsed content is available.",
+            )
+            await self._emit_progress(
+                progress_callback,
+                stage="chunking",
+                status="skipped",
+                detail="Skipping chunking because no parsed content is available.",
+            )
+            await self._emit_progress(
+                progress_callback,
+                stage="index_qdrant",
+                status="skipped",
+                detail="Skipping vector indexing because no chunks were produced.",
+            )
             return {
                 "status": "empty",
                 "chunks": 0,
@@ -283,13 +321,18 @@ class IngestionPipeline:
             }
 
         # Step 2: Build structured text from elements
-        full_text, section_texts = self._structure_elements(elements)
         requirement_candidates: list[dict] = []
         requirement_extraction_method = "none"
         ingestion_warnings: list[dict[str, object]] = []
         requirement_scope = "general"
         requirement_extractor_pipeline = "none"
         if doc_type == "tender":
+            await self._emit_progress(
+                progress_callback,
+                stage="requirement_extraction",
+                status="started",
+                detail="Extracting tender participation requirements.",
+            )
             heuristic_candidates = self.extract_requirement_candidates(elements, section_texts)
             extraction_result = await extract_tender_participation_requirements(
                 generator=getattr(self.rag_engine, "generator", None),
@@ -305,24 +348,94 @@ class IngestionPipeline:
             ingestion_warnings = list(extraction_result.warnings)
             requirement_scope = extraction_result.requirement_scope
             requirement_extractor_pipeline = extraction_result.extractor_pipeline
+            await self._emit_progress(
+                progress_callback,
+                stage="requirement_extraction",
+                status="completed",
+                detail=f"Requirement extraction completed via {requirement_extraction_method}.",
+                stats={
+                    "requirements_detected": len(requirement_candidates),
+                    "warnings_count": len(ingestion_warnings),
+                    "extraction_method": requirement_extraction_method,
+                    "requirement_scope": requirement_scope,
+                    "extractor_pipeline": requirement_extractor_pipeline,
+                },
+            )
+        else:
+            await self._emit_progress(
+                progress_callback,
+                stage="requirement_extraction",
+                status="skipped",
+                detail="Requirement extraction only runs for tender documents.",
+            )
 
         # Step 3: Chunk the text
-        from app.rag.chunker import ChunkMetadata
         from fastapi.concurrency import run_in_threadpool
-        chunk_meta = ChunkMetadata(
-            document_id=document_id,
-            source_file=file_path,
-            doc_type=doc_type,
+
+        await self._emit_progress(
+            progress_callback,
+            stage="chunking",
+            status="started",
+            detail="Chunking parsed content for retrieval and indexing.",
         )
-        chunks = await run_in_threadpool(
-            self.rag_engine.chunk_and_embed, full_text, chunk_meta
+        chunk_inputs = self._build_chunk_inputs(
+            elements,
+            file_path=file_path,
+            document_id=document_id,
+            doc_type=doc_type,
+            metadata=metadata,
+            fallback_text=full_text,
+        )
+        chunks = []
+        for chunk_text, chunk_meta in chunk_inputs:
+            chunk_batch = await run_in_threadpool(
+                self.rag_engine.chunk_and_embed,
+                chunk_text,
+                chunk_meta,
+            )
+            chunks.extend(chunk_batch)
+
+        for chunk_index, chunk in enumerate(chunks):
+            chunk.metadata.chunk_index = chunk_index
+        await self._emit_progress(
+            progress_callback,
+            stage="chunking",
+            status="completed",
+            detail="Chunk generation completed.",
+            stats={
+                "chunk_inputs": len(chunk_inputs),
+                "chunks_created": len(chunks),
+            },
         )
 
         # Step 4: Index chunks (dense + sparse)
         point_ids = []
         if chunks:
+            await self._emit_progress(
+                progress_callback,
+                stage="index_qdrant",
+                status="started",
+                detail="Indexing chunks into dense and sparse retrieval stores.",
+            )
             point_ids = await run_in_threadpool(
                 self.rag_engine.index_chunks, chunks
+            )
+            await self._emit_progress(
+                progress_callback,
+                stage="index_qdrant",
+                status="completed",
+                detail="Vector and sparse indexing completed.",
+                stats={
+                    "chunks_indexed": len(chunks),
+                    "points_indexed": len(point_ids),
+                },
+            )
+        else:
+            await self._emit_progress(
+                progress_callback,
+                stage="index_qdrant",
+                status="skipped",
+                detail="Skipping vector indexing because no chunks were created.",
             )
 
         # Step 5: Extract entities and build knowledge graph
@@ -346,6 +459,31 @@ class IngestionPipeline:
 
         logger.info("Document ingestion complete", **stats)
         return stats
+
+    async def _emit_progress(
+        self,
+        progress_callback,
+        *,
+        stage: str,
+        status: str,
+        detail: str | None = None,
+        stats: dict | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+
+        payload = {
+            "stage": stage,
+            "status": status,
+        }
+        if detail is not None:
+            payload["detail"] = detail
+        if stats:
+            payload["stats"] = stats
+
+        result = progress_callback(payload)
+        if inspect.isawaitable(result):
+            await result
 
     def extract_requirement_candidates(
         self,
@@ -675,16 +813,19 @@ Return as JSON:
         metadata["document_id"] = document_id
         metadata["doc_type"] = doc_type
 
-        from app.rag.chunker import ChunkMetadata
         from fastapi.concurrency import run_in_threadpool
-        chunk_meta = ChunkMetadata(
+        chunk_meta = self._build_chunk_metadata(
             document_id=document_id,
             doc_type=doc_type,
+            file_path=str(metadata.get("source_file") or ""),
+            metadata=metadata,
         )
 
         chunks = await run_in_threadpool(
             self.rag_engine.chunk_and_embed, text, chunk_meta
         )
+        for chunk_index, chunk in enumerate(chunks):
+            chunk.metadata.chunk_index = chunk_index
         point_ids = await run_in_threadpool(
             self.rag_engine.index_chunks, chunks
         ) if chunks else []
@@ -695,3 +836,114 @@ Return as JSON:
             "entities": 0,
             "point_ids": point_ids,
         }
+
+    def _build_chunk_metadata(
+        self,
+        *,
+        document_id: int,
+        doc_type: str,
+        file_path: str,
+        metadata: dict,
+        section_title: str = "",
+        page_number: int | None = None,
+    ):
+        from app.rag.chunker import ChunkMetadata
+
+        original_filename = str(metadata.get("original_filename") or "").strip()
+        source_document_ref = str(
+            metadata.get("source_document_ref")
+            or metadata.get("storage_object_name")
+            or original_filename
+            or file_path
+        ).strip()
+
+        return ChunkMetadata(
+            document_id=document_id,
+            tender_id=metadata.get("tender_id"),
+            source_file=file_path,
+            source_document_ref=source_document_ref,
+            filename=original_filename or os.path.basename(file_path),
+            section_title=section_title,
+            page_number=page_number,
+            doc_type=doc_type,
+        )
+
+    def _build_chunk_inputs(
+        self,
+        elements: list[dict],
+        *,
+        file_path: str,
+        document_id: int,
+        doc_type: str,
+        metadata: dict,
+        fallback_text: str,
+    ) -> list[tuple[str, object]]:
+        chunk_inputs: list[tuple[str, object]] = []
+        current_section = "Introduction"
+        current_page: int | None = None
+        current_parts: list[str] = []
+
+        def flush_current_group() -> None:
+            chunk_text = "\n\n".join(part for part in current_parts if part and part.strip()).strip()
+            if not chunk_text:
+                return
+            chunk_inputs.append(
+                (
+                    chunk_text,
+                    self._build_chunk_metadata(
+                        document_id=document_id,
+                        doc_type=doc_type,
+                        file_path=file_path,
+                        metadata=metadata,
+                        section_title=current_section,
+                        page_number=current_page,
+                    ),
+                )
+            )
+
+        for element in elements:
+            text = str(element.get("text") or "").strip()
+            if not text:
+                continue
+
+            elem_type = str(element.get("type") or "Text")
+            elem_metadata = element.get("metadata") or {}
+            page_number = elem_metadata.get("page_number") or current_page
+
+            if elem_type in ("Title", "Header"):
+                if current_parts:
+                    flush_current_group()
+                    current_parts = []
+                current_section = text
+                current_page = page_number
+                current_parts.append(text)
+                continue
+
+            if current_parts and page_number != current_page:
+                flush_current_group()
+                current_parts = []
+
+            current_page = page_number
+            current_parts.append(text)
+
+        if current_parts:
+            flush_current_group()
+
+        if chunk_inputs:
+            return chunk_inputs
+
+        fallback = str(fallback_text or "").strip()
+        if not fallback:
+            return []
+
+        return [
+            (
+                fallback,
+                self._build_chunk_metadata(
+                    document_id=document_id,
+                    doc_type=doc_type,
+                    file_path=file_path,
+                    metadata=metadata,
+                ),
+            )
+        ]

@@ -243,16 +243,18 @@ class GraphRetriever:
         """
         top_k = top_k or settings.rag_top_k_graph
         results: list[GraphSearchResult] = []
+        tender_id_filter = self._extract_tender_id_filter(filters)
 
-        # Search projects
-        project_results = await self._search_projects(query, top_k, filters)
-        results.extend(project_results)
+        if tender_id_filter is not None:
+            tender_results = await self._search_tenders(query, top_k, filters)
+            results.extend(tender_results)
+        else:
+            project_results = await self._search_projects(query, top_k, filters)
+            results.extend(project_results)
 
-        # Search team members
-        member_results = await self._search_team_members(query, top_k, filters)
-        results.extend(member_results)
+            member_results = await self._search_team_members(query, top_k, filters)
+            results.extend(member_results)
 
-        # Search requirements (tender requirements stored in graph)
         requirement_results = await self._search_requirements(query, top_k, filters)
         results.extend(requirement_results)
 
@@ -261,6 +263,88 @@ class GraphRetriever:
         results = results[:top_k]
 
         logger.debug("Graph search complete", query_len=len(query), results=len(results))
+        return results
+
+    def _extract_tender_id_filter(self, filters: dict | None) -> str | None:
+        if not filters:
+            return None
+
+        tender_id = filters.get("tender_id")
+        if isinstance(tender_id, list):
+            tender_id = tender_id[0] if tender_id else None
+        if tender_id in (None, ""):
+            return None
+
+        return str(tender_id)
+
+    async def _search_tenders(
+        self,
+        query: str,
+        top_k: int,
+        filters: dict | None,
+    ) -> list[GraphSearchResult]:
+        """Return scoped tender context when the query is limited to a specific tender."""
+        tender_id = self._extract_tender_id_filter(filters)
+        if tender_id is None:
+            return []
+
+        cypher = """
+        MATCH (t:Tender {id: $tender_id})
+        OPTIONAL MATCH (t)-[:HAS_REQUIREMENT]->(r:Requirement)
+        WITH t, collect(r)[..5] AS requirements
+        RETURN t, requirements
+        LIMIT 1
+        """
+
+        results: list[GraphSearchResult] = []
+        async with self._driver.session() as session:
+            cursor = await session.run(cypher, tender_id=tender_id)
+            records = await cursor.data()
+
+            for record in records:
+                tender = record["t"]
+                requirements = record.get("requirements", [])
+
+                text_parts = [
+                    f"Tender: {tender.get('title', tender.get('id', 'Unknown'))}",
+                ]
+
+                if tender.get("client"):
+                    text_parts.append(f"Client: {tender.get('client')}")
+                if tender.get("category"):
+                    text_parts.append(f"Category: {tender.get('category')}")
+                if tender.get("status"):
+                    text_parts.append(f"Status: {tender.get('status')}")
+                if tender.get("deadline"):
+                    text_parts.append(f"Deadline: {tender.get('deadline')}")
+
+                requirement_summaries = [
+                    str(requirement.get("text") or "").strip()
+                    for requirement in requirements
+                    if requirement and str(requirement.get("text") or "").strip()
+                ]
+                if requirement_summaries:
+                    text_parts.append(
+                        "Known requirements: " + "; ".join(requirement_summaries[:5])
+                    )
+
+                results.append(
+                    GraphSearchResult(
+                        text="\n".join(text_parts),
+                        score=0.95,
+                        metadata={
+                            "source": "knowledge_graph",
+                            "entity_id": tender.get("id"),
+                            "tender_id": tender.get("id"),
+                        },
+                        entity_type="Tender",
+                        relationships=[
+                            {"type": "HAS_REQUIREMENT", "target": summary}
+                            for summary in requirement_summaries[:5]
+                        ],
+                    )
+                )
+
         return results
 
     async def _search_projects(
@@ -414,20 +498,27 @@ class GraphRetriever:
         keywords = [w.lower() for w in query.split() if len(w) > 3]
         if not keywords:
             keywords = [query.lower()]
+        tender_id_filter = self._extract_tender_id_filter(filters)
 
         cypher = """
         MATCH (r:Requirement)
-        WHERE any(kw IN $keywords WHERE 
+        OPTIONAL MATCH (t:Tender)-[:HAS_REQUIREMENT]->(r)
+        WHERE any(kw IN $keywords WHERE
                toLower(r.text) CONTAINS kw
                OR toLower(r.category) CONTAINS kw)
-        OPTIONAL MATCH (t:Tender)-[:HAS_REQUIREMENT]->(r)
+          AND ($tender_id IS NULL OR coalesce(toString(r.tender_id), toString(t.id), "") = $tender_id)
         RETURN r, t
         LIMIT $limit
         """
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
+            cursor = await session.run(
+                cypher,
+                keywords=keywords,
+                limit=top_k,
+                tender_id=tender_id_filter,
+            )
             records = await cursor.data()
 
             for record in records:

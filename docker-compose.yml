@@ -65,7 +65,7 @@ services:
 
   # --- llama.cpp Server for TenderWriter RAG ---
   llama-tender:
-    image: ghcr.io/kth8/llama-server-vulkan:latest #ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/kth8/llama-server-vulkan:latest
     container_name: tw-llama-tender
     restart: unless-stopped
     devices:
@@ -76,8 +76,20 @@ services:
     volumes:
       - /home/tendermachine/tender/tenderwriter/models:/models
       - llama_tender_cache:/root/.cache/llama.cpp
-    # entrypoint: [ "/app/llama-server" ]
-    command: [ "/llama-server", "-m", "/models/gemma-3n-E4B-it-UD-IQ2_XXS.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "-t", "20", "--n-predict", "1024", "-b", "1024" ]
+    command: [
+      "/llama-server",
+      "-m", "/models/gemma-4-31b-it-q6_k_l.gguf",
+      "--host", "0.0.0.0",
+      "--port", "8080",
+      "-c", "65536",
+      "-b", "2048",
+      "-ub", "512",
+      "-t", "8",
+      "-np", "2",
+      "--n-predict", "-1",
+      "-fa", "on",
+      "-rea", "off"
+    ]
     networks:
       - default
 
@@ -476,8 +488,8 @@ services:
       GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_UPSTREAM: http://llama-opencode:8080
       GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-180}
-      GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-http://llama-tender:8080}
-      GATEWAY_OPENCODE_DMZ_UPSTREAM: http://llama-opencode:8080
+      GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-}
+      GATEWAY_OPENCODE_DMZ_UPSTREAM: ${GATEWAY_OPENCODE_DMZ_UPSTREAM:-}
       GATEWAY_ANONYMIZER_URL: http://tw-anonymizer:8090
       GATEWAY_TENDER_CLOUD_PROVIDER: ${GATEWAY_TENDER_CLOUD_PROVIDER:-}
       GATEWAY_OPENAI_BASE_URL: ${GATEWAY_OPENAI_BASE_URL:-https://api.openai.com}

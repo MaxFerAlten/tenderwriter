@@ -16,8 +16,41 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import settings
 from app.celery import celery_app
 from app.db.database import async_session_factory
+from app.ingestion.observability import (
+    extract_ingestion_observability,
+    update_ingestion_observability,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _update_document_ingestion_stage(
+    doc,
+    *,
+    stage: str,
+    status: str,
+    detail: str | None = None,
+    stats: dict | None = None,
+    error_message: str | None = None,
+) -> dict:
+    doc.metadata_json = update_ingestion_observability(
+        doc.metadata_json,
+        stage=stage,
+        status=status,
+        detail=detail,
+        stats=stats,
+        error_message=error_message,
+    )
+    observability = extract_ingestion_observability(doc.metadata_json)
+    progress = observability.get("progress")
+    if isinstance(progress, (int, float)):
+        doc.ingestion_progress = float(progress)
+    return observability
+
+
+def _build_stage_error_message(stage: str, error: object) -> str:
+    compact_stage = stage.replace("_", " ")
+    return f"[{compact_stage}] {error}"
 
 
 def _extract_text_from_structured_content(content: object) -> str:
@@ -109,8 +142,14 @@ def index_document_task(self, document_id: int):
                 return
 
             doc.ingestion_status = IngestionStatus.PROCESSING
-            doc.ingestion_progress = 5.0
+            doc.error_message = None
             doc.ingestion_started_at = func.now()
+            _update_document_ingestion_stage(
+                doc,
+                stage="download",
+                status="started",
+                detail="Preparing secure download from object storage.",
+            )
             await db.commit()
 
             tmp_path = None
@@ -128,28 +167,49 @@ def index_document_task(self, document_id: int):
                 
                 logger.info(f"Downloading {doc.storage_object_name} from MinIO to {tmp_path}")
                 minio_client.fget_object(doc.storage_bucket, doc.storage_object_name, tmp_path)
-                
-                doc.ingestion_progress = 15.0
+                _update_document_ingestion_stage(
+                    doc,
+                    stage="download",
+                    status="completed",
+                    detail="Source document downloaded from object storage.",
+                    stats={
+                        "storage_bucket": doc.storage_bucket,
+                        "source_document_ref": doc.storage_object_name,
+                    },
+                )
                 await db.commit()
 
                 # 3. Process with IngestionPipeline
                 engine = HybridRAGEngine()
                 await engine.initialize()
                 pipeline = IngestionPipeline(engine)
-                
-                doc.ingestion_progress = 25.0
-                await db.commit()
+
+                async def persist_pipeline_stage(event: dict) -> None:
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage=str(event.get("stage") or "unknown"),
+                        status=str(event.get("status") or "started"),
+                        detail=(
+                            str(event.get("detail"))
+                            if event.get("detail") is not None
+                            else None
+                        ),
+                        stats=event.get("stats") if isinstance(event.get("stats"), dict) else None,
+                    )
+                    await db.commit()
 
                 stats = await pipeline.ingest_file(
                     file_path=tmp_path,
                     document_id=doc.id,
                     doc_type=doc.doc_type,
-                    metadata={"original_filename": doc.filename, "tender_id": doc.tender_id}
+                    metadata={
+                        "original_filename": doc.filename,
+                        "tender_id": doc.tender_id,
+                        "source_document_ref": doc.storage_object_name,
+                    },
+                    progress_callback=persist_pipeline_stage,
                 )
                 stats.setdefault("warnings", [])
-
-                doc.ingestion_progress = 50.0
-                await db.commit()
                 
                 # Clean up temp file
                 if os.path.exists(tmp_path):
@@ -185,22 +245,58 @@ def index_document_task(self, document_id: int):
                     await db.flush()
                     
                     # Sync to Neo4j
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="sync_neo4j",
+                        status="started",
+                        detail="Syncing tender requirements into Neo4j.",
+                        stats={
+                            "requirements_detected": len(requirement_candidates),
+                        },
+                    )
+                    await db.commit()
                     graph_synced = await sync_tender_requirements_to_graph(
                         engine,
                         tender,
                         list(tender.requirements or created_requirements),
                     )
                     stats["graph_synced"] = graph_synced
-
-                    doc.ingestion_progress = 85.0
+                    requirements_in_graph = list(tender.requirements or created_requirements)
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="sync_neo4j",
+                        status="completed",
+                        detail="Neo4j synchronization completed.",
+                        stats={
+                            "graph_synced": graph_synced,
+                            "requirements_synced": len(requirements_in_graph),
+                        },
+                    )
                     await db.commit()
                     
                     # Compute compliance
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="compliance",
+                        status="started",
+                        detail="Refreshing compliance observability after requirement sync.",
+                    )
+                    await db.commit()
                     compliance_events = await sync_requirement_compliance_and_gate(
                         db,
                         tender_id=tender.id,
                         actor_id=doc.uploaded_by,
                     )
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="compliance",
+                        status="completed",
+                        detail="Compliance observability refreshed.",
+                        stats={
+                            "events_published": len(compliance_events),
+                        },
+                    )
+                    await db.commit()
 
                     # Publish Domain Events
                     await sync_tender_and_publish_event(
@@ -236,18 +332,55 @@ def index_document_task(self, document_id: int):
                             event_type=event_type,
                             payload=payload,
                         )
+                else:
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="sync_neo4j",
+                        status="skipped",
+                        detail="Skipping Neo4j tender sync because the document is not linked to a tender.",
+                    )
+                    _update_document_ingestion_stage(
+                        doc,
+                        stage="compliance",
+                        status="skipped",
+                        detail="Skipping compliance refresh because the document is not linked to a tender.",
+                    )
+                    await db.commit()
 
                 # 5. Mark Document completed
                 doc.ingestion_status = IngestionStatus.COMPLETED
-                doc.ingestion_progress = 100.0
                 doc.ingestion_completed_at = func.now()
                 doc.chunk_count = stats.get("chunks", 0)
+                _update_document_ingestion_stage(
+                    doc,
+                    stage="completed",
+                    status="completed",
+                    detail="Document ingestion finished successfully.",
+                    stats={
+                        "document_id": doc.id,
+                        "chunks": stats.get("chunks", 0),
+                        "requirements_detected": stats.get("requirements_detected", 0),
+                        "sections_detected": stats.get("sections_detected", 0),
+                        "graph_synced": stats.get("graph_synced", False),
+                    },
+                )
                 await db.commit()
                 logger.info(f"Document indexed successfully: document_id={document_id}")
 
             except Exception as inner_e:
+                failed_stage = str(
+                    extract_ingestion_observability(doc.metadata_json).get("current_stage")
+                    or "download"
+                )
+                _update_document_ingestion_stage(
+                    doc,
+                    stage=failed_stage,
+                    status="failed",
+                    detail=f"Failure while executing {failed_stage.replace('_', ' ')}.",
+                    error_message=str(inner_e),
+                )
                 doc.ingestion_status = IngestionStatus.FAILED
-                doc.error_message = str(inner_e)
+                doc.error_message = _build_stage_error_message(failed_stage, inner_e)
                 doc.ingestion_completed_at = func.now()
                 await db.commit()
                 

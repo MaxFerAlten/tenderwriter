@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.api.auth import get_current_user, UserResponse
+from app.ingestion.observability import extract_ingestion_observability
 from app.models import Document, Tender, IngestionStatus
 
 router = APIRouter()
@@ -25,6 +26,11 @@ class IngestionMonitorRecord(BaseModel):
     tender_id: int | None = None
     tender_title: str | None = None
     uploaded_by: int | None = None
+    metadata_json: dict[str, Any] | None = None
+    current_stage: str | None = None
+    current_stage_label: str | None = None
+    current_stage_status: str | None = None
+    current_stage_detail: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -57,6 +63,8 @@ async def list_ingestions(
     result = await db.execute(query)
     records = []
     for doc, tender_title in result:
+        metadata_json = dict(doc.metadata_json or {}) if isinstance(doc.metadata_json, dict) else {}
+        observability = extract_ingestion_observability(metadata_json)
         records.append(IngestionMonitorRecord(
             id=doc.id,
             filename=doc.filename,
@@ -67,6 +75,11 @@ async def list_ingestions(
             tender_id=doc.tender_id,
             tender_title=tender_title,
             uploaded_by=doc.uploaded_by,
+            metadata_json=metadata_json,
+            current_stage=observability.get("current_stage"),
+            current_stage_label=observability.get("current_stage_label"),
+            current_stage_status=observability.get("current_stage_status"),
+            current_stage_detail=observability.get("current_stage_detail"),
         ))
     
     return records

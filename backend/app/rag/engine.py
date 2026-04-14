@@ -48,13 +48,36 @@ CONTINUATION_HEADING_RE = re.compile(
 PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = (
     r"(?:draft ending|(?:task|compito)(?=\s*:|$)|retrieved context|user question|response constraints|istruzioni importanti|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?)"
 )
-PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = r"(?:answer(?:\s*\([^)]*\))?)"
+PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN = r"(?:own answer|your answer)"
+PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = r"(?:answer(?:\s*\([^)]*\))?|own answer|your answer)"
+PROMPT_LEAKAGE_LOOP_RE = re.compile(
+    r"^\s*(?:(?:[A-Za-z]\s+)?(?:own answer|your answer|answer|user question|retrieved context|response constraints|draft ending|task|compito)\s*){3,}\s*$",
+    re.IGNORECASE,
+)
+PROMPT_OWN_TOKEN_LOOP_RE = re.compile(
+    r"^\s*(?:s\s+)?(?:own\s*){3,}\s*$",
+    re.IGNORECASE,
+)
+PROMPT_OWN_TOKEN_PREFIX_RE = re.compile(
+    r"^\s*(?:s\s+)?(?:own\s*){3,}",
+    re.IGNORECASE,
+)
+PROMPT_LEAKAGE_SUFFIX_RE = re.compile(
+    r"\s+(?:(?:[A-Za-z]{1,3}\s+)?(?:own answer|your answer|answer|user question|retrieved context|response constraints|draft ending|task|compito)\s*){3,}$",
+    re.IGNORECASE,
+)
+DANGLING_CLOSING_BRACE_SUFFIX_RE = re.compile(r"(?<=\w)\s*[}\])]{1,}\s*$")
+BRACE_ONLY_LINE_RE = re.compile(r"^\s*[}\])]+\s*$")
+LIKELY_USER_QUERY_START_RE = re.compile(
+    r"^(?:fai\b|fammi\b|dammi\b|dimmi\b|spiega\b|descrivi\b|analizza\b|riassumi\b|elenca\b|fornisci\b|scrivi\b|prepara\b|genera\b|trova\b|cerca\b|indica\b|mostra\b|confronta\b|valuta\b)",
+    re.IGNORECASE,
+)
 PROMPT_LEAKAGE_HEADING_RE = re.compile(
-    rf"^\s*(?:(?:#{{1,6}}\s*)(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN})(?:\s|:|$)).*$",
+    rf"^\s*(?:(?:#{{1,6}}\s*)(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN})(?:\s|:|$)).*$",
     re.IGNORECASE,
 )
 PROMPT_LEAKAGE_INLINE_RE = re.compile(
-    rf"\s+(?:#{{1,6}}\s*(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:compito|task|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?|retrieved context|user question|response constraints|istruzioni importanti)\s*:).*$",
+    rf"\s+(?:#{{1,6}}\s*(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|own answer|your answer|(?<!own )(?<!your )answer(?:\s*\([^)]*\))?)(?:\s|:|$)|(?:compito|task|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?|retrieved context|user question|response constraints|istruzioni importanti)\s*:).*$",
     re.IGNORECASE,
 )
 PROMPT_LEAKAGE_INSTRUCTION_RES = (
@@ -68,6 +91,22 @@ PROMPT_LEAKAGE_INSTRUCTION_RES = (
     ),
     re.compile(
         r"^provide a helpful, accurate answer based on the available context\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^respond in the same language as the user(?:'s)? question\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^always respond in the same language as the user(?:'s)? question\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^use only the retrieved context\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^output only the answer text, no labels, no meta-commentary\.?$",
         re.IGNORECASE,
     ),
     re.compile(
@@ -144,15 +183,15 @@ PROMPT_LEAKAGE_INSTRUCTION_RES = (
     ),
 )
 EXPANDED_EXPLANATION_QUERY_RE = re.compile(
-    r"\b(?:riassum\w*|spiega\w*|descriv\w*|sintetizza\w*|summari[sz]\w*|explain\w*|describe\w*)\b",
+    r"\b(?:riassum\w*|spiega\w*|descriv\w*|sintetizza\w*|summari[sz]\w*|explain\w*|describe\w*|analizz\w*|approfond\w*)\b",
     re.IGNORECASE,
 )
 SUMMARY_INTENT_QUERY_RE = re.compile(
-    r"\b(?:riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*)\b",
+    r"\b(?:riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|analizz\w*|approfond\w*|esaustiv\w*|dettagli?\b)\b",
     re.IGNORECASE,
 )
 STRUCTURED_OVERVIEW_QUERY_RE = re.compile(
-    r"\b(?:elenco|lista|punti?\s+chiave|dettagliat\w*|complet\w*|strutturat\w*)\b",
+    r"\b(?:elenco|lista|punti?\s+chiave|dettagli?\b|dettagliat\w*|complet\w*|strutturat\w*|esaustiv\w*|approfondit\w*)\b",
     re.IGNORECASE,
 )
 TENDER_DOCUMENT_QUERY_RE = re.compile(
@@ -160,11 +199,11 @@ TENDER_DOCUMENT_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 RETRIEVAL_INTENT_STRIP_RE = re.compile(
-    r"\b(?:fai|fammi|dammi|fornisci|scrivi|prepara|genera|riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|elenco|lista|punti?\s+chiave|dettagliat\w*|complet\w*|strutturat\w*)\b",
+    r"\b(?:fai|fammi|dammi|fornisci|scrivi|prepara|genera|riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|analizz\w*|approfond\w*|elenco|lista|punti?\s+chiave|dettagli?\b|dettagliat\w*|complet\w*|strutturat\w*|esaustiv\w*|tutti?\b)\b",
     re.IGNORECASE,
 )
 RETRIEVAL_STOPWORD_STRIP_RE = re.compile(
-    r"\b(?:un|una|uno|del|della|delle|dei|degli|dello|di|da|dei|della)\b",
+    r"\b(?:un|una|uno|i|gli|del|della|delle|dei|degli|dello|di|da|dei|della)\b",
     re.IGNORECASE,
 )
 TERMINAL_SENTENCE_CHARS = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
@@ -230,6 +269,29 @@ BROAD_SUMMARY_DEFAULT_MAX_TOKENS = 768
 DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS = 1024
 DEANONYMIZED_STREAM_FLUSH_CHARS = 96
 DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS = 220
+PROMPT_GARBAGE_PREFIX_TOKEN_RE = re.compile(r"\S+")
+PROMPT_GARBAGE_PREFIX_TOKENS = frozenset({
+    "a",
+    "answer",
+    "as",
+    "assistant",
+    "context",
+    "constraints",
+    "language",
+    "only",
+    "output",
+    "own",
+    "question",
+    "response",
+    "retrieved",
+    "s",
+    "same",
+    "system",
+    "the",
+    "user",
+    "users",
+})
+PROMPT_GARBAGE_PREFIX_STRIP_CHARS = " \t\r\n:/\\\\|#[](){}<>,.;'\"`*-_!?="
 
 QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
 - Devi rispondere nella STESSA LINGUA della domanda dell'utente.
@@ -504,6 +566,7 @@ class HybridRAGEngine:
         rag_query: RAGQuery,
     ) -> RetrievedContext:
         retrieval_query = self._query_text_for_retrieval(rag_query.text)
+        retrieval_filters = self._build_retrieval_filters(rag_query)
         retriever_selection = self._resolve_retriever_selection(rag_query)
         rank_fusion = self._build_rank_fusion_for_query(rag_query)
         retrieval_top_k = self._effective_retrieval_top_k(rag_query)
@@ -517,7 +580,7 @@ class HybridRAGEngine:
                 raw_dense = self.dense_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_dense,
-                    filters=rag_query.filters,
+                    filters=retrieval_filters,
                 )
                 dense_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -531,7 +594,7 @@ class HybridRAGEngine:
                 raw_sparse = self.sparse_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_sparse,
-                    filters=rag_query.filters,
+                    filters=retrieval_filters,
                 )
                 sparse_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -545,7 +608,7 @@ class HybridRAGEngine:
                 raw_graph = await self.graph_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_graph,
-                    filters=rag_query.filters,
+                    filters=retrieval_filters,
                 )
                 graph_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -602,6 +665,12 @@ class HybridRAGEngine:
             context="\n\n---\n\n".join(context_texts),
             sources=sources,
         )
+
+    def _build_retrieval_filters(self, rag_query: RAGQuery) -> dict | None:
+        filters = dict(rag_query.filters or {})
+        if rag_query.tender_id is not None:
+            filters.setdefault("tender_id", rag_query.tender_id)
+        return filters or None
 
     def _resolve_retriever_selection(self, rag_query: RAGQuery) -> dict[str, bool]:
         selection = {
@@ -898,6 +967,11 @@ class HybridRAGEngine:
                 generator=generator,
                 current_words=self._count_words(current_text),
             )
+            if max_tokens is None:
+                max_tokens = self._default_generation_pass_token_budget(
+                    rag_query,
+                    generator=generator,
+                )
 
             raw_pass_text = ""
             emitted_visible_text = current_text
@@ -924,11 +998,21 @@ class HybridRAGEngine:
             ):
                 raw_pass_text += token
                 if not deanonymize_session_id:
-                    if first_token_in_attempt and current_text:
-                        joined_token = self._merge_completion_suffix(current_text, token)
-                        token = self._stream_sanitized_delta(current_text, joined_token)
-                    if token:
-                        yield token
+                    visible_pass_text = self._sanitize_continuation_text(
+                        current_text,
+                        raw_pass_text,
+                    )
+                    visible_full_text = self._merge_completion_suffix(
+                        current_text,
+                        visible_pass_text,
+                    )
+                    visible_delta = self._stream_sanitized_delta(
+                        emitted_visible_text,
+                        visible_full_text,
+                    )
+                    if visible_delta:
+                        yield visible_delta
+                    emitted_visible_text = visible_full_text
                     first_token_in_attempt = False
                     continue
 
@@ -1403,14 +1487,20 @@ class HybridRAGEngine:
 
         active_generator = generator or self.generator
         length_target = self._extract_requested_length_target(rag_query.text)
+        max_tokens = self._generation_pass_token_budget(
+            length_target,
+            generator=active_generator,
+        )
+        if max_tokens is None:
+            max_tokens = self._default_generation_pass_token_budget(
+                rag_query,
+                generator=active_generator,
+            )
         return await active_generator.generate(
             template=template,
             variables=variables,
             temperature=rag_query.temperature,
-            max_tokens=self._generation_pass_token_budget(
-                length_target,
-                generator=active_generator,
-            ),
+            max_tokens=max_tokens,
         )
 
     def _extract_requested_length_target(self, query_text: str) -> ResponseLengthTarget | None:
@@ -1523,6 +1613,27 @@ class HybridRAGEngine:
 
         return total_budget
 
+    def _default_generation_pass_token_budget(
+        self,
+        rag_query: RAGQuery,
+        *,
+        generator: Generator,
+    ) -> int | None:
+        if rag_query.mode != QueryMode.QA:
+            return None
+
+        if self._query_requests_structured_tender_overview(rag_query.text):
+            if self._supports_large_long_form_generation(generator):
+                return max(DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS, 1536)
+            return DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS
+
+        if self._query_requests_broad_summary(rag_query.text):
+            if self._supports_large_long_form_generation(generator):
+                return max(BROAD_SUMMARY_DEFAULT_MAX_TOKENS, 1024)
+            return BROAD_SUMMARY_DEFAULT_MAX_TOKENS
+
+        return None
+
     def _continuation_tail(self, text: str, *, limit: int = 1600) -> str:
         normalized = (text or "").strip()
         if len(normalized) <= limit:
@@ -1533,25 +1644,89 @@ class HybridRAGEngine:
         normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
         return normalized.strip(" ,.;:-")
 
+    def _looks_like_answer_start(self, text: str) -> bool:
+        candidate = (text or "").lstrip()
+        if not candidate:
+            return False
+        return not LIKELY_USER_QUERY_START_RE.match(candidate)
+
+    def _strip_prompt_garbage_prefix(self, text: str) -> tuple[str, bool]:
+        candidate = (text or "").lstrip()
+        if not candidate:
+            return "", False
+
+        garbage_count = 0
+        for match in PROMPT_GARBAGE_PREFIX_TOKEN_RE.finditer(candidate):
+            raw_token = match.group(0)
+            normalized = raw_token.strip(PROMPT_GARBAGE_PREFIX_STRIP_CHARS).lower()
+            normalized = normalized.replace("’", "'").replace("'s", "s")
+            normalized = re.sub(r"[^a-zà-ÿ]+", "", normalized)
+            if not normalized or normalized in PROMPT_GARBAGE_PREFIX_TOKENS:
+                garbage_count += 1
+                continue
+
+            if garbage_count >= 3:
+                remainder = candidate[match.start() :].lstrip()
+                if self._looks_like_answer_start(remainder):
+                    return remainder, True
+                return "", True
+            return candidate, False
+
+        if garbage_count >= 3:
+            return "", True
+        return candidate, False
+
     def _strip_prompt_leakage(self, text: str) -> str:
         cleaned = (text or "").strip()
         cleaned_lines: list[str] = []
         for line in cleaned.splitlines():
             candidate = line.rstrip()
-            inline_match = PROMPT_LEAKAGE_INLINE_RE.search(candidate)
-            if inline_match:
-                candidate = candidate[:inline_match.start()].rstrip()
-
-            stripped = candidate.strip()
-            if not stripped:
+            raw_stripped = candidate.strip()
+            if not raw_stripped:
                 if cleaned_lines and cleaned_lines[-1]:
                     cleaned_lines.append("")
                 continue
+            if PROMPT_LEAKAGE_HEADING_RE.match(raw_stripped):
+                continue
+            if PROMPT_LEAKAGE_LOOP_RE.match(raw_stripped):
+                continue
+            if PROMPT_OWN_TOKEN_LOOP_RE.match(raw_stripped):
+                continue
+            if BRACE_ONLY_LINE_RE.match(raw_stripped):
+                continue
+            if any(pattern.match(raw_stripped) for pattern in PROMPT_LEAKAGE_INSTRUCTION_RES):
+                continue
 
-            if PROMPT_LEAKAGE_HEADING_RE.match(stripped):
+            suffix_trimmed = False
+            brace_trimmed = False
+            inline_match = PROMPT_LEAKAGE_INLINE_RE.search(candidate)
+            if inline_match:
+                candidate = candidate[:inline_match.start()].rstrip()
+            suffix_match = PROMPT_LEAKAGE_SUFFIX_RE.search(candidate)
+            if suffix_match:
+                candidate = candidate[:suffix_match.start()].rstrip()
+                suffix_trimmed = True
+            own_prefix_match = PROMPT_OWN_TOKEN_PREFIX_RE.match(candidate)
+            if own_prefix_match:
+                candidate = candidate[own_prefix_match.end() :].lstrip()
+                suffix_trimmed = True
+            brace_suffix_match = DANGLING_CLOSING_BRACE_SUFFIX_RE.search(candidate)
+            if brace_suffix_match:
+                candidate = candidate[: brace_suffix_match.start()].rstrip()
+                brace_trimmed = True
+            candidate, garbage_prefix_trimmed = self._strip_prompt_garbage_prefix(candidate)
+            if garbage_prefix_trimmed:
+                suffix_trimmed = True
+
+            stripped = candidate.strip()
+            if not stripped:
                 continue
-            if any(pattern.match(stripped) for pattern in PROMPT_LEAKAGE_INSTRUCTION_RES):
-                continue
+            if (
+                (suffix_trimmed or brace_trimmed)
+                and candidate[-1] not in TERMINAL_SENTENCE_CHARS
+                and self._count_words(candidate) >= 3
+            ):
+                candidate = f"{candidate.rstrip(' ,;:-')}."
 
             cleaned_lines.append(candidate)
         return "\n".join(cleaned_lines).strip()
@@ -1677,6 +1852,12 @@ class HybridRAGEngine:
             stripped = line.strip()
             if PROMPT_LEAKAGE_HEADING_RE.match(stripped):
                 break
+            if PROMPT_LEAKAGE_LOOP_RE.match(stripped):
+                break
+            if PROMPT_OWN_TOKEN_LOOP_RE.match(stripped):
+                break
+            if BRACE_ONLY_LINE_RE.match(stripped):
+                break
             if skipping_meta and not stripped:
                 continue
             if skipping_meta and CONTINUATION_HEADING_RE.match(stripped):
@@ -1707,6 +1888,15 @@ class HybridRAGEngine:
                 continue
 
             normalized = stripped.lstrip("#").strip()
+            if PROMPT_LEAKAGE_LOOP_RE.match(stripped):
+                lines.pop()
+                continue
+            if PROMPT_OWN_TOKEN_LOOP_RE.match(stripped):
+                lines.pop()
+                continue
+            if BRACE_ONLY_LINE_RE.match(stripped):
+                lines.pop()
+                continue
             if stripped.startswith("#") and len(normalized.split()) <= 8:
                 lines.pop()
                 continue
