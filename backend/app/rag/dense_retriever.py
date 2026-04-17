@@ -57,7 +57,14 @@ class DenseRetriever:
             await asyncio.to_thread(self._ensure_collection, collection_name)
 
     def _ensure_collection(self, name: str):
-        """Create a Qdrant collection if it doesn't exist, or validate dimension if it does."""
+        """Create a Qdrant collection if it doesn't exist, or validate dimension if it does.
+
+        New collections are created with optimizations for scalability:
+        - Scalar quantization (float32 → int8): ~75% RAM reduction per vector
+        - On-disk HNSW index: keeps the search index on disk via mmap
+        - On-disk payload: metadata stored on disk, not in RAM
+        These settings allow scaling to 500+ tenders without RAM pressure.
+        """
         full_name = f"{self.collection_prefix}{name}"
         collections = self.client.get_collections().collections
         existing = {c.name: c for c in collections}
@@ -68,9 +75,21 @@ class DenseRetriever:
                 vectors_config=models.VectorParams(
                     size=self.embedder.dimension,
                     distance=models.Distance.COSINE,
+                    on_disk=True,  # store vectors on disk, mmap into RAM as needed
                 ),
+                quantization_config=models.ScalarQuantization(
+                    scalar=models.ScalarQuantizationConfig(
+                        type=models.ScalarType.INT8,
+                        quantile=0.99,
+                        always_ram=True,  # keep quantized vectors in RAM for fast search
+                    ),
+                ),
+                hnsw_config=models.HnswConfigDiff(
+                    on_disk=True,  # HNSW index on disk to save RAM
+                ),
+                on_disk_payload=True,  # payload on disk
             )
-            logger.info("Created Qdrant collection", collection=full_name)
+            logger.info("Created Qdrant collection (optimized)", collection=full_name)
         else:
             # Validate that existing collection dimension matches current embedding model
             info = self.client.get_collection(full_name)

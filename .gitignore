@@ -14,6 +14,7 @@ my-output.md
 my-output-fix.md
 backend/app/ingestion/__pycache__/
 har_and_cookies
+qvac/
 # --- Virtual environments ---
 .claude/
 .codex/

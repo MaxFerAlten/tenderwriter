@@ -934,9 +934,9 @@ class Generator:
                 _llama_messages.append({"role": "system", "content": _system_message})
             _llama_messages.append({"role": "user", "content": prompt})
             _llama_sampler: dict = {
-                "repeat_penalty": 1.1,
-                "repeat_last_n": 256,
-                "dry_multiplier": 0.8,
+                "repeat_penalty": 1.05,
+                "repeat_last_n": 128,
+                "dry_multiplier": 0.4,
                 "dry_base": 1.75,
                 "dry_allowed_length": 2,
             }
@@ -1187,9 +1187,9 @@ class Generator:
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                         "stream": True,
-                        "repeat_penalty": 1.1,
-                        "repeat_last_n": 256,
-                        "dry_multiplier": 0.8,
+                        "repeat_penalty": 1.05,
+                        "repeat_last_n": 128,
+                        "dry_multiplier": 0.4,
                         "dry_base": 1.75,
                         "dry_allowed_length": 2,
                     },
