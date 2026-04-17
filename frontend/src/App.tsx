@@ -17,6 +17,7 @@ import {
     Settings,
     Shield,
     Sparkles,
+    Sliders,
     PawPrint,
 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
@@ -44,6 +45,7 @@ import {
     OperationalWorkspacePage,
     DataExplorerPage,
     IngestionMonitorPage,
+    LlmSettingPage,
 } from './router/lazyRoutes';
 
 const navItems = [
@@ -51,6 +53,7 @@ const navItems = [
     { path: '/proposals', label: 'Proposals', icon: FileText },
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
+    { path: '/llmsetting', label: 'LLM Tuner', icon: Sliders, adminOnly: true },
     { path: '/ingestion', label: 'Ingestion Monitor', icon: Activity },
     { path: '/tasks', label: 'Task Manager', icon: Play },
     { path: '/tender-access', label: 'Tender Access', icon: Shield, adminOnly: true },
@@ -228,6 +231,7 @@ function App() {
                                 <Route path="/markov-state-process" element={user.role === 'admin' ? <MarkovStateProcessPage /> : <Navigate to="/" />} />
                                 <Route path="/markov-state-process/:tenderId" element={user.role === 'admin' ? <Navigate to="/markov-state-process" replace /> : <Navigate to="/" />} />
                                 <Route path="/data-explorer" element={user.role === 'admin' ? <DataExplorerPage /> : <Navigate to="/" />} />
+                                <Route path="/llmsetting" element={user.role === 'admin' ? <LlmSettingPage /> : <Navigate to="/" />} />
                                 <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
                                 <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                                 <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />

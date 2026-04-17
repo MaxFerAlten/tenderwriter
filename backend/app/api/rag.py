@@ -114,6 +114,21 @@ class RAGResponse(BaseModel):
     anonymized: bool = False
 
 
+# Settings Overrides Schema
+class LLMSettingsPayload(BaseModel):
+    temperature: float | None = None
+    top_p: float | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    repeat_penalty: float | None = None
+    repeat_last_n: int | None = None
+    dry_multiplier: float | None = None
+    dry_base: float | None = None
+    dry_allowed_length: int | None = None
+    max_tokens: int | None = None
+
+
+
 def _should_save_search_history(data: RAGQueryRequest) -> bool:
     return bool(data.save_history)
 
@@ -145,6 +160,65 @@ async def _audit_rag_result(
 
 
 # ── Routes ──
+
+async def _load_llm_settings(db: AsyncSession) -> dict:
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    if row and isinstance(row.data, dict) and "llm_settings" in row.data:
+        return row.data["llm_settings"]
+    return {}
+
+
+@router.get("/llmsetting", response_model=LLMSettingsPayload)
+async def get_llm_settings(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the current dynamic LLM override settings."""
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    
+    settings_data = {}
+    if row and isinstance(row.data, dict) and "llm_settings" in row.data:
+        settings_data = row.data["llm_settings"]
+        
+    return LLMSettingsPayload(**settings_data)
+
+
+@router.post("/llmsetting", response_model=LLMSettingsPayload)
+async def update_llm_settings(
+    payload: LLMSettingsPayload,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update global LLM override settings. Null fields are removed."""
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+    
+    if not row:
+        row = AppSettings(data={"llm_settings": {}})
+        db.add(row)
+        
+    if not isinstance(row.data, dict):
+        row.data = {}
+        
+    current_settings = row.data.get("llm_settings", {})
+    
+    pay_dict = payload.model_dump(exclude_unset=True)
+    for key, val in pay_dict.items():
+        if val is None:
+            current_settings.pop(key, None)
+        else:
+            current_settings[key] = val
+            
+    # Force SQLAlchemy to detect JSONB mutation
+    new_data = dict(row.data)
+    new_data["llm_settings"] = current_settings
+    row.data = new_data
+    
+    await db.commit()
+    
+    return LLMSettingsPayload(**current_settings)
 
 
 @router.post("/query", response_model=RAGResponse)
@@ -192,6 +266,7 @@ async def rag_query(
         external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
+        sampler_overrides=await _load_llm_settings(db),
     )
 
     if data.stream:
@@ -367,6 +442,7 @@ async def generate_section(
         external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
+        sampler_overrides=await _load_llm_settings(db),
     )
 
     result = await engine.query(rag_query)
@@ -435,6 +511,7 @@ async def compliance_check(
         external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
+        sampler_overrides=await _load_llm_settings(db),
     )
 
     result = await engine.query(rag_query)
@@ -501,6 +578,7 @@ async def analyze_requirements(
         external_target_api_key=policy.target_api_key,
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
+        sampler_overrides=await _load_llm_settings(db),
     )
 
     result = await engine.query(rag_query)

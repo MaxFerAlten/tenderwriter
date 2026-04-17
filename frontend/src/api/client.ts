@@ -816,6 +816,30 @@ export const ragApi = {
             body: { document_text: text },
         }),
     health: () => request<Record<string, unknown>>('/rag/health'),
+    getLlmSettings: () => request<{
+        temperature?: number | null;
+        top_p?: number | null;
+        presence_penalty?: number | null;
+        frequency_penalty?: number | null;
+        repeat_penalty?: number | null;
+        repeat_last_n?: number | null;
+        dry_multiplier?: number | null;
+        dry_base?: number | null;
+        dry_allowed_length?: number | null;
+        max_tokens?: number | null;
+    }>('/rag/llmsetting'),
+    updateLlmSettings: (data: {
+        temperature?: number | null;
+        top_p?: number | null;
+        presence_penalty?: number | null;
+        frequency_penalty?: number | null;
+        repeat_penalty?: number | null;
+        repeat_last_n?: number | null;
+        dry_multiplier?: number | null;
+        dry_base?: number | null;
+        dry_allowed_length?: number | null;
+        max_tokens?: number | null;
+    }) => request('/rag/llmsetting', { method: 'POST', body: data }),
 };
 
 // ── System ──

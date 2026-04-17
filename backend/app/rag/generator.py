@@ -432,6 +432,36 @@ class Generator:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    def _get_effective_params(
+        self,
+        temperature: float | None,
+        max_tokens: int | None,
+        sampler_overrides: dict | None
+    ) -> dict:
+        """Merge base sampling params with database overrides in a provider-agnostic way."""
+        params = {}
+        
+        # 1. Start with system defaults if needed
+        default_max = getattr(settings, "llama_max_tokens", 512)
+        default_temp = getattr(settings, "llama_temperature", 0.3)
+        
+        # 2. Add overrides if present
+        if sampler_overrides:
+            params.update(sampler_overrides)
+            
+        # 3. Explicit arguments from the call (if not None) take final precedence
+        if temperature is not None:
+            params["temperature"] = temperature
+        elif "temperature" not in params:
+            params["temperature"] = default_temp
+            
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        elif "max_tokens" not in params:
+            params["max_tokens"] = default_max
+            
+        return params
+
     @staticmethod
     def _raise_for_status_with_body(response: httpx.Response, *, context: str) -> None:
         try:
@@ -448,40 +478,32 @@ class Generator:
         self,
         *,
         prompt: str,
-        temperature: float,
-        max_tokens: int,
-        stop_tokens: list[str],
         stream: bool,
+        **sampling_params,
     ) -> dict:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": stream,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            **sampling_params,
         }
-        if stop_tokens:
-            payload["stop"] = stop_tokens
+        # Standard OpenAI uses 'stop' as a list or string
+        # Some providers might need it elsewhere, but this is the standard.
         return payload
 
     def _build_openai_completion_payload(
         self,
         *,
         prompt: str,
-        temperature: float,
-        max_tokens: int,
-        stop_tokens: list[str],
         stream: bool,
+        **sampling_params,
     ) -> dict:
         payload = {
             "model": self.model,
             "prompt": prompt,
             "stream": stream,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            **sampling_params,
         }
-        if stop_tokens:
-            payload["stop"] = stop_tokens
         return payload
 
     @staticmethod
@@ -716,7 +738,8 @@ class Generator:
         template: str,
         variables: dict,
         temperature: float | None = None,
-        max_tokens: int | None = None
+        max_tokens: int | None = None,
+        sampler_overrides: dict | None = None
     ) -> GenerationResult:
         """
         Generate text using a prompt template and Ollama.
@@ -752,21 +775,22 @@ class Generator:
 
         logger.debug("Generating with LLM", model=self.model, template=template_name)
 
-        # Resolve runtime params from settings overrides
-        max_tokens = max_tokens or getattr(settings, "llama_max_tokens", 256)
-        temperature = temperature if temperature is not None else getattr(settings, "llama_temperature", 0.3)
-        stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
-        stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
-        request_timeout = self._timeout_for_requested_tokens(max_tokens)
+        # 1. Get adaptive sampling parameters (DB overrides + defaults + explicit args)
+        effective_params = self._get_effective_params(temperature, max_tokens, sampler_overrides)
+        
+        # Resolve stop tokens (global constant from settings)
+        stop_raw = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
+        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        effective_params["stop"] = stop_tokens
+
+        request_timeout = self._timeout_for_requested_tokens(effective_params.get("max_tokens", 512))
 
         # OpenRouter / OpenAI-compatible chat API
         if self.provider == "openrouter":
             request_data = self._build_openrouter_payload(
                 prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stop_tokens=stop_tokens,
                 stream=False,
+                **effective_params,
             )
 
             data = await self._post_json_with_retries(
@@ -777,20 +801,19 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
                 logger.info(
                     "Retrying OpenRouter generation with higher token budget",
-                    previous_max_tokens=max_tokens,
+                    previous_max_tokens=effective_params.get("max_tokens"),
                     retry_max_tokens=retry_max_tokens,
                 )
+                retry_params = {**effective_params, "max_tokens": retry_max_tokens}
                 data = await self._post_json_with_retries(
                     url=f"{self.base_url}/chat/completions",
                     request_data=self._build_openrouter_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=retry_max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=False,
+                        **retry_params,
                     ),
                     headers=self._request_headers(),
                     context="OpenRouter generation retry",
@@ -812,10 +835,8 @@ class Generator:
         elif self._uses_openai_compatible_chat_api():
             request_data = self._build_openrouter_payload(
                 prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stop_tokens=stop_tokens,
                 stream=False,
+                **effective_params,
             )
             target_url = self._openai_chat_url()
 
@@ -834,21 +855,20 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
                 logger.info(
                     "Retrying OpenAI-compatible chat generation with higher token budget",
                     url=target_url,
-                    previous_max_tokens=max_tokens,
+                    previous_max_tokens=effective_params.get("max_tokens"),
                     retry_max_tokens=retry_max_tokens,
                 )
+                retry_params = {**effective_params, "max_tokens": retry_max_tokens}
                 data = await self._post_json_with_retries(
                     url=target_url,
                     request_data=self._build_openrouter_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=retry_max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=False,
+                        **retry_params,
                     ),
                     headers=self._request_headers(),
                     context="OpenAI-compatible chat generation retry",
@@ -870,10 +890,8 @@ class Generator:
         elif self._uses_openai_compatible_completions_api():
             request_data = self._build_openai_completion_payload(
                 prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stop_tokens=stop_tokens,
                 stream=False,
+                **effective_params,
             )
             target_url = self._openai_completion_url()
 
@@ -892,21 +910,20 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
                 logger.info(
                     "Retrying OpenAI-compatible completion generation with higher token budget",
                     url=target_url,
-                    previous_max_tokens=max_tokens,
+                    previous_max_tokens=effective_params.get("max_tokens"),
                     retry_max_tokens=retry_max_tokens,
                 )
+                retry_params = {**effective_params, "max_tokens": retry_max_tokens}
                 data = await self._post_json_with_retries(
                     url=target_url,
                     request_data=self._build_openai_completion_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=retry_max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=False,
+                        **retry_params,
                     ),
                     headers=self._request_headers(),
                     context="OpenAI-compatible completion generation retry",
@@ -933,6 +950,7 @@ class Generator:
             if _system_message:
                 _llama_messages.append({"role": "system", "content": _system_message})
             _llama_messages.append({"role": "user", "content": prompt})
+            # Final payload for llama.cpp - apply defaults for antirepetition if not overridden
             _llama_sampler: dict = {
                 "repeat_penalty": 1.05,
                 "repeat_last_n": 128,
@@ -940,10 +958,11 @@ class Generator:
                 "dry_base": 1.75,
                 "dry_allowed_length": 2,
             }
+            # Overwrite defaults with adaptive parameters (which contain DB overrides)
+            _llama_sampler.update(effective_params)
+
             request_data = {
                 "messages": _llama_messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
                 **_llama_sampler,
             }
             target_url = f"{self.base_url}/chat/completions"
@@ -963,20 +982,19 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
                 logger.info(
                     "Retrying gateway-backed generation with higher token budget",
                     url=target_url,
-                    previous_max_tokens=max_tokens,
+                    previous_max_tokens=effective_params.get("max_tokens"),
                     retry_max_tokens=retry_max_tokens,
                 )
                 data = await self._post_json_with_retries(
                     url=target_url,
                     request_data={
                         "messages": _llama_messages,
-                        "max_tokens": retry_max_tokens,
-                        "temperature": temperature,
                         **_llama_sampler,
+                        "max_tokens": retry_max_tokens,
                     },
                     headers=None,
                     context="Llama server retry",
@@ -1004,10 +1022,7 @@ class Generator:
                         "model": self.model,
                         "prompt": prompt,
                         "stream": False,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
+                        "options": effective_params,
                     },
                 )
                 response.raise_for_status()
@@ -1036,7 +1051,8 @@ class Generator:
         template: str,
         variables: dict,
         temperature: float | None = None,
-        max_tokens: int | None = None
+        max_tokens: int | None = None,
+        sampler_overrides: dict | None = None
     ) -> AsyncIterator[str]:
         """
         Generate text with streaming response.
@@ -1062,12 +1078,15 @@ class Generator:
             else:
                 _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
 
-        # Resolve runtime params from settings overrides
-        max_tokens = max_tokens or getattr(settings, "llama_max_tokens", 256)
-        temperature = temperature if temperature is not None else getattr(settings, "llama_temperature", 0.3)
-        stop_tokens = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
-        stop_tokens = [s.strip() for s in stop_tokens.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
-        stream_timeout = self._timeout_for_requested_tokens(max_tokens)
+        # 1. Get adaptive sampling parameters (DB overrides + defaults + explicit args)
+        effective_params = self._get_effective_params(temperature, max_tokens, sampler_overrides)
+        
+        # Resolve stop tokens
+        stop_raw = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
+        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        effective_params["stop"] = stop_tokens
+
+        stream_timeout = self._timeout_for_requested_tokens(effective_params.get("max_tokens", 512))
 
         # OpenRouter / OpenAI-compatible chat API
         if self.provider == "openrouter":
@@ -1077,10 +1096,8 @@ class Generator:
                     f"{self.base_url}/chat/completions",
                     json=self._build_openrouter_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=True,
+                        **effective_params,
                     ),
                     headers=self._request_headers(),
                 ) as response:
@@ -1111,10 +1128,8 @@ class Generator:
                     self._openai_chat_url(),
                     json=self._build_openrouter_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=True,
+                        **effective_params,
                     ),
                     headers=self._request_headers(),
                 ) as response:
@@ -1145,10 +1160,8 @@ class Generator:
                     self._openai_completion_url(),
                     json=self._build_openai_completion_payload(
                         prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stop_tokens=stop_tokens,
                         stream=True,
+                        **effective_params,
                     ),
                     headers=self._request_headers(),
                 ) as response:
@@ -1178,20 +1191,25 @@ class Generator:
             if _system_message:
                 _stream_messages.append({"role": "system", "content": _system_message})
             _stream_messages.append({"role": "user", "content": prompt})
+            
+            # Antirepetition defaults for llama.cpp
+            _llama_sampler: dict = {
+                "repeat_penalty": 1.05,
+                "repeat_last_n": 128,
+                "dry_multiplier": 0.4,
+                "dry_base": 1.75,
+                "dry_allowed_length": 2,
+            }
+            _llama_sampler.update(effective_params)
+            _llama_sampler["stream"] = True
+
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
                     json={
                         "messages": _stream_messages,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "stream": True,
-                        "repeat_penalty": 1.05,
-                        "repeat_last_n": 128,
-                        "dry_multiplier": 0.4,
-                        "dry_base": 1.75,
-                        "dry_allowed_length": 2,
+                        **_llama_sampler,
                     },
                 ) as response:
                     response.raise_for_status()
@@ -1217,10 +1235,10 @@ class Generator:
                         if done:
                             break
                     if not emitted_any_token and saw_reasoning_only:
-                        retry_max_tokens = self._expanded_retry_max_tokens(max_tokens)
+                        retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
                         logger.info(
                             "Retrying gateway-backed streaming generation after reasoning-only stream",
-                            previous_max_tokens=max_tokens,
+                            previous_max_tokens=effective_params.get("max_tokens"),
                             retry_max_tokens=retry_max_tokens,
                         )
                         retry_result = await self.generate(
@@ -1228,6 +1246,7 @@ class Generator:
                             variables=variables,
                             temperature=temperature,
                             max_tokens=retry_max_tokens,
+                            sampler_overrides=sampler_overrides,
                         )
                         if retry_result.text:
                             yield retry_result.text
@@ -1241,10 +1260,7 @@ class Generator:
                         "model": self.model,
                         "prompt": prompt,
                         "stream": True,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
+                        "options": effective_params,
                     },
                 ) as response:
                     response.raise_for_status()

@@ -389,6 +389,8 @@ class RAGQuery:
     external_target_api_key: str | None = None
     external_target_id: int | None = None
     external_target_timeout_ms: int | None = None
+    sampler_overrides: dict | None = None
+
 
 
 @dataclass
@@ -1501,6 +1503,7 @@ class HybridRAGEngine:
             variables=variables,
             temperature=rag_query.temperature,
             max_tokens=max_tokens,
+            sampler_overrides=rag_query.sampler_overrides,
         )
 
     def _extract_requested_length_target(self, query_text: str) -> ResponseLengthTarget | None:
@@ -2005,6 +2008,7 @@ class HybridRAGEngine:
             },
             temperature=min(rag_query.temperature, 0.2),
             max_tokens=96,
+            sampler_overrides=rag_query.sampler_overrides,
         )
 
         cleaned_text = self._clean_sentence_completion_text(completion_result.text)
@@ -2181,6 +2185,7 @@ class HybridRAGEngine:
                     generator=generator,
                     current_words=current_words,
                 ),
+                sampler_overrides=rag_query.sampler_overrides,
             )
 
             continuation_text = self._sanitize_continuation_text(
