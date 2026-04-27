@@ -22,6 +22,14 @@ from app.models import AppSettings, SearchHistory
 from app.privacy_audit import persist_privacy_audit
 from app.privacy_policy import EffectivePrivacyPolicy, resolve_effective_privacy_policy
 from app.rag.engine import QueryMode, RAGQuery
+from app.rag.planningcoverage import (
+    PLANNING_COVERAGE_SETTINGS_KEY,
+    normalize_planning_coverage_config,
+)
+from app.rag.procedure_guardrails import (
+    GUARDRAIL_SETTINGS_KEY,
+    normalize_guardrail_config,
+)
 
 router = APIRouter()
 
@@ -163,10 +171,32 @@ async def _audit_rag_result(
 
 async def _load_llm_settings(db: AsyncSession) -> dict:
     result = await db.execute(select(AppSettings).limit(1))
+    if result is None:
+        return {}
     row = result.scalar_one_or_none()
     if row and isinstance(row.data, dict) and "llm_settings" in row.data:
         return row.data["llm_settings"]
     return {}
+
+
+async def _load_planning_coverage_config(db: AsyncSession) -> dict:
+    result = await db.execute(select(AppSettings).limit(1))
+    if result is None:
+        return normalize_planning_coverage_config(None)
+    row = result.scalar_one_or_none()
+    if row and isinstance(row.data, dict):
+        return normalize_planning_coverage_config(row.data.get(PLANNING_COVERAGE_SETTINGS_KEY))
+    return normalize_planning_coverage_config(None)
+
+
+async def _load_guardrail_config(db: AsyncSession) -> dict:
+    result = await db.execute(select(AppSettings).limit(1))
+    if result is None:
+        return normalize_guardrail_config(None)
+    row = result.scalar_one_or_none()
+    if row and isinstance(row.data, dict):
+        return normalize_guardrail_config(row.data.get(GUARDRAIL_SETTINGS_KEY))
+    return normalize_guardrail_config(None)
 
 
 @router.get("/llmsetting", response_model=LLMSettingsPayload)
@@ -267,6 +297,8 @@ async def rag_query(
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
         sampler_overrides=await _load_llm_settings(db),
+        planning_coverage_config=await _load_planning_coverage_config(db),
+        guardrail_config=await _load_guardrail_config(db),
     )
 
     if data.stream:

@@ -254,6 +254,42 @@ User question:
 
 Answer:
 """,
+
+    "tender_overview": """[SYSTEM RULES - FACT-SHEET-FIRST CONTRACT]
+
+Usa SOLO il contesto recuperato. Il contesto contiene una sezione FACT_SHEET_START / FACT_SHEET_END seguita da blocchi SOURCE_START / SOURCE_END.
+
+Struttura obbligatoria della risposta, in questo ordine:
+1. Apri SEMPRE con la sezione "Fatti verificati" come elenco puntato. Per ogni voce della fact sheet usa esattamente questa forma:
+   - Procedura: <valore o non rilevato>
+   - ID procedura: <valore o non rilevato>
+   - CIG: <valore o non rilevato>
+   - Giorni critici: <valore o non rilevato>
+   - Durata: <valore o non rilevato>
+   - Importi: <valore o non rilevato>
+   - Sedi/luoghi: <valore o non rilevato>
+   - Percentuali: <valore o non rilevato>
+2. Subito dopo apri la sezione "Analisi" e produci la narrativa richiesta dall'utente, basata SOLO sui Fatti verificati e sulle SOURCE.
+
+Regole tassative:
+- Non usare numeri, CIG, importi, indirizzi, soggetti o procedure_id assenti dalla fact sheet.
+- Per ogni campo "non_rilevato" nella fact sheet scrivi esattamente "non rilevato" e non inferire.
+- Se stato_verifica è "conflitto", rispondi UNICAMENTE con la stringa: output bloccato: conflitto o dato non verificato. Niente prefazione, niente elenco, niente analisi.
+- Non unire OSCAT e SCT a meno che la domanda non richieda esplicitamente un confronto.
+- Non ripetere intestazioni, paragrafi o introduzioni. Non ricominciare le sezioni "Fatti verificati" o "Analisi".
+- Rispondi nella STESSA LINGUA della domanda.
+[END RULES]
+
+Contesto recuperato:
+{context}
+
+Domanda:
+{query}
+
+{response_constraints}
+
+Risposta:
+""",
 }
 
 

@@ -1,0 +1,78 @@
+# ruff: noqa: E402
+"""Tests for Markdown-driven critical tender coverage retrieval expansion."""
+
+from __future__ import annotations
+
+import os
+import unittest
+
+_TEST_ENV = {
+    "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
+    "ADMIN_PASSWORD": "test-admin-password-1234567890",
+    "DATABASE_URL": "postgresql+asyncpg://tester:securepass@localhost:5432/tenderwriter",
+    "NEO4J_PASSWORD": "test-neo4j-password-1234567890",
+    "MINIO_SECRET_KEY": "test-minio-password-1234567890",
+    "ONLYOFFICE_JWT_SECRET": "office-jwt-token-12345678901234567890",
+}
+for key, value in _TEST_ENV.items():
+    os.environ.setdefault(key, value)
+
+from app.rag.engine import HybridRAGEngine
+from app.rag.internal_prompting import load_retrieval_query_variants
+
+
+class RagCriticalCoverageTests(unittest.TestCase):
+    def test_retrieval_query_variants_load_from_markdown_assets(self) -> None:
+        italian_variants = load_retrieval_query_variants(
+            "retrieval-critical-coverage",
+            language="it",
+        )
+        english_variants = load_retrieval_query_variants(
+            "retrieval-critical-coverage",
+            language="en",
+        )
+
+        self.assertTrue(any("qualificazione ACN" in query for query in italian_variants))
+        self.assertTrue(any("ACN qualification" in query for query in english_variants))
+
+    def test_structured_tender_overview_expands_retrieval_queries(self) -> None:
+        engine = HybridRAGEngine()
+
+        queries = engine._retrieval_queries_for("Analizza questa gara e dimmi punti critici")
+
+        self.assertTrue(any("qualificazione ACN" in query for query in queries))
+        self.assertTrue(any("CCTT" in query for query in queries))
+        self.assertTrue(any("CO-LO-KW" in query for query in queries))
+        self.assertTrue(any("art. 1456" in query for query in queries))
+
+    def test_non_tender_query_does_not_expand_retrieval_queries(self) -> None:
+        engine = HybridRAGEngine()
+
+        queries = engine._retrieval_queries_for("Spiega cos'e una matrice RACI")
+
+        self.assertEqual(queries, ("Spiega cos'e una matrice RACI",))
+
+    def test_generic_tender_concept_query_does_not_expand_retrieval_queries(self) -> None:
+        engine = HybridRAGEngine()
+        query = "Spiega cos'e una procedura aperta di gara"
+
+        queries = engine._retrieval_queries_for(query)
+
+        self.assertFalse(engine._query_requests_broad_summary(query))
+        self.assertEqual(queries, (query,))
+
+    def test_generic_tender_concept_variants_do_not_expand_retrieval_queries(self) -> None:
+        engine = HybridRAGEngine()
+        queries = (
+            "Spiega la procedura aperta di gara",
+            "Descrivi il criterio di aggiudicazione in una gara pubblica",
+        )
+
+        for query in queries:
+            with self.subTest(query=query):
+                self.assertFalse(engine._query_requests_broad_summary(query))
+                self.assertEqual(engine._retrieval_queries_for(query), (query,))
+
+
+if __name__ == "__main__":
+    unittest.main()

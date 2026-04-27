@@ -22,11 +22,24 @@ import structlog
 
 from app.config import settings
 from app.rag.chunker import SemanticChunker, ChunkMetadata, TextChunk
+from app.rag.context_quality import compress_context_block, deduplicate_context_items
 from app.rag.dense_retriever import DenseRetriever
 from app.rag.embedder import Embedder, get_embedder
 from app.rag.fusion import RankFusion
 from app.rag.generator import Generator, GenerationResult
 from app.rag.graph_retriever import GraphRetriever
+from app.rag.internal_prompting import load_retrieval_query_variants
+from app.rag.planningcoverage import run_planning_coverage
+from app.rag.procedure_guardrails import (
+    BLOCKED_OUTPUT_MESSAGE,
+    FactSheet,
+    build_fact_sheet,
+    classify_chunk_procedure,
+    fact_sheet_from_guarded_context,
+    normalize_guardrail_config,
+    source_procedure_labels_from_guarded_context,
+    validate_guarded_answer,
+)
 from app.rag.reranker import Reranker
 from app.rag.sparse_retriever import SparseRetriever
 
@@ -198,6 +211,21 @@ TENDER_DOCUMENT_QUERY_RE = re.compile(
     r"\b(?:gara|bando|capitolato|disciplinare|documentazione|procedura|lotto|tender|rfp|avviso)\b",
     re.IGNORECASE,
 )
+GENERIC_TENDER_DEFINITION_QUERY_RE = re.compile(
+    r"\b(?:cos\s*['’`]?\s*[eè]|che\s+cosa\s+(?:e|è)|what\s+is|what's|"
+    r"definisci|definizione|come\s+funziona)\b",
+    re.IGNORECASE,
+)
+GENERIC_TENDER_INDEFINITE_RE = re.compile(
+    r"\b(?:un|una|uno|a|an)\s+"
+    r"(?:gara|bando|capitolato|disciplinare|procedura|lotto|tender|rfp|avviso|appalto)\b",
+    re.IGNORECASE,
+)
+GENERIC_TENDER_CONCEPT_RE = re.compile(
+    r"\b(?:procedura\s+aperta|criteri?o\s+di\s+aggiudicazione|gara\s+pubblica|"
+    r"appalto\s+pubblico|codice\s+(?:dei\s+)?appalti)\b",
+    re.IGNORECASE,
+)
 RETRIEVAL_INTENT_STRIP_RE = re.compile(
     r"\b(?:fai|fammi|dammi|fornisci|scrivi|prepara|genera|riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|analizz\w*|approfond\w*|elenco|lista|punti?\s+chiave|dettagli?\b|dettagliat\w*|complet\w*|strutturat\w*|esaustiv\w*|tutti?\b)\b",
     re.IGNORECASE,
@@ -259,6 +287,7 @@ LENGTH_META_PARAGRAPH_RE = re.compile(
     re.IGNORECASE,
 )
 APPROX_WORDS_PER_LINE = 8
+LONG_FORM_INTERNAL_INITIAL_TOKEN_CAP = 1536
 LONG_FORM_INTERNAL_PASS_TOKEN_CAP = 512
 LOCAL_CONTEXT_CHAR_BUDGET = 4500
 SUMMARY_LOCAL_CONTEXT_CHAR_BUDGET = 12000
@@ -270,6 +299,25 @@ DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS = 1024
 DEANONYMIZED_STREAM_FLUSH_CHARS = 96
 DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS = 220
 PROMPT_GARBAGE_PREFIX_TOKEN_RE = re.compile(r"\S+")
+INLINE_MARKDOWN_SECTION_HEADING_RE = re.compile(
+    r"(\S)(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)"
+)
+INLINE_MARKDOWN_SECTION_AFTER_PUNCT_RE = re.compile(
+    r"([.!?;])\s+(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)"
+)
+BOLD_SECTION_HEADING_RE = re.compile(r"^\s*\*\*([^*\n]{2,90})\*\*")
+NON_LATIN_SCRIPT_NOISE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+GENERATED_FACT_SHEET_HEADING_RE = re.compile(
+    r"^\s*(?:Fatti verificati|FACT_SHEET_START)\s*$",
+    re.IGNORECASE,
+)
+GENERATED_FACT_SHEET_FIELD_RE = re.compile(
+    r"^\s*(?:procedura|stato_verifica|procedure_id|cig|giorni_critici|durata|"
+    r"importi|sedi_luoghi|percentuali|fonti|conflitti)\s*:",
+    re.IGNORECASE,
+)
+GENERATED_FACT_SHEET_END_RE = re.compile(r"^\s*FACT_SHEET_END\s*$", re.IGNORECASE)
+PLURAL_DAY_RE = re.compile(r"\b([2-9][0-9]*)\s+giorno\b", re.IGNORECASE)
 PROMPT_GARBAGE_PREFIX_TOKENS = frozenset({
     "a",
     "answer",
@@ -390,6 +438,8 @@ class RAGQuery:
     external_target_id: int | None = None
     external_target_timeout_ms: int | None = None
     sampler_overrides: dict | None = None
+    planning_coverage_config: dict | None = None
+    guardrail_config: dict | None = None
 
 
 
@@ -568,7 +618,13 @@ class HybridRAGEngine:
         rag_query: RAGQuery,
     ) -> RetrievedContext:
         retrieval_query = self._query_text_for_retrieval(rag_query.text)
+        retrieval_queries = self._retrieval_queries_for(
+            rag_query.text,
+            primary_query=retrieval_query,
+        )
         retrieval_filters = self._build_retrieval_filters(rag_query)
+        vector_filters = self._vector_retrieval_filters(retrieval_filters)
+        graph_filters = dict(retrieval_filters or {}) or None
         retriever_selection = self._resolve_retriever_selection(rag_query)
         rank_fusion = self._build_rank_fusion_for_query(rag_query)
         retrieval_top_k = self._effective_retrieval_top_k(rag_query)
@@ -582,7 +638,7 @@ class HybridRAGEngine:
                 raw_dense = self.dense_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_dense,
-                    filters=retrieval_filters,
+                    filters=vector_filters,
                 )
                 dense_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -596,7 +652,7 @@ class HybridRAGEngine:
                 raw_sparse = self.sparse_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_sparse,
-                    filters=retrieval_filters,
+                    filters=vector_filters,
                 )
                 sparse_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -605,12 +661,72 @@ class HybridRAGEngine:
             except Exception as e:
                 logger.warning("Sparse retrieval failed", error=str(e))
 
+        variant_queries = retrieval_queries[1:]
+        variant_top_k = 2
+        if variant_queries:
+            if retriever_selection["sparse"] and self.sparse_retriever:
+                for variant_query in variant_queries:
+                    try:
+                        raw_sparse_variant = self.sparse_retriever.search(
+                            query=variant_query,
+                            top_k=variant_top_k,
+                            filters=vector_filters,
+                        )
+                        sparse_results.extend(
+                            {
+                                "text": r.text,
+                                "score": r.score,
+                                "metadata": {
+                                    **(r.metadata or {}),
+                                    "retrieval_variant": variant_query,
+                                },
+                            }
+                            for r in raw_sparse_variant
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Sparse retrieval variant failed",
+                            error=str(e),
+                            variant=variant_query,
+                        )
+
+            if retriever_selection["dense"] and self.dense_retriever:
+                dense_variant_queries = (
+                    (variant_queries[0], variant_queries[-1])
+                    if len(variant_queries) > 1
+                    else variant_queries
+                )
+                for variant_query in dict.fromkeys(dense_variant_queries):
+                    try:
+                        raw_dense_variant = self.dense_retriever.search(
+                            query=variant_query,
+                            top_k=variant_top_k,
+                            filters=vector_filters,
+                        )
+                        dense_results.extend(
+                            {
+                                "text": r.text,
+                                "score": r.score,
+                                "metadata": {
+                                    **(r.metadata or {}),
+                                    "retrieval_variant": variant_query,
+                                },
+                            }
+                            for r in raw_dense_variant
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Dense retrieval variant failed",
+                            error=str(e),
+                            variant=variant_query,
+                        )
+
         if retriever_selection["graph"] and self.graph_retriever:
             try:
                 raw_graph = await self.graph_retriever.search(
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_graph,
-                    filters=retrieval_filters,
+                    filters=graph_filters,
                 )
                 graph_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata}
@@ -619,16 +735,63 @@ class HybridRAGEngine:
             except Exception as e:
                 logger.warning("Graph retrieval failed", error=str(e))
 
+        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH}:
+            coverage = await run_planning_coverage(
+                query=rag_query.text,
+                config=rag_query.planning_coverage_config,
+                filters=vector_filters,
+                graph_filters=graph_filters,
+                sparse_retriever=(
+                    self.sparse_retriever
+                    if retriever_selection["sparse"]
+                    else None
+                ),
+                dense_retriever=(
+                    self.dense_retriever
+                    if retriever_selection["dense"]
+                    else None
+                ),
+                graph_retriever=(
+                    self.graph_retriever
+                    if retriever_selection["graph"]
+                    else None
+                ),
+            )
+            if coverage.activated:
+                for item in coverage.results:
+                    retriever = item.get("retriever")
+                    payload = {
+                        "text": item.get("text", ""),
+                        "score": item.get("score", 0),
+                        "metadata": item.get("metadata", {}),
+                    }
+                    if retriever == "sparse":
+                        sparse_results.append(payload)
+                    elif retriever == "graph":
+                        graph_results.append(payload)
+                    else:
+                        dense_results.append(payload)
+                logger.info(
+                    "Planning coverage retrieval completed",
+                    query_class=coverage.query_class,
+                    slots=coverage.slots_triggered,
+                    coverage_results=len(coverage.results),
+                    latency_ms=coverage.latency_ms,
+                )
+
         top_k_final = self._effective_final_top_k(rag_query)
+
+        fusion_top_k = self._effective_fusion_top_k(
+            top_k_final=top_k_final,
+            retrieval_top_k=retrieval_top_k,
+            retriever_selection=retriever_selection,
+        )
 
         fused = rank_fusion.fuse(
             dense_results=dense_results,
             sparse_results=sparse_results,
             graph_results=graph_results,
-            top_k=max(
-                top_k_final,
-                retrieval_top_k or settings.rag_top_k_dense,
-            ),
+            top_k=fusion_top_k,
         )
 
         reranked = []
@@ -641,38 +804,170 @@ class HybridRAGEngine:
                 reranked = self.reranker.rerank(
                     query=retrieval_query,
                     results=fused_dicts,
-                    top_k=top_k_final,
+                    top_k=fusion_top_k,
                 )
             except Exception as e:
                 logger.warning("Re-ranking failed, using fusion order", error=str(e))
-                reranked = fused[:top_k_final]
+                reranked = fused
 
-        context_texts = []
-        sources = []
+        context_items = []
         for r in reranked:
             text = r.text if hasattr(r, "text") else r.get("text", "")
             metadata = r.metadata if hasattr(r, "metadata") else r.get("metadata", {})
             retriever_sources = r.sources if hasattr(r, "sources") else r.get("sources", [])
             source_scores = r.source_scores if hasattr(r, "source_scores") else r.get("source_scores", {})
+            context_items.append(
+                {
+                    "text": text,
+                    "score": r.score if hasattr(r, "score") else r.get("score", 0),
+                    "metadata": metadata,
+                    "retriever_sources": retriever_sources,
+                    "source_scores": source_scores,
+                }
+            )
+
+        fact_sheet_context_items = list(context_items)
+        context_items, _dedup_stats = deduplicate_context_items(context_items)
+        context_items = self._select_final_reranked_results(
+            context_items,
+            top_k=top_k_final,
+            retriever_selection=retriever_selection,
+        )
+
+        context_texts = []
+        sources = []
+        should_compress_context = (
+            rag_query.mode == QueryMode.QA and self._query_requests_broad_summary(rag_query.text)
+        )
+        for item in context_items:
+            text = str(item.get("text") or "")
+            if should_compress_context:
+                text = compress_context_block(
+                    text,
+                    query=rag_query.text,
+                    min_chars_to_compress=450,
+                )
             context_texts.append(text)
-            sources.append({
-                "text": text[:200] + "..." if len(text) > 200 else text,
-                "score": r.score if hasattr(r, "score") else r.get("score", 0),
-                "metadata": metadata,
-                "retriever_sources": retriever_sources,
-                "source_scores": source_scores,
-            })
+            sources.append(
+                {
+                    "text": text[:200] + "..." if len(text) > 200 else text,
+                    "score": item.get("score", 0),
+                    "metadata": item.get("metadata", {}),
+                    "retriever_sources": item.get("retriever_sources", []),
+                    "source_scores": item.get("source_scores", {}),
+                }
+            )
+
+        if self._query_uses_procedure_guardrails(rag_query):
+            fact_sheet = build_fact_sheet(fact_sheet_context_items, query=rag_query.text)
+            for source, context_text in zip(sources, context_texts, strict=False):
+                source_procedure = classify_chunk_procedure(context_text)
+                source["metadata"] = {
+                    **source.get("metadata", {}),
+                    "procedure_label": source_procedure,
+                    "fact_sheet_procedure_label": fact_sheet.procedure_label,
+                    "fact_sheet_status": fact_sheet.status.value,
+                }
+            logger.info(
+                "RAG guardrail fact sheet built",
+                procedure_label=fact_sheet.procedure_label,
+                fact_sheet_status=fact_sheet.status.value,
+                cigs=len(fact_sheet.cigs),
+                procedure_ids=len(fact_sheet.procedure_ids),
+                critical_days=len(fact_sheet.critical_days),
+                durations=len(fact_sheet.durations),
+                amounts=len(fact_sheet.amounts),
+                conflicts=fact_sheet.conflicts,
+                source_count=len(fact_sheet.source_ids),
+            )
+            return RetrievedContext(
+                context=self._build_context_with_source_envelopes(
+                    context_texts,
+                    sources,
+                    fact_sheet=fact_sheet,
+                ),
+                sources=sources,
+            )
 
         return RetrievedContext(
-            context="\n\n---\n\n".join(context_texts),
+            context=self._build_context_with_doc_tags(context_texts, sources),
             sources=sources,
         )
+
+    def _build_context_with_doc_tags(
+        self,
+        context_texts: list[str],
+        sources: list[dict],
+    ) -> str:
+        """Build context with XML-style doc tags to prevent header re-injection."""
+        parts = []
+        for i, (text, source) in enumerate(zip(context_texts, sources)):
+            doc_id = source.get("metadata", {}).get("chunk_index", i)
+            page = source.get("metadata", {}).get("page_number", "?")
+            text = text.strip()
+            text = re.sub(r"^#{1,4}\s+.+\n", "", text, flags=re.MULTILINE)
+            text = re.sub(r"^#{1,4}\s+", "", text)
+            parts.append(f"<doc id='{doc_id}' page='{page}'>\n{text}\n</doc>")
+        return "\n".join(parts)
+
+    def _format_fact_sheet(self, fact_sheet: FactSheet) -> str:
+        return "\n".join(
+            [
+                "FACT_SHEET_START",
+                f"procedura: {fact_sheet.procedure_label}",
+                f"stato_verifica: {fact_sheet.status.value}",
+                f"procedure_id: {', '.join(fact_sheet.procedure_ids) or 'non_rilevato'}",
+                f"cig: {', '.join(f'CIG {value}' for value in fact_sheet.cigs) or 'non_rilevato'}",
+                f"giorni_critici: {', '.join(fact_sheet.critical_days) or 'non_rilevato'}",
+                f"durata: {', '.join(fact_sheet.durations) or 'non_rilevato'}",
+                f"importi: {', '.join(fact_sheet.amounts) or 'non_rilevato'}",
+                f"sedi_luoghi: {', '.join(fact_sheet.locations) or 'non_rilevato'}",
+                f"percentuali: {', '.join(fact_sheet.percentages) or 'non_rilevato'}",
+                f"fonti: {', '.join(fact_sheet.source_ids) or 'non_rilevato'}",
+                f"conflitti: {', '.join(fact_sheet.conflicts) or 'nessuno'}",
+                "FACT_SHEET_END",
+            ]
+        )
+
+    def _build_context_with_source_envelopes(
+        self,
+        context_texts: list[str],
+        sources: list[dict],
+        *,
+        fact_sheet: FactSheet,
+    ) -> str:
+        """Build guarded context with deterministic fact sheet and source boundaries."""
+        parts = [self._format_fact_sheet(fact_sheet)]
+        for index, (text, source) in enumerate(zip(context_texts, sources, strict=False)):
+            metadata = source.get("metadata", {})
+            doc_id = metadata.get("chunk_index", index)
+            page = metadata.get("page_number", "?")
+            procedure = metadata.get("procedure_label") or "non_attribuibile"
+            cleaned = str(text or "").strip()
+            cleaned = re.sub(r"^#{1,4}\s+.+\n", "", cleaned, flags=re.MULTILINE)
+            cleaned = re.sub(r"^#{1,4}\s+", "", cleaned)
+            parts.append(
+                f"SOURCE_START id={doc_id} page={page} procedure={procedure}\n"
+                f"{cleaned}\n"
+                "SOURCE_END"
+            )
+        return "\n\n".join(parts)
 
     def _build_retrieval_filters(self, rag_query: RAGQuery) -> dict | None:
         filters = dict(rag_query.filters or {})
         if rag_query.tender_id is not None:
             filters.setdefault("tender_id", rag_query.tender_id)
         return filters or None
+
+    def _vector_retrieval_filters(self, filters: dict | None) -> dict | None:
+        if not filters:
+            return None
+        vector_filters = {
+            key: value
+            for key, value in filters.items()
+            if not str(key).startswith("graph_")
+        }
+        return vector_filters or None
 
     def _resolve_retriever_selection(self, rag_query: RAGQuery) -> dict[str, bool]:
         selection = {
@@ -723,6 +1018,87 @@ class HybridRAGEngine:
             sparse_weight=weights["sparse"],
             graph_weight=weights["graph"],
         )
+
+    def _effective_fusion_top_k(
+        self,
+        *,
+        top_k_final: int,
+        retrieval_top_k: int | None,
+        retriever_selection: dict[str, bool],
+    ) -> int:
+        base_pool = max(top_k_final, retrieval_top_k or settings.rag_top_k_dense)
+        if not retriever_selection.get("graph"):
+            return base_pool
+
+        if retrieval_top_k is not None:
+            depth_by_retriever = {
+                "dense": max(0, int(retrieval_top_k)),
+                "sparse": max(0, int(retrieval_top_k)),
+                "graph": max(0, int(retrieval_top_k)),
+            }
+        else:
+            depth_by_retriever = {
+                "dense": settings.rag_top_k_dense,
+                "sparse": settings.rag_top_k_sparse,
+                "graph": settings.rag_top_k_graph,
+            }
+
+        enabled_pool = sum(
+            depth
+            for retriever, depth in depth_by_retriever.items()
+            if retriever_selection.get(retriever)
+        )
+        return max(base_pool, enabled_pool)
+
+    def _result_retriever_sources(self, result: Any) -> list[str]:
+        if hasattr(result, "sources"):
+            return list(getattr(result, "sources") or [])
+        if isinstance(result, dict):
+            return list(result.get("sources") or result.get("retriever_sources") or [])
+        return []
+
+    def _select_final_reranked_results(
+        self,
+        results: list[Any],
+        *,
+        top_k: int,
+        retriever_selection: dict[str, bool],
+    ) -> list[Any]:
+        if top_k <= 0:
+            return []
+
+        selected = list(results[:top_k])
+        if not retriever_selection.get("graph"):
+            return selected
+
+        if any("graph" in self._result_retriever_sources(result) for result in selected):
+            return selected
+
+        graph_candidate = next(
+            (
+                result
+                for result in results
+                if "graph" in self._result_retriever_sources(result)
+            ),
+            None,
+        )
+        if graph_candidate is None:
+            return selected
+
+        if len(selected) < top_k:
+            selected.append(graph_candidate)
+            return selected
+
+        replace_index = next(
+            (
+                index
+                for index in range(len(selected) - 1, -1, -1)
+                if "graph" not in self._result_retriever_sources(selected[index])
+            ),
+            len(selected) - 1,
+        )
+        selected[replace_index] = graph_candidate
+        return selected
 
     async def query(self, rag_query: RAGQuery) -> RAGResponse:
         """
@@ -876,17 +1252,36 @@ class HybridRAGEngine:
                 ) or generation_result.completion_tokens,
             )
 
-        generation_result = replace(
-            generation_result,
-            text=self._clean_final_answer_text(generation_result.text),
+        raw_guarded_answer = self._apply_generation_guardrails(
+            rag_query,
+            context=context,
+            answer=generation_result.text,
         )
-
-        if deanonymize_session_id:
+        if raw_guarded_answer.startswith(BLOCKED_OUTPUT_MESSAGE):
+            generation_result = replace(generation_result, text=raw_guarded_answer)
+        else:
             generation_result = replace(
                 generation_result,
-                text=await self._deanonymize_text(
-                    generation_result.text,
-                    deanonymize_session_id,
+                text=self._clean_final_answer_text(
+                    self._remove_duplicate_paragraphs(generation_result.text)
+                ),
+            )
+
+            if deanonymize_session_id:
+                generation_result = replace(
+                    generation_result,
+                    text=await self._deanonymize_text(
+                        generation_result.text,
+                        deanonymize_session_id,
+                    ),
+                )
+
+            generation_result = replace(
+                generation_result,
+                text=self._apply_generation_guardrails(
+                    rag_query,
+                    context=context,
+                    answer=generation_result.text,
                 ),
             )
 
@@ -918,6 +1313,12 @@ class HybridRAGEngine:
 
         Retrieval + fusion + re-ranking happen first, then generation is streamed.
         """
+        if self._should_buffer_stream_for_quality(rag_query):
+            result = await self.query(rag_query)
+            if result.answer:
+                yield result.answer
+            return
+
         await self.ensure_initialized()
         retrieved = await self._retrieve_context_and_sources(rag_query)
         context = retrieved.context
@@ -991,7 +1392,6 @@ class HybridRAGEngine:
                     max_tokens=max_tokens,
                 )
 
-            first_token_in_attempt = True
             async for token in generator.generate_stream(
                 template=active_template,
                 variables=active_variables,
@@ -1015,7 +1415,6 @@ class HybridRAGEngine:
                     if visible_delta:
                         yield visible_delta
                     emitted_visible_text = visible_full_text
-                    first_token_in_attempt = False
                     continue
 
                 deanonymized_flush_candidate += token
@@ -1145,6 +1544,20 @@ class HybridRAGEngine:
         if sanitized_text.startswith(emitted_text):
             return sanitized_text[len(emitted_text) :]
         return self._strip_continuation_overlap(emitted_text, sanitized_text)
+
+    def _should_buffer_stream_for_quality(self, rag_query: RAGQuery) -> bool:
+        if rag_query.mode != QueryMode.QA:
+            return False
+
+        if self._query_uses_procedure_guardrails(rag_query):
+            return True
+
+        if self._extract_requested_length_target(rag_query.text):
+            return False
+
+        return self._query_requests_broad_summary(rag_query.text) and bool(
+            TENDER_DOCUMENT_QUERY_RE.search(rag_query.text or "")
+        )
 
     def _anonymizer_circuit_is_open(self) -> bool:
         return time.monotonic() < self._anonymizer_circuit_open_until
@@ -1570,17 +1983,10 @@ class HybridRAGEngine:
             return None
 
         estimated_tokens = int(target_words * 3)
-        if target_words >= 800:
-            estimated_tokens = max(estimated_tokens, 3072)
-        elif target_words >= 500:
-            estimated_tokens = max(estimated_tokens, 2048)
-        elif target_words >= 250:
-            estimated_tokens = max(estimated_tokens, 1024)
-        else:
-            estimated_tokens = max(
-                estimated_tokens,
-                getattr(settings, "llama_max_tokens", 256),
-            )
+        estimated_tokens = max(
+            estimated_tokens,
+            getattr(settings, "llama_max_tokens", 256),
+        )
 
         return min(estimated_tokens, 4096)
 
@@ -1612,6 +2018,8 @@ class HybridRAGEngine:
             return total_budget
 
         if length_target.target_words >= 500 or length_target.approximate:
+            if current_words <= 0:
+                return min(total_budget, LONG_FORM_INTERNAL_INITIAL_TOKEN_CAP)
             return min(total_budget, LONG_FORM_INTERNAL_PASS_TOKEN_CAP)
 
         return total_budget
@@ -1791,12 +2199,106 @@ class HybridRAGEngine:
             kept_blocks.append(stripped)
         return "\n\n".join(kept_blocks).strip()
 
+    def _separate_inline_markdown_sections(self, text: str) -> str:
+        separated = INLINE_MARKDOWN_SECTION_AFTER_PUNCT_RE.sub(r"\1\n\n\2", text or "")
+        return INLINE_MARKDOWN_SECTION_HEADING_RE.sub(r"\1\n\n\2", separated)
+
+    def _section_heading_key(self, block: str) -> str | None:
+        match = BOLD_SECTION_HEADING_RE.match(block or "")
+        if not match:
+            return None
+        heading = re.sub(r"\s+", " ", match.group(1).casefold()).strip(" :.")
+        return heading or None
+
+    def _deduplicate_restarted_sections(self, text: str) -> str:
+        kept_blocks: list[str] = []
+        heading_indexes: dict[str, int] = {}
+
+        for block in re.split(r"\n\s*\n", (text or "").strip()):
+            stripped = block.strip()
+            if not stripped:
+                continue
+
+            heading_key = self._section_heading_key(stripped)
+            if not heading_key:
+                kept_blocks.append(stripped)
+                continue
+
+            previous_index = heading_indexes.get(heading_key)
+            if previous_index is None:
+                heading_indexes[heading_key] = len(kept_blocks)
+                kept_blocks.append(stripped)
+                continue
+
+            if len(self._normalize_duplicate_block(stripped)) > len(
+                self._normalize_duplicate_block(kept_blocks[previous_index])
+            ):
+                kept_blocks[previous_index] = stripped
+
+        return "\n\n".join(kept_blocks).strip()
+
+    def _strip_generated_fact_sheet_leakage(self, text: str) -> str:
+        lines = (text or "").splitlines()
+        first_content_index = next(
+            (index for index, line in enumerate(lines) if line.strip()),
+            None,
+        )
+        if first_content_index is None:
+            return ""
+
+        first_line = lines[first_content_index].strip()
+        if GENERATED_FACT_SHEET_HEADING_RE.match(first_line):
+            start_index = first_content_index
+            index = first_content_index + 1
+        elif GENERATED_FACT_SHEET_FIELD_RE.match(first_line):
+            start_index = first_content_index
+            index = first_content_index
+        else:
+            return text
+
+        saw_field = False
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if GENERATED_FACT_SHEET_FIELD_RE.match(stripped):
+                saw_field = True
+                index += 1
+                continue
+            if GENERATED_FACT_SHEET_END_RE.match(stripped):
+                index += 1
+                break
+            if not stripped and saw_field:
+                index += 1
+                break
+            if not stripped:
+                index += 1
+                continue
+            break
+
+        if not saw_field:
+            return text
+        return "\n".join(lines[:start_index] + lines[index:]).strip()
+
+    def _clean_generation_artifacts(self, text: str) -> str:
+        cleaned = NON_LATIN_SCRIPT_NOISE_RE.sub("", text or "")
+        cleaned = PLURAL_DAY_RE.sub(r"\1 giorni", cleaned)
+        replacements = (
+            (r"\bulter\s+ulteriore\b", "ulteriore"),
+            (r"\bMigliore\s+\(MAM\)", "Migliorativa (MAM)"),
+            (r"\bInfrastruttura\s+Digitali\b", "Infrastrutture Digitali"),
+            (r"\bCIG\s*:?\s*B33988ECF[A-Z0-9]?\b", "CIG B33988ECF2"),
+        )
+        for pattern, replacement in replacements:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+        return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
     def _deduplicate_repeated_paragraphs(self, text: str) -> str:
         return self._remove_redundant_continuation_blocks("", text)
 
     def _sanitize_continuation_text(self, base_text: str, continuation_text: str) -> str:
         cleaned = self._clean_continuation_text(continuation_text)
         cleaned = self._strip_prompt_leakage(cleaned)
+        cleaned = self._separate_inline_markdown_sections(cleaned)
+        cleaned = self._deduplicate_restarted_sections(cleaned)
         cleaned = self._remove_length_meta_blocks(cleaned)
         cleaned = self._strip_continuation_overlap(base_text, cleaned)
         cleaned = self._remove_redundant_continuation_blocks(base_text, cleaned)
@@ -1876,6 +2378,10 @@ class HybridRAGEngine:
 
     def _clean_final_answer_text(self, text: str) -> str:
         text = self._strip_prompt_leakage(text)
+        text = self._strip_generated_fact_sheet_leakage(text)
+        text = self._separate_inline_markdown_sections(text)
+        text = self._deduplicate_restarted_sections(text)
+        text = self._clean_generation_artifacts(text)
         text = self._remove_length_meta_blocks(text)
         text = self._deduplicate_repeated_paragraphs(text)
         lines = [
@@ -2022,6 +2528,13 @@ class HybridRAGEngine:
 
     def _query_requests_broad_summary(self, query_text: str) -> bool:
         normalized_query = self._query_text_without_length_request(query_text or "")
+        if (
+            GENERIC_TENDER_DEFINITION_QUERY_RE.search(normalized_query)
+            and GENERIC_TENDER_INDEFINITE_RE.search(normalized_query)
+        ):
+            return False
+        if GENERIC_TENDER_CONCEPT_RE.search(normalized_query):
+            return False
         return bool(
             (SUMMARY_INTENT_QUERY_RE.search(normalized_query) or STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query))
             and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
@@ -2032,6 +2545,83 @@ class HybridRAGEngine:
         return bool(
             STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query)
             and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
+        )
+
+    def _query_uses_procedure_guardrails(self, rag_query: RAGQuery) -> bool:
+        cfg = normalize_guardrail_config(rag_query.guardrail_config)
+        if not cfg["enabled"]:
+            return False
+        if rag_query.mode != QueryMode.QA:
+            return False
+        if cfg["onlyTenderOverview"]:
+            return self._query_requests_broad_summary(rag_query.text)
+        return bool(TENDER_DOCUMENT_QUERY_RE.search(rag_query.text or ""))
+
+    def _apply_generation_guardrails(
+        self,
+        rag_query: RAGQuery,
+        *,
+        context: str,
+        answer: str,
+    ) -> str:
+        if not self._query_uses_procedure_guardrails(rag_query):
+            return answer
+
+        fact_sheet = fact_sheet_from_guarded_context(context)
+        if fact_sheet is None:
+            return answer
+
+        result = validate_guarded_answer(
+            answer=answer,
+            fact_sheet=fact_sheet,
+            guarded=True,
+            query=rag_query.text,
+            config=rag_query.guardrail_config,
+            allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+        )
+        if result.status in {"AUDIT", "BLOCK"}:
+            logger.warning(
+                "RAG guarded answer validation failed",
+                status=result.status,
+                failures=result.failures,
+                procedure_label=fact_sheet.procedure_label,
+            )
+        if result.status == "BLOCK":
+            return self._build_guardrail_blocked_answer(fact_sheet)
+        return result.safe_answer
+
+    def _build_guardrail_blocked_answer(self, fact_sheet: FactSheet) -> str:
+        def values_or_missing(
+            values: tuple[str, ...],
+            *,
+            conflict_key: str | None = None,
+            prefix: str = "",
+        ) -> str:
+            if conflict_key and conflict_key in fact_sheet.conflicts:
+                return "conflitto rilevato"
+            if not values:
+                return "non rilevato"
+            return ", ".join(f"{prefix}{value}" for value in values)
+
+        return "\n".join(
+            [
+                BLOCKED_OUTPUT_MESSAGE,
+                "",
+                "Risposta generata scartata: conteneva dati non verificati rispetto "
+                "alle fonti recuperate.",
+                "",
+                "Fatti verificati disponibili:",
+                f"- Procedura: {fact_sheet.procedure_label or 'non rilevato'}",
+                "- ID procedura: "
+                f"{values_or_missing(fact_sheet.procedure_ids, conflict_key='procedure_id')}",
+                f"- CIG: {values_or_missing(fact_sheet.cigs, conflict_key='cig', prefix='CIG ')}",
+                f"- Giorni critici: {values_or_missing(fact_sheet.critical_days)}",
+                f"- Durata: {values_or_missing(fact_sheet.durations)}",
+                f"- Importi: {values_or_missing(fact_sheet.amounts)}",
+                f"- Sedi/luoghi: {values_or_missing(fact_sheet.locations)}",
+                f"- Percentuali: {values_or_missing(fact_sheet.percentages)}",
+                f"- Fonti: {values_or_missing(fact_sheet.source_ids)}",
+            ]
         )
 
     def _effective_final_top_k(self, rag_query: RAGQuery) -> int:
@@ -2066,12 +2656,45 @@ class HybridRAGEngine:
         stripped = re.sub(r"\s+", " ", stripped).strip(" ,.;:-")
         return stripped or normalized_query
 
+    def _retrieval_queries_for(
+        self,
+        query_text: str,
+        *,
+        primary_query: str | None = None,
+    ) -> tuple[str, ...]:
+        primary = primary_query or self._query_text_for_retrieval(query_text)
+        queries = [primary]
+        seen = {primary.casefold()}
+
+        if not self._query_requests_broad_summary(query_text):
+            return tuple(queries)
+
+        try:
+            variants = load_retrieval_query_variants(
+                "retrieval-critical-coverage",
+                language="it",
+            )
+        except Exception as e:
+            logger.warning("Critical retrieval prompt asset unavailable", error=str(e))
+            return tuple(queries)
+
+        for variant in variants:
+            normalized = variant.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            queries.append(variant)
+        return tuple(queries)
+
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
         length_target = self._extract_requested_length_target(rag_query.text)
         constraints = [
             "Rispondi direttamente alla domanda dell'utente senza preamboli meta.",
             "Non limitarti a contare o commentare il numero di parole della tua risposta.",
             "Se percepisci di essere vicino al limite di output, chiudi sempre la frase o il concetto in corso prima di terminare.",
+            "Non riprodurre mai tag <doc>, titoli di sezione ### o intestazioni presenti nel contesto.",
+            "Se lo stesso concetto appare in più fonti, citalo una sola volta nella posizione più appropriata.",
+            "Non ripetere blocchi di testo già scritti nella risposta.",
         ]
 
         if length_target:
@@ -2110,9 +2733,24 @@ class HybridRAGEngine:
                 )
             if self._query_requests_structured_tender_overview(rag_query.text):
                 constraints.extend([
-                    "Organizza la risposta come elenco strutturato della gara, privilegiando: oggetto, stazione appaltante, procedura, criterio di aggiudicazione, durata, documenti citati, requisiti o obblighi principali emersi dal contesto.",
-                    "Non copiare segnaposto, slash isolati, date incomplete o frammenti OCR palesemente rotti.",
-                    "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
+                    "Organizza la risposta in queste sezioni esatte:\n"
+                    "1. Oggetto e perimetro\n"
+                    "2. Architettura tecnologica\n"
+                    "3. Fasi operative critiche\n"
+                    "4. Punti di rischio contrattuale\n"
+                    "5. Governance multi-soggetto",
+                    "Scrivi ogni sezione in prosa narrativa coesa, con frasi complete "
+                    "e transizioni logiche tra i dettagli.",
+                    "Non ricominciare dall'introduzione quando passi a una nuova sezione.",
+                    "Non ripetere lo stesso paragrafo o lo stesso concetto in piu sezioni.",
+                    "Ogni valore numerico deve apparire esattamente come trovato nel contesto.",
+                    "Se un soggetto, organizzazione, piattaforma, penale o scadenza non e "
+                    "nel contesto, scrivi: non disponibile nei documenti forniti.",
+                    "Non introdurre nomi assenti dal contesto recuperato.",
+                    "Non copiare segnaposto, slash isolati, date incomplete o frammenti "
+                    "OCR palesemente rotti.",
+                    "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure "
+                    "segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
                 ])
 
         if self._query_requests_math_rendering(rag_query.text):
@@ -2224,9 +2862,16 @@ class HybridRAGEngine:
         mode = rag_query.mode
 
         if mode == QueryMode.QA:
+            query_text = self._query_text_without_length_request(rag_query.text)
+            if self._query_uses_procedure_guardrails(rag_query):
+                return "tender_overview", {
+                    "context": context,
+                    "query": query_text,
+                    "response_constraints": self._build_response_constraints(rag_query),
+                }
             return "general_qa", {
                 "context": context,
-                "query": self._query_text_without_length_request(rag_query.text),
+                "query": query_text,
                 "response_constraints": self._build_response_constraints(rag_query),
             }
 
@@ -2310,3 +2955,61 @@ class HybridRAGEngine:
             await self.graph_retriever.shutdown()
         self._initialized = False
         logger.info("HybridRAG Engine shut down")
+
+    BROKEN_NUMERIC_PATTERNS = [
+        r"\bentro\s+giorni\b",
+        r"\bfino\s+a\s+giorni\b",
+        r"\bID:\s*CH\b(?!\d)",
+    ]
+
+    CRITICAL_NUMERIC_PATTERNS = [
+        r"\b\d+\s*giorni\b",
+        r"\b\d+[\.,]\d+[\.,]\d+\b",
+        r"\beuro\s*\d",
+        r"\bCIG\s+[A-Z0-9]+",
+        r"\bSLA\b",
+        r"\bpenale\b",
+    ]
+
+    def _pin_critical_chunks(
+        self,
+        chunks: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        """Separate pinned (critical data) chunks from MMR candidates."""
+        pinned, candidates = [], []
+        for chunk in chunks:
+            text = chunk.get("text", "")
+            is_critical = any(
+                re.search(p, text, re.IGNORECASE)
+                for p in self.CRITICAL_NUMERIC_PATTERNS
+            )
+            if is_critical:
+                pinned.append(chunk)
+            else:
+                candidates.append(chunk)
+        return pinned, candidates
+
+    def _remove_duplicate_paragraphs(
+        self,
+        text: str,
+        similarity_threshold: float = 0.85,
+    ) -> str:
+        """Remove near-duplicate paragraphs using Jaccard similarity."""
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        unique = []
+        for para in paragraphs:
+            tokens_new = set(para.lower().split())
+            is_duplicate = False
+            for accepted in unique:
+                tokens_acc = set(accepted.lower().split())
+                intersection = tokens_new & tokens_acc
+                union = tokens_new | tokens_acc
+                if union and len(intersection) / len(union) >= similarity_threshold:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique.append(para)
+        return "\n\n".join(unique)
+
+    def _has_broken_numeric_patterns(self, text: str) -> bool:
+        return any(re.search(p, text, re.IGNORECASE) for p in self.BROKEN_NUMERIC_PATTERNS)

@@ -443,6 +443,9 @@ def load_rag_api_test_modules():
         external_target_api_key: str | None = None
         external_target_id: str | None = None
         external_target_timeout_ms: int | None = None
+        sampler_overrides: dict | None = None
+        planning_coverage_config: dict | None = None
+        guardrail_config: dict | None = None
 
     fake_rag_engine.QueryMode = _QueryMode
     fake_rag_engine.RAGQuery = _RAGQuery

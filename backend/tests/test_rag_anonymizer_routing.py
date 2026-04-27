@@ -239,11 +239,11 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.llm_route, LLMRoute.INTERNAL)
         self.assertEqual(result.generation_result.text, "Risposta iniziale gia valida.")
 
-    def test_long_word_requests_use_larger_completion_budget(self) -> None:
+    def test_long_word_requests_use_proportional_completion_budget(self) -> None:
         engine = self._build_engine()
 
-        self.assertEqual(engine._completion_token_budget_for_words(1000), 3072)
-        self.assertEqual(engine._completion_token_budget_for_words(600), 2048)
+        self.assertEqual(engine._completion_token_budget_for_words(1000), 3000)
+        self.assertEqual(engine._completion_token_budget_for_words(600), 1800)
         self.assertEqual(engine._completion_token_budget_for_words(200), 600)
 
     def test_line_requests_are_normalized_to_approximate_word_targets(self) -> None:
@@ -285,6 +285,14 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             engine._generation_pass_token_budget(
                 length_target,
                 generator=internal_generator,
+            ),
+            1536,
+        )
+        self.assertEqual(
+            engine._generation_pass_token_budget(
+                length_target,
+                generator=internal_generator,
+                current_words=200,
             ),
             512,
         )
@@ -485,7 +493,7 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("migliore sintesi possibile", constraints)
         self.assertIn("aspetti non coperti", constraints)
 
-    def test_detailed_tender_overview_constraints_require_structured_list_and_ocr_cleanup(self) -> None:
+    def test_detailed_tender_overview_constraints_require_sections_and_ocr_cleanup(self) -> None:
         engine = self._build_engine()
 
         constraints = engine._build_response_constraints(
@@ -495,14 +503,92 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertIn("elenco strutturato della gara", constraints)
+        self.assertIn("Oggetto e perimetro", constraints)
+        self.assertIn("Fasi operative critiche", constraints)
+        self.assertIn("Governance multi-soggetto", constraints)
         self.assertIn("frammenti OCR", constraints)
 
-    def test_general_qa_prompt_allows_best_effort_when_context_is_partial(self) -> None:
+    def test_general_qa_prompt_keeps_grounding_and_best_effort_rules(self) -> None:
         template = PROMPT_TEMPLATES["general_qa"]
 
-        self.assertIn("best grounded answer", template)
+        self.assertIn("Use ONLY the retrieved context", template)
         self.assertIn("partial but relevant", template)
+        self.assertIn("Output ONLY the answer text", template)
+
+    def test_tender_overview_prompt_is_fact_sheet_first(self) -> None:
+        template = PROMPT_TEMPLATES["tender_overview"]
+
+        # Contract heading + the two ordered sections the model must
+        # emit in this exact order.
+        self.assertIn("FACT-SHEET-FIRST CONTRACT", template)
+        self.assertIn('"Fatti verificati"', template)
+        self.assertIn('"Analisi"', template)
+        self.assertLess(
+            template.index('"Fatti verificati"'),
+            template.index('"Analisi"'),
+            "Fatti verificati must precede Analisi in the contract",
+        )
+
+        # Fact-sheet-only sourcing: never invent protected values.
+        self.assertIn(
+            "Non usare numeri, CIG, importi, indirizzi, soggetti o procedure_id assenti dalla fact sheet",
+            template,
+        )
+
+        # Conflict: ONLY the blocked output string, nothing else.
+        self.assertIn(
+            'Se stato_verifica è "conflitto"',
+            template,
+        )
+        self.assertIn(
+            "output bloccato: conflitto o dato non verificato",
+            template,
+        )
+        self.assertIn(
+            "Niente prefazione, niente elenco, niente analisi",
+            template,
+        )
+
+        # non_rilevato handling.
+        self.assertIn(
+            'Per ogni campo "non_rilevato" nella fact sheet scrivi esattamente "non rilevato"',
+            template,
+        )
+
+        # No repeated sections / restarted paragraphs.
+        self.assertIn(
+            'Non ripetere intestazioni, paragrafi o introduzioni',
+            template,
+        )
+        self.assertIn(
+            'Non ricominciare le sezioni "Fatti verificati" o "Analisi"',
+            template,
+        )
+
+        # Bullet form for every protected field — guarantees the
+        # answer-side leakage scrubber (which strips bare "field:"
+        # lines) does NOT eat the legitimate verified-facts block.
+        for label in (
+            "Procedura:",
+            "ID procedura:",
+            "CIG:",
+            "Giorni critici:",
+            "Durata:",
+            "Importi:",
+            "Sedi/luoghi:",
+            "Percentuali:",
+        ):
+            self.assertIn(f"- {label}", template)
+
+    def test_tender_overview_prompt_does_not_drop_fact_sheet_envelope(self) -> None:
+        # The retrieval-to-context wiring still ships FACT_SHEET_START /
+        # SOURCE_START / SOURCE_END in the *context*; the contract must
+        # reference those envelopes so the model knows where to look.
+        template = PROMPT_TEMPLATES["tender_overview"]
+        self.assertIn("FACT_SHEET_START", template)
+        self.assertIn("FACT_SHEET_END", template)
+        self.assertIn("SOURCE_START", template)
+        self.assertIn("SOURCE_END", template)
 
     def test_search_mode_resolve_template_includes_response_constraints(self) -> None:
         engine = self._build_engine()
@@ -598,11 +684,28 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_retrieve_context_and_sources_uses_more_final_chunks_for_broad_tender_summary(self) -> None:
         engine = self._build_engine()
+        distinct_terms = [
+            "alpha bravo charlie delta echo foxtrot",
+            "hotel india juliet kilo lima mike",
+            "november oscar papa quebec romeo sierra",
+            "tango uniform victor whiskey xray yankee",
+            "red green blue yellow cyan magenta",
+            "north south east west central island",
+            "storage network compute backup archive",
+            "monitor audit report ledger control",
+            "ticket workflow approval calendar notice",
+            "privacy security identity access policy",
+            "migration rollout training support service",
+            "testing quality release incident change",
+        ]
         engine.dense_retriever = Mock(
             search=Mock(
                 return_value=[
                     SimpleNamespace(
-                        text=f"Risultato {idx}",
+                        text=(
+                            f"{distinct_terms[idx]} area funzionale {idx} con contenuto "
+                            "specifico per la sintesi del bando."
+                        ),
                         score=1.0 - idx * 0.01,
                         metadata={"source": f"dense-{idx}"},
                     )
@@ -628,16 +731,96 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(rerank_calls[0]["top_k"], 10)
+        self.assertGreaterEqual(rerank_calls[0]["top_k"], 10)
         self.assertEqual(len(retrieved.sources), 10)
 
-    async def test_retrieve_context_and_sources_uses_more_chunks_for_detailed_tender_overview(self) -> None:
+    async def test_broad_tender_summary_backfills_after_context_deduplication(self) -> None:
         engine = self._build_engine()
+        duplicated = [
+            (
+                "SCT CCTT gestione servizi cloud qualificazione ACN entro 210 giorni "
+                f"variante {idx}."
+            )
+            for idx in range(10)
+        ]
+        distinct_terms = [
+            "alpha bravo charlie delta echo foxtrot",
+            "hotel india juliet kilo lima mike",
+            "november oscar papa quebec romeo sierra",
+            "tango uniform victor whiskey xray yankee",
+            "red green blue yellow cyan magenta",
+            "north south east west central island",
+            "storage network compute backup archive",
+            "monitor audit report ledger control",
+            "ticket workflow approval calendar notice",
+            "privacy security identity access policy",
+        ]
+        unique_tail = [
+            f"{distinct_terms[idx]} SCT area unica {idx} con oggetto e perimetro distintivi."
+            for idx in range(10)
+        ]
         engine.dense_retriever = Mock(
             search=Mock(
                 return_value=[
                     SimpleNamespace(
-                        text=f"Risultato {idx}",
+                        text=text,
+                        score=1.0 - idx * 0.01,
+                        metadata={"source": f"dense-{idx}", "chunk_index": idx},
+                    )
+                    for idx, text in enumerate(duplicated + unique_tail)
+                ]
+            )
+        )
+        engine.sparse_retriever = Mock(search=Mock(return_value=[]))
+        engine.graph_retriever = SimpleNamespace(search=AsyncMock(return_value=[]))
+        engine.reranker = SimpleNamespace(
+            rerank=Mock(side_effect=lambda **kwargs: kwargs["results"][: kwargs["top_k"]])
+        )
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text="riassumi il bando della regione toscana",
+                mode=QueryMode.QA,
+                top_k=5,
+            )
+        )
+
+        self.assertEqual(len(retrieved.sources), 10)
+        self.assertTrue(
+            any(
+                "area unica" in str(source.get("text", ""))
+                for source in retrieved.sources
+            )
+        )
+
+    async def test_retrieve_context_and_sources_uses_more_chunks_for_detailed_tender_overview(self) -> None:
+        engine = self._build_engine()
+        distinct_terms = [
+            "alpha bravo charlie delta echo foxtrot",
+            "hotel india juliet kilo lima mike",
+            "november oscar papa quebec romeo sierra",
+            "tango uniform victor whiskey xray yankee",
+            "red green blue yellow cyan magenta",
+            "north south east west central island",
+            "storage network compute backup archive",
+            "monitor audit report ledger control",
+            "ticket workflow approval calendar notice",
+            "privacy security identity access policy",
+            "migration rollout training support service",
+            "testing quality release incident change",
+            "database queue cache index shard replica",
+            "contract annex schedule penalty threshold",
+            "supplier operator manager director committee",
+            "cloud platform registry pipeline scanner",
+        ]
+        engine.dense_retriever = Mock(
+            search=Mock(
+                return_value=[
+                    SimpleNamespace(
+                        text=(
+                            f"{distinct_terms[idx]} sezione tecnica {idx} con elementi "
+                            "distintivi per elenco dettagliato della gara."
+                        ),
                         score=1.0 - idx * 0.01,
                         metadata={"source": f"dense-{idx}"},
                     )
@@ -663,12 +846,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        engine.dense_retriever.search.assert_called_once_with(
-            query="gara toscana",
-            top_k=30,
-            filters={},
+        self.assertIn(
+            call(query="gara toscana", top_k=30, filters=None),
+            engine.dense_retriever.search.call_args_list,
         )
-        self.assertEqual(rerank_calls[0]["top_k"], 12)
+        self.assertGreaterEqual(engine.dense_retriever.search.call_count, 1)
+        self.assertGreaterEqual(rerank_calls[0]["top_k"], 12)
         self.assertEqual(len(retrieved.sources), 12)
 
     def test_math_rendering_constraints_are_added_when_requested(self) -> None:
