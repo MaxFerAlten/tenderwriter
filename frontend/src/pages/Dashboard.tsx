@@ -470,7 +470,7 @@ function TenderCard({ tender, index, ingestionStatuses, onUpload, onActivate, on
                         {uploading ? 'Uploading...' : 'Upload PDF'}
                         <input
                             type="file"
-                            accept=".pdf,.docx,.txt"
+                            accept=".pdf,.docx,.txt,.md,.markdown"
                             style={{ display: 'none' }}
                             onChange={handleFileChange}
                             disabled={uploading}

@@ -673,6 +673,8 @@ class IngestionPipeline:
             return self._parse_docx_fallback(file_path)
         elif ext == ".txt":
             return self._parse_text(file_path)
+        elif ext in (".md", ".markdown"):
+            return self._parse_markdown_fallback(file_path)
         else:
             logger.warning("Unsupported file type", extension=ext)
             return []
@@ -732,6 +734,60 @@ class IngestionPipeline:
         except Exception as e:
             logger.error("Text parsing failed", error=str(e))
             return []
+
+    def _parse_markdown_fallback(self, file_path: str) -> list[dict]:
+        """Parse Markdown preserving heading structure for section grouping."""
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception as e:
+            logger.error("Markdown parsing failed", error=str(e))
+            return []
+
+        elements: list[dict] = []
+        in_code_block = False
+        buffer: list[str] = []
+
+        def flush_buffer() -> None:
+            if not buffer:
+                return
+            block = "\n".join(buffer).strip()
+            if block:
+                elements.append({"type": "Text", "text": block, "metadata": {}})
+            buffer.clear()
+
+        heading_re = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+        fence_re = re.compile(r"^\s*```")
+
+        for raw in lines:
+            line = raw.rstrip("\n")
+            if fence_re.match(line):
+                in_code_block = not in_code_block
+                buffer.append(line)
+                continue
+            if in_code_block:
+                buffer.append(line)
+                continue
+            m = heading_re.match(line)
+            if m:
+                flush_buffer()
+                level = len(m.group(1))
+                title = m.group(2).strip()
+                elements.append(
+                    {
+                        "type": "Title",
+                        "text": title,
+                        "metadata": {"heading_level": level},
+                    }
+                )
+                continue
+            if line.strip() == "" and buffer:
+                flush_buffer()
+                continue
+            buffer.append(line)
+
+        flush_buffer()
+        return elements
 
     def _structure_elements(self, elements: list[dict]) -> tuple[str, dict[str, str]]:
         """
