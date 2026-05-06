@@ -10,9 +10,9 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.models  # noqa: F401  Ensures model metadata is registered.
 from app.config import settings
 from app.db.database import Base
-import app.models  # noqa: F401  Ensures model metadata is registered.
 
 config = context.config
 

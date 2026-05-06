@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ConsolidatedRequirement, RequirementReview
 from app.services.tender_requirements import normalize_requirement_text
 
-
 _PRIORITY_RANK = {"high": 3, "medium": 2, "low": 1}
 _ACTIVE_GRAPH_STATE = "active"
 _OBSOLETE_GRAPH_STATE = "obsolete"

@@ -123,7 +123,7 @@ class RuntimeMetricsTests(unittest.TestCase):
         self.assertGreaterEqual(payload['analysis_jobs']['runtime']['by_status'].get('succeeded', 0), 1)
         self.assertGreaterEqual(payload['persistence']['persisted_snapshots'], 1)
         self.assertGreaterEqual(payload['snapshots']['semantic_official_total'], 1)
-        self.assertEqual(payload['version_governance']['schema_version'], '20260329_0004')
+        self.assertEqual(payload['version_governance']['schema_version'], '20260419_0005')
         self.assertIn('snapshot-output-v1', payload['version_governance']['snapshot_output_schema_versions'])
 
     def test_readiness_endpoint_reports_ready_runtime_state(self) -> None:
@@ -144,7 +144,7 @@ class RuntimeMetricsTests(unittest.TestCase):
             'analysis_jobs': {'by_status': {'failed': 2, 'queued': 0}, 'by_type_and_status': [], 'latest_updated_at': None},
             'persistence': {'mirrored_tenders': 0, 'persisted_domain_events': 0, 'persisted_document_contexts': 0, 'persisted_snapshots': 0, 'persisted_findings': 0, 'persisted_phase_transitions': 0},
             'snapshots': {'persisted_total': 0, 'latest_generated_at': None, 'reconstructed_total': 0, 'shadow_mode_total': 0, 'semantic_official_total': 0, 'semantic_fallback_total': 0},
-            'version_governance': {'schema_version': '20260329_0004', 'snapshot_output_schema_versions': {}, 'contract_versions': {}, 'semantic_bundle_versions': {}, 'shadow_bundle_versions': {}, 'source_job_types': {}, 'model_versions': {}},
+            'version_governance': {'schema_version': '20260419_0005', 'snapshot_output_schema_versions': {}, 'contract_versions': {}, 'semantic_bundle_versions': {}, 'shadow_bundle_versions': {}, 'source_job_types': {}, 'model_versions': {}},
         }
         with patch.object(self.client.app.state.store, 'get_runtime_metrics', return_value=runtime_payload):
             response = self.client.get('/ready')

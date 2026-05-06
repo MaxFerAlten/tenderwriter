@@ -86,8 +86,78 @@ class GeneratorGPT4FreeRoutingTests(unittest.TestCase):
 
         self.assertTrue(should_retry)
 
+    def test_requested_token_timeout_uses_twenty_minute_floor(self) -> None:
+        generator = Generator(
+            base_url="http://tw-gateway:8080/v1",
+            model="gpt-4o-mini",
+            timeout=1200,
+        )
+
+        self.assertEqual(generator._timeout_for_requested_tokens(512), 1200)
+        self.assertEqual(generator._timeout_for_requested_tokens(1536), 1200)
+
+    def test_extended_retry_timeout_adds_ten_minutes(self) -> None:
+        generator = Generator(
+            base_url="http://tw-gateway:8080/v1",
+            model="gpt-4o-mini",
+            timeout=1200,
+        )
+
+        self.assertEqual(generator._expanded_retry_timeout(), 1800)
+
 
 class GeneratorGatewayRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_post_json_extends_timeout_by_ten_minutes_while_llm_server_is_alive(self) -> None:
+        generator = Generator(
+            base_url="http://tw-gateway:8080/v1",
+            model="gpt-4o-mini",
+            timeout=1200,
+        )
+        generator._llm_server_alive_for_timeout_extension = AsyncMock(return_value=True)
+        client_timeouts: list[float] = []
+        post_attempts = 0
+
+        class _FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"ok": True}
+
+        class _FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                del args
+                client_timeouts.append(kwargs.get("timeout"))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def post(self, *args, **kwargs):
+                del args, kwargs
+                nonlocal post_attempts
+                post_attempts += 1
+                if post_attempts <= 2:
+                    import httpx
+
+                    raise httpx.TimeoutException("slow generation")
+                return _FakeResponse()
+
+        with patch("app.rag.generator.httpx.AsyncClient", _FakeAsyncClient):
+            result = await generator._post_json_with_retries(
+                url="http://tw-gateway:8080/v1/chat/completions",
+                request_data={"messages": []},
+                headers={},
+                context="Llama server",
+                timeout=1200,
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(client_timeouts, [1200, 1800, 2400])
+        self.assertEqual(generator._llm_server_alive_for_timeout_extension.await_count, 2)
+
     async def test_gateway_backed_generate_retries_when_response_has_only_reasoning(self) -> None:
         generator = Generator(
             base_url="http://tw-gateway:8080/v1",
@@ -150,7 +220,7 @@ class GeneratorGatewayRetryTests(unittest.IsolatedAsyncioTestCase):
                 lines = [
                     'data: {"choices":[{"delta":{"reasoning":"Thinking"},"finish_reason":null}]}',
                     'data: {"choices":[{"delta":{"content":""},"finish_reason":"length"}]}',
-                    'data: [DONE]',
+                    "data: [DONE]",
                 ]
                 for line in lines:
                     yield line

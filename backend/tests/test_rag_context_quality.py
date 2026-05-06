@@ -86,11 +86,7 @@ class RagContextQualityTests(unittest.TestCase):
     def test_appended_detail_near_duplicate_is_deduplicated_by_default(self) -> None:
         items = [
             {"text": "La gara richiede qualificazione ACN entro 210 giorni."},
-            {
-                "text": (
-                    "La gara richiede la qualificazione ACN entro 210 giorni dalla stipula."
-                )
-            },
+            {"text": ("La gara richiede la qualificazione ACN entro 210 giorni dalla stipula.")},
         ]
 
         deduped, stats = deduplicate_context_items(items)

@@ -7,18 +7,27 @@ All endpoints are protected with JWT auth. Access is checked via the associated 
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.auth import UserResponse, get_current_user
 from app.db.database import get_db
-from app.models import Proposal, ProposalSection, ProposalStatus, SectionStatus, Tender, TenderPermission, TenderStatus
-from app.api.auth import get_current_user, UserResponse
+from app.models import (
+    Proposal,
+    ProposalSection,
+    ProposalStatus,
+    SectionStatus,
+    Tender,
+    TenderPermission,
+    TenderStatus,
+)
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
+from app.services.compliance_observability import sync_requirement_compliance_and_gate
 from app.services.kpi_reason_engine import (
     build_draft_integrated_ready_event_payload,
     build_proposal_created_event_payload,
@@ -29,8 +38,10 @@ from app.services.kpi_reason_engine import (
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
-from app.services.compliance_observability import sync_requirement_compliance_and_gate
-from app.services.operational_workflow import ensure_contribution_for_section, sync_section_operational_workflow
+from app.services.operational_workflow import (
+    ensure_contribution_for_section,
+    sync_section_operational_workflow,
+)
 
 router = APIRouter()
 
@@ -59,7 +70,8 @@ def _normalize_section_content(content: dict | str | None) -> dict:
                 }
                 for para in content.split("\n\n")
                 if para.strip()
-            ] or [{"type": "paragraph", "content": [{"type": "text", "text": ""}]}],
+            ]
+            or [{"type": "paragraph", "content": [{"type": "text", "text": ""}]}],
         }
     return {}
 
@@ -131,9 +143,7 @@ class ProposalListResponse(BaseModel):
 # ── Helpers ──
 
 
-async def _check_tender_access_for_proposal(
-    tender_id: int, user: UserResponse, db: AsyncSession
-):
+async def _check_tender_access_for_proposal(tender_id: int, user: UserResponse, db: AsyncSession):
     """Verify the current user has access to the tender that owns a proposal."""
     if user.role == "admin":
         return
@@ -175,13 +185,10 @@ async def list_proposals(
 
     # RBAC: non-admin can only see proposals for tenders they own or have permission to
     if current_user.role != "admin":
-        permitted_tender_ids = (
-            select(TenderPermission.tender_id)
-            .where(TenderPermission.user_id == current_user.id)
+        permitted_tender_ids = select(TenderPermission.tender_id).where(
+            TenderPermission.user_id == current_user.id
         )
-        owned_tender_ids = (
-            select(Tender.id).where(Tender.created_by == current_user.id)
-        )
+        owned_tender_ids = select(Tender.id).where(Tender.created_by == current_user.id)
         query = query.where(
             or_(
                 Proposal.tender_id.in_(owned_tender_ids),
@@ -289,9 +296,7 @@ async def get_proposal(
 ):
     """Get a proposal with all its sections. RBAC-checked via tender."""
     result = await db.execute(
-        select(Proposal)
-        .where(Proposal.id == proposal_id)
-        .options(selectinload(Proposal.sections))
+        select(Proposal).where(Proposal.id == proposal_id).options(selectinload(Proposal.sections))
     )
     proposal = result.scalar_one_or_none()
     if not proposal:
@@ -359,8 +364,6 @@ async def update_proposal(
         actor_id=current_user.id,
     )
 
-
-
     if proposal.status == ProposalStatus.SUBMITTED and proposal.status != previous_status:
         await sync_tender_and_publish_event(
             db,
@@ -368,7 +371,7 @@ async def update_proposal(
             actor_id=current_user.id,
             event_type="tender_submitted",
             event_payload=build_tender_submitted_event_payload(
-                submitted_at=datetime.now(timezone.utc),
+                submitted_at=datetime.now(UTC),
                 channel="proposal_status_update",
             ),
         )
@@ -527,8 +530,6 @@ async def update_section(
         tender_id=proposal.tender_id,
         actor_id=current_user.id,
     )
-
-
 
     await sync_tender_and_publish_event(
         db,
@@ -726,14 +727,16 @@ _ALLOWED_SUBMISSION_STATUSES = {"acknowledged", "failed"}
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
-    return value or datetime.now(timezone.utc)
+    return value or datetime.now(UTC)
 
 
 def _clone_tender_metadata(tender: Tender) -> dict:
     return dict(tender.metadata_json or {})
 
 
-@router.post("/{proposal_id}/draft-ready", response_model=ProposalLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{proposal_id}/draft-ready", response_model=ProposalLifecycleActionResponse, status_code=202
+)
 async def mark_proposal_draft_ready(
     proposal_id: int,
     data: ProposalDraftReadyRequest,
@@ -755,7 +758,9 @@ async def mark_proposal_draft_ready(
     if tender is None:
         raise HTTPException(status_code=404, detail="Tender not found")
 
-    approved_section_count = sum(1 for section in proposal.sections if section.status == SectionStatus.APPROVED)
+    approved_section_count = sum(
+        1 for section in proposal.sections if section.status == SectionStatus.APPROVED
+    )
     total_section_count = len(proposal.sections)
     metadata = _clone_tender_metadata(tender)
     lifecycle = dict(metadata.get("lifecycle") or {})
@@ -784,10 +789,20 @@ async def mark_proposal_draft_ready(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return ProposalLifecycleActionResponse(status="accepted", event_type="draft_integrated_ready", proposal_id=proposal.id, tender_id=proposal.tender_id, payload=payload)
+    return ProposalLifecycleActionResponse(
+        status="accepted",
+        event_type="draft_integrated_ready",
+        proposal_id=proposal.id,
+        tender_id=proposal.tender_id,
+        payload=payload,
+    )
 
 
-@router.post("/{proposal_id}/submission-status", response_model=ProposalLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{proposal_id}/submission-status",
+    response_model=ProposalLifecycleActionResponse,
+    status_code=202,
+)
 async def record_proposal_submission_status(
     proposal_id: int,
     data: ProposalSubmissionStatusRequest,
@@ -795,9 +810,7 @@ async def record_proposal_submission_status(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Proposal)
-        .where(Proposal.id == proposal_id)
-        .options(selectinload(Proposal.tender))
+        select(Proposal).where(Proposal.id == proposal_id).options(selectinload(Proposal.tender))
     )
     proposal = result.scalar_one_or_none()
     if not proposal:
@@ -829,7 +842,9 @@ async def record_proposal_submission_status(
     tender.metadata_json = metadata
     await db.flush()
 
-    event_type = "submission_acknowledged" if submission_status == "acknowledged" else "submission_failed"
+    event_type = (
+        "submission_acknowledged" if submission_status == "acknowledged" else "submission_failed"
+    )
     payload = build_submission_status_event_payload(
         submission_status=submission_status,
         occurred_at=occurred_at,
@@ -846,5 +861,10 @@ async def record_proposal_submission_status(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return ProposalLifecycleActionResponse(status="accepted", event_type=event_type, proposal_id=proposal.id, tender_id=proposal.tender_id, payload=payload)
-
+    return ProposalLifecycleActionResponse(
+        status="accepted",
+        event_type=event_type,
+        proposal_id=proposal.id,
+        tender_id=proposal.tender_id,
+        payload=payload,
+    )

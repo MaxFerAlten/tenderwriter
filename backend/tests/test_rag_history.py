@@ -2,6 +2,7 @@ import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
 from test_module_loaders import load_rag_api_test_modules
 
 _TEST_ENV = {
@@ -90,7 +91,11 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
             patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             response = await rag_query(
@@ -121,7 +126,11 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
             patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             await rag_query(
@@ -152,7 +161,11 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
             patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             await rag_query(
@@ -189,7 +202,11 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
             patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             response = await rag_query(
@@ -207,7 +224,9 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(getattr(db.added[0], "response", None), "Prima parte finale")
         self.assertEqual(db.commit_calls, 1)
 
-    async def test_stream_query_emits_structured_error_and_skips_history_on_generation_failure(self) -> None:
+    async def test_stream_query_emits_structured_error_and_skips_history_on_generation_failure(
+        self,
+    ) -> None:
         async def _failing_query_stream(_rag_query):
             raise RuntimeError("NoValidHarFileError: No .har file found")
             yield  # pragma: no cover
@@ -218,7 +237,11 @@ class RagHistoryTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDb()
 
         with (
-            patch.object(_RAG_MODULE, "_resolve_runtime_privacy_policy", AsyncMock(return_value=_FakePolicy())),
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
             patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
         ):
             response = await rag_query(

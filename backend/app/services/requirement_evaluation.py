@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-import json
 from pathlib import Path
-import re
 from typing import Any
-
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -69,7 +68,9 @@ def _read_mapping_text(payload: Mapping[str, Any], keys: Sequence[str]) -> str:
             if nested_text:
                 return nested_text
             continue
-        text = " ".join(str(item) for item in value) if isinstance(value, list) else str(value or "")
+        text = (
+            " ".join(str(item) for item in value) if isinstance(value, list) else str(value or "")
+        )
         text = re.sub(r"\s+", " ", text).strip()
         if text:
             return text
@@ -200,7 +201,9 @@ def _match_relations(
         for predicted_index, predicted_item in enumerate(predicted):
             if predicted_index in used_predictions:
                 continue
-            if not _relation_matches(expected_item, predicted_item, match_threshold=match_threshold):
+            if not _relation_matches(
+                expected_item, predicted_item, match_threshold=match_threshold
+            ):
                 continue
             used_predictions.add(predicted_index)
             matches.append((expected_index, predicted_index))
@@ -230,9 +233,7 @@ def validate_requirement_evaluation_payload(payload: Mapping[str, Any]) -> None:
 
     schema_version = payload.get("schema_version", GOLD_SET_SCHEMA_VERSION)
     if schema_version != GOLD_SET_SCHEMA_VERSION:
-        raise ValueError(
-            f"Unsupported requirement evaluation schema_version: {schema_version!r}"
-        )
+        raise ValueError(f"Unsupported requirement evaluation schema_version: {schema_version!r}")
 
     cases = payload.get("cases")
     if not isinstance(cases, list) or not cases:
@@ -290,7 +291,9 @@ def evaluate_requirement_pipeline_cases(
             _case_items(case, "expected_requirements", "gold_requirements", "requirements_expected")
         )
         predicted_requirements.extend(
-            _case_items(case, "predicted_requirements", "actual_requirements", "requirements_predicted")
+            _case_items(
+                case, "predicted_requirements", "actual_requirements", "requirements_predicted"
+            )
         )
         expected_relations.extend(_case_items(case, "expected_relations", "gold_relations"))
         predicted_relations.extend(_case_items(case, "predicted_relations", "actual_relations"))
@@ -308,7 +311,9 @@ def evaluate_requirement_pipeline_cases(
     matched_prediction_indexes = {predicted_index for _, predicted_index in requirement_matches}
     matched_relation_expected_indexes = {expected_index for expected_index, _ in relation_matches}
     expected_conflict_indexes = {
-        index for index, item in enumerate(expected_relations) if _relation_type(item) == "conflicts_with"
+        index
+        for index, item in enumerate(expected_relations)
+        if _relation_type(item) == "conflicts_with"
     }
     matched_conflict_count = len(expected_conflict_indexes & matched_relation_expected_indexes)
 
@@ -323,7 +328,11 @@ def evaluate_requirement_pipeline_cases(
         empty_value=1.0,
     )
     citation_coverage = _safe_ratio(
-        sum(1 for index in matched_prediction_indexes if _has_citation(predicted_requirements[index])),
+        sum(
+            1
+            for index in matched_prediction_indexes
+            if _has_citation(predicted_requirements[index])
+        ),
         len(matched_prediction_indexes),
         empty_value=1.0,
     )

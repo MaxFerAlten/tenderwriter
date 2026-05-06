@@ -112,8 +112,7 @@ def _is_duplicate(candidate: str, existing: str, similarity_threshold: float) ->
     if character_similarity >= max(similarity_threshold, 0.88):
         return True
     return (
-        _has_contained_tokens(candidate, existing)
-        or _token_similarity(candidate, existing) >= 0.82
+        _has_contained_tokens(candidate, existing) or _token_similarity(candidate, existing) >= 0.82
     )
 
 
@@ -157,9 +156,7 @@ def _merge_duplicate_context_item(
     candidate: Mapping[str, Any],
 ) -> dict[str, Any]:
     primary, secondary = (
-        (candidate, existing)
-        if _score(candidate) > _score(existing)
-        else (existing, candidate)
+        (candidate, existing) if _score(candidate) > _score(existing) else (existing, candidate)
     )
     merged = dict(primary)
     merged["metadata"] = _merge_metadata(
@@ -258,9 +255,8 @@ def compress_context_block(
         normalized = normalize_context_text(sentence)
         if normalized in seen:
             continue
-        should_keep = (
-            _sentence_matches_query(sentence, query_terms)
-            or bool(_NUMERIC_OR_LEGAL_RE.search(sentence))
+        should_keep = _sentence_matches_query(sentence, query_terms) or bool(
+            _NUMERIC_OR_LEGAL_RE.search(sentence)
         )
         if should_keep:
             seen.add(normalized)

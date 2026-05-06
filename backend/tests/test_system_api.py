@@ -103,7 +103,11 @@ class _MockOpsAgentClient:
         self.containers_result = containers_result or OpsAgentClientResult(
             True,
             200,
-            {"data": [{"id": "abc123", "name": "backend", "status": "running", "health": "healthy"}]},
+            {
+                "data": [
+                    {"id": "abc123", "name": "backend", "status": "running", "health": "healthy"}
+                ]
+            },
         )
         self.logs_result = logs_result or OpsAgentClientResult(True, 200, {"logs": "line-1"})
         self.stats_result = stats_result or OpsAgentClientResult(

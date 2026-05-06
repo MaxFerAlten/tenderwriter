@@ -15,7 +15,12 @@ my-output-fix.md
 backend/app/ingestion/__pycache__/
 har_and_cookies
 qvac/
+log/
 # --- Virtual environments ---
+.agents/
+.codex-plugins/
+.github/
+
 .claude/
 .codex/
 venv/
@@ -80,6 +85,11 @@ desktop.ini
 
 # --- Node (se presente) ---
 node_modules/
+
+# --- Playwright ---
+frontend/test-results/
+frontend/playwright-report/
+frontend/.playwright/
 
 # --- Output generati (se ne hai) ---
 out/

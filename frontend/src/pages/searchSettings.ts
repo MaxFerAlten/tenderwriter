@@ -1,4 +1,14 @@
-import type { RAGQueryRequest } from '../api/client';
+import type { RAGQueryRequest, RAGRouteKey } from '../api/client';
+
+export interface SearchScope {
+    route_key: RAGRouteKey;
+    tender_id: number | null;
+}
+
+export const GLOBAL_SEARCH_SCOPE: SearchScope = {
+    route_key: 'global',
+    tender_id: null,
+};
 
 export type SearchPreset = 'balanced' | 'precise' | 'exploratory' | 'custom';
 export type RetrieverKey = 'dense' | 'sparse' | 'graph';
@@ -9,6 +19,7 @@ export interface SearchSettingsState {
     topK: number;
     retrievalTopK: number;
     temperature: number;
+    streamingEnabled: boolean;
     saveHistory: boolean;
     retrievers: Record<RetrieverKey, boolean>;
     fusionWeights: Record<RetrieverKey, number>;
@@ -19,6 +30,7 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettingsState = {
     topK: 5,
     retrievalTopK: 20,
     temperature: 0.3,
+    streamingEnabled: false,
     saveHistory: true,
     retrievers: {
         dense: true,
@@ -28,7 +40,7 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettingsState = {
     fusionWeights: {
         dense: 0.4,
         sparse: 0.3,
-        graph: 0.3,
+        graph: 1.5,
     },
 };
 
@@ -39,6 +51,7 @@ const PRESET_CONFIGS: Record<BuiltInSearchPreset, SearchSettingsState> = {
         topK: 4,
         retrievalTopK: 14,
         temperature: 0.15,
+        streamingEnabled: false,
         saveHistory: true,
         retrievers: {
             dense: true,
@@ -56,6 +69,7 @@ const PRESET_CONFIGS: Record<BuiltInSearchPreset, SearchSettingsState> = {
         topK: 8,
         retrievalTopK: 28,
         temperature: 0.45,
+        streamingEnabled: false,
         saveHistory: true,
         retrievers: {
             dense: true,
@@ -127,6 +141,7 @@ export function buildRagSearchPayload(
     query: string,
     mode: 'search' | 'qa',
     settings: SearchSettingsState,
+    scope: SearchScope = GLOBAL_SEARCH_SCOPE,
     overrides: Partial<Pick<RAGQueryRequest, 'save_history'>> = {},
 ): RAGQueryRequest {
     const normalized = normalizeSearchSettings(settings);
@@ -135,10 +150,16 @@ export function buildRagSearchPayload(
         mode,
         top_k: normalized.topK,
         temperature: normalized.temperature,
+        stream: mode === 'qa' ? normalized.streamingEnabled : false,
         save_history: overrides.save_history ?? normalized.saveHistory,
         retrievers: { ...normalized.retrievers },
         fusion_weights: { ...normalized.fusionWeights },
+        route_key: scope.route_key,
     };
+
+    if (scope.route_key === 'tender' && scope.tender_id != null) {
+        payload.tender_id = scope.tender_id;
+    }
 
     if (normalized.retrievalTopK !== DEFAULT_SEARCH_SETTINGS.retrievalTopK) {
         payload.retrieval_top_k = normalized.retrievalTopK;
@@ -168,6 +189,7 @@ export function getSearchSettingsSummary(settings: SearchSettingsState): string[
         `Recall ${normalized.retrievalTopK}`,
         `Temp ${normalized.temperature.toFixed(2)}`,
         retrieverLabels,
+        normalized.streamingEnabled ? 'Streaming on' : 'Streaming off',
         normalized.saveHistory ? 'History on' : 'History off',
     ];
 }

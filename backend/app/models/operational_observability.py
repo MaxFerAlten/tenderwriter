@@ -58,8 +58,12 @@ class ContributionUnit(Base):
     __tablename__ = "contribution_units"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
-    proposal_section_id = Column(Integer, ForeignKey("proposal_sections.id", ondelete="SET NULL"), nullable=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    proposal_section_id = Column(
+        Integer, ForeignKey("proposal_sections.id", ondelete="SET NULL"), nullable=True
+    )
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     department_name = Column(String(120), nullable=True, index=True)
     title = Column(String(500), nullable=False)
@@ -80,9 +84,13 @@ class ContributionRequest(Base):
     __tablename__ = "contribution_requests"
 
     id = Column(Integer, primary_key=True, index=True)
-    contribution_unit_id = Column(Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True)
+    contribution_unit_id = Column(
+        Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     requested_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    requested_to_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_to_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     requested_to_label = Column(String(255), nullable=True)
     request_channel = Column(String(80), nullable=True)
     requested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -91,7 +99,9 @@ class ContributionRequest(Base):
     sla_max_hours = Column(Integer, nullable=True)
     response_received_at = Column(DateTime(timezone=True), nullable=True)
     response_summary = Column(Text, nullable=True)
-    status = Column(Enum(ContributionRequestStatus), default=ContributionRequestStatus.OPEN, index=True)
+    status = Column(
+        Enum(ContributionRequestStatus), default=ContributionRequestStatus.OPEN, index=True
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -104,7 +114,9 @@ class ReviewCycle(Base):
     __tablename__ = "review_cycles"
 
     id = Column(Integer, primary_key=True, index=True)
-    contribution_unit_id = Column(Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True)
+    contribution_unit_id = Column(
+        Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     reviewer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     stage_name = Column(String(120), nullable=False, default="quality_review")
     started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -123,10 +135,16 @@ class ReworkAction(Base):
     __tablename__ = "rework_actions"
 
     id = Column(Integer, primary_key=True, index=True)
-    contribution_unit_id = Column(Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True)
-    review_cycle_id = Column(Integer, ForeignKey("review_cycles.id", ondelete="SET NULL"), nullable=True)
+    contribution_unit_id = Column(
+        Integer, ForeignKey("contribution_units.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    review_cycle_id = Column(
+        Integer, ForeignKey("review_cycles.id", ondelete="SET NULL"), nullable=True
+    )
     requested_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    assigned_to_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_to_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     severity = Column(String(30), nullable=False, default="medium")
     is_blocking = Column(Boolean, nullable=False, default=True)
     reason = Column(Text, nullable=True)
@@ -148,8 +166,12 @@ class ComplianceGate(Base):
     __tablename__ = "compliance_gates"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
-    contribution_unit_id = Column(Integer, ForeignKey("contribution_units.id", ondelete="SET NULL"), nullable=True, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    contribution_unit_id = Column(
+        Integer, ForeignKey("contribution_units.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     gate_name = Column(String(255), nullable=False)
     due_at = Column(DateTime(timezone=True), nullable=True)
@@ -168,7 +190,9 @@ class CallSession(Base):
     __tablename__ = "call_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     title = Column(String(255), nullable=False)
     scheduled_at = Column(DateTime(timezone=True), nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -186,7 +210,9 @@ class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
 
     id = Column(Integer, primary_key=True, index=True)
-    call_session_id = Column(Integer, ForeignKey("call_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    call_session_id = Column(
+        Integer, ForeignKey("call_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     attendee_label = Column(String(255), nullable=True)
     attendance_status = Column(Enum(AttendanceStatus), default=AttendanceStatus.INVITED, index=True)

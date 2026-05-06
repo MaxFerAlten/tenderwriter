@@ -1,20 +1,21 @@
+import base64
+import importlib.metadata
+import json
 import os
 import sys
 import types
 import unittest
-import base64
-import importlib.metadata
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from importlib import import_module
-from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+
 from test_module_loaders import load_models_test_module
 
 _TEST_ENV = {
@@ -74,8 +75,12 @@ def _build_fake_jose_module():
 
     fake_jose.JWTError = _JWTError
     fake_jose.jwt = SimpleNamespace(
-        encode=lambda payload, secret, algorithm="HS256": _build_fake_pyjwt_module().encode(payload, secret, algorithm),
-        decode=lambda token, secret, algorithms=None: _build_fake_pyjwt_module().decode(token, secret, algorithms),
+        encode=lambda payload, secret, algorithm="HS256": _build_fake_pyjwt_module().encode(
+            payload, secret, algorithm
+        ),
+        decode=lambda token, secret, algorithms=None: _build_fake_pyjwt_module().decode(
+            token, secret, algorithms
+        ),
     )
     return fake_jose
 
@@ -251,7 +256,9 @@ def _load_onlyoffice_module():
             self.paragraphs = []
 
         def add_paragraph(self, text=""):
-            paragraph = SimpleNamespace(text=text, runs=[SimpleNamespace(font=SimpleNamespace(size=None))])
+            paragraph = SimpleNamespace(
+                text=text, runs=[SimpleNamespace(font=SimpleNamespace(size=None))]
+            )
             self.paragraphs.append(paragraph)
             return paragraph
 
@@ -336,7 +343,9 @@ def _load_onlyoffice_module():
     async def _fake_sync_requirement_compliance_and_gate(*args, **kwargs):
         return None
 
-    fake_compliance.sync_requirement_compliance_and_gate = _fake_sync_requirement_compliance_and_gate
+    fake_compliance.sync_requirement_compliance_and_gate = (
+        _fake_sync_requirement_compliance_and_gate
+    )
 
     fake_kpi = types.ModuleType("app.services.kpi_reason_engine")
     fake_kpi.build_proposal_section_updated_event_payload = lambda *args, **kwargs: {}
@@ -534,7 +543,9 @@ class RegisterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(auth_module, "send_otp_email", AsyncMock(side_effect=RuntimeError("smtp down"))),
+            patch.object(
+                auth_module, "send_otp_email", AsyncMock(side_effect=RuntimeError("smtp down"))
+            ),
             self.assertRaises(HTTPException) as ctx,
         ):
             await auth_module.register.__wrapped__(
@@ -548,7 +559,9 @@ class RegisterTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(ctx.exception.status_code, 503)
-        self.assertEqual(ctx.exception.detail, "Unable to send verification code. Please try again.")
+        self.assertEqual(
+            ctx.exception.detail, "Unable to send verification code. Please try again."
+        )
         db.rollback.assert_awaited_once()
         db.commit.assert_not_awaited()
 
@@ -616,7 +629,9 @@ class OnlyOfficeSignedUrlTests(unittest.TestCase):
         onlyoffice_module = _load_onlyoffice_module()
         url = onlyoffice_module._build_signed_file_url(
             "doc-key-123",
-            download_token=onlyoffice_module._build_download_token(doc_key="doc-key-123", user_id=7),
+            download_token=onlyoffice_module._build_download_token(
+                doc_key="doc-key-123", user_id=7
+            ),
         )
         parsed = urlparse(url)
         params = parse_qs(parsed.query)

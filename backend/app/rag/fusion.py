@@ -10,6 +10,8 @@ retrieval methods.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass, field
 
 import structlog
@@ -22,11 +24,14 @@ logger = structlog.get_logger()
 @dataclass
 class FusedResult:
     """A single result after rank fusion from multiple sources."""
+
     text: str
     score: float
     metadata: dict
     sources: list[str]  # Which retrievers contributed this result
-    source_scores: dict[str, float] = field(default_factory=dict)  # Per-retriever RRF score contribution
+    source_scores: dict[str, float] = field(
+        default_factory=dict
+    )  # Per-retriever RRF score contribution
 
 
 class RankFusion:
@@ -84,9 +89,17 @@ class RankFusion:
         # Key: normalized text (first 200 chars for dedup)
         score_map: dict[str, dict] = {}
 
+        def _normalize_text_for_dedup(text: str) -> str:
+            normalized = (text or "").strip().lower()
+            normalized = re.sub(r"\s+", " ", normalized)
+            normalized = re.sub(r"[^\w\s]", "", normalized)
+            return normalized.strip()
+
         def _dedup_key(text: str) -> str:
-            """Create a deduplication key from text."""
-            return text.strip().lower()[:200]
+            normalized = _normalize_text_for_dedup(text)
+            if not normalized:
+                return ""
+            return hashlib.md5(normalized.encode("utf-8")).hexdigest()
 
         # Process each retriever's results
         retriever_configs = [
@@ -125,9 +138,11 @@ class RankFusion:
                 # Priority: graph > sparse > dense for 'source' field to show correct retriever badge
                 for mk, mv in result.get("metadata", {}).items():
                     # Always set 'source' if it's from graph, otherwise only set if not already set
-                    if mk == "source" and source_name == "graph":
-                        score_map[key]["metadata"][mk] = mv
-                    elif mk not in score_map[key]["metadata"]:
+                    if (
+                        mk == "source"
+                        and source_name == "graph"
+                        or mk not in score_map[key]["metadata"]
+                    ):
                         score_map[key]["metadata"][mk] = mv
 
         # Sort by fused score

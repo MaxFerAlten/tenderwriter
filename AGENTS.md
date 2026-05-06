@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`frontend/` contains the React + TypeScript UI (`src/`, `public/`, `nginx/`). `backend/` is the main FastAPI service, with API, services, tools, migrations, and `backend/tests/`. Supporting services live in `kpi-reason-engine/`, `ops-agent/`, and `gateway/`, each with their own `app/` and tests. Root-level `tests/e2e/` holds end-to-end scripts, `utility/` contains maintenance helpers, and `docker-compose.yml` is the main local orchestration entry point.
+`frontend/` contains the React + TypeScript UI (`src/`, `public/`, `nginx/`). `backend/app/` is the FastAPI product backend, `backend/migrations/` contains Alembic migrations, and `backend/tests/` contains backend tests. Supporting services live in `kpi-reason-engine/`, `ops-agent/`, and `gateway/`, each with their own `app/` and tests. `utility/` contains maintenance helpers, and `docker-compose.yml` is the main local orchestration entry point.
 
 ## Build, Test, and Development Commands
 Use Docker first when you need the full stack:
@@ -13,7 +13,7 @@ Use Docker first when you need the full stack:
 - `cd frontend && npm test` runs the Vitest suite.
 - `cd backend && pytest -q` runs the main backend tests.
 - `cd backend && ruff check .` applies the Python lint rules.
-- `python tools/wave1_smoke.py` mirrors a CI smoke check.
+- `cd backend && pytest -q tests/test_main_route_registration.py` mirrors a CI smoke check.
 
 ## Coding Style & Naming Conventions
 Python targets 3.11+ and follows Ruff with a 100-character line length. Use 4-space indentation, snake_case for modules/functions, and type hints on new public code. Frontend files use 4-space indentation, semicolons, single quotes, PascalCase for pages/components such as `Dashboard.tsx`, and `useX.ts` for hooks. Keep helper and test files adjacent to the feature when possible.

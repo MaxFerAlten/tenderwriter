@@ -1,0 +1,3244 @@
+{
+  "average_latency_ms": 386.887,
+  "case_count": 50,
+  "cases": [
+    {
+      "case_id": "Q001",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "UNI EN ISO 9001",
+        "ISO/IEC 27001",
+        "organismo di certificazione accreditato",
+        "IAF 33"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 18251.366,
+      "ontology_domain": "CERTIFICAZIONI",
+      "precision_at_k": 0.0,
+      "query": "Quali certificazioni di qualità sono obbligatorie per il Fornitore?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        58,
+        1
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 271,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-29c3aa4489e7be3e637d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "certification",
+            "has_provenance": true,
+            "mapping_confidence": 0.683,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "certificazioni",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 58,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 58,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -5.895070552825928,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "soddisfi i requisiti richiesti dal Regolamento UE 679/2016 e garantisca la tutela dei diritti dell’interessato. La procedura di gara viene espletata attraverso la Piattaforma di e-procurement Sardegna..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-4ba324b4b013b02bf263",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 1,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 1,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -7.645689964294434,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "sviluppo di software Valore Valore stimato al netto dell'IVA: 11 172 582,96 EUR Informazioni generali Informazioni supplementari: Importo a base di gara oltre Iva nei termini di legge è € 5.999.723,60..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q002",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "penali",
+        "risoluzione",
+        "ripristino",
+        "Regione Toscana intimer"
+      ],
+      "graph_source_count": 5,
+      "hit_keyword_count": 1,
+      "hit_keywords": [
+        "risoluzione"
+      ],
+      "latency_ms": 62.305,
+      "ontology_domain": "PENALITA",
+      "precision_at_k": 0.25,
+      "query": "Cosa succede se il Fornitore perde la certificazione ISO 27001 durante il contratto?",
+      "recall_hit": true,
+      "retrieved_pages": [
+        244,
+        36,
+        112,
+        233,
+        184
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 845,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-18af1822d076cc6939fb",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 244,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 244,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 1.4958772659301758,
+          "source_scores": {
+            "graph": 0.0023809523809523807
+          },
+          "text": "Nelle ipotesi di recesso per giusta causa, il Fornitore ha diritto al pagamento delle prestazioni eseguite, purché correttamente effettuate, secondo il corrispettivo contrat- tuale, rinunciando espres..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 190,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-e2e68e1e304064557455",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 36,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 36,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 1.3676108121871948,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "contrattuale, verifiche in ordine all’adeguatezza del personale impiegato. 6.6 Entro la scadenza del presente Contratto attuativo, ed in caso di risoluzione o recesso dallo stesso, il Fornitore si imp..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 352,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-572eef74a2b8cfcae8b9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 112,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 112,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -3.30897855758667,
+          "source_scores": {
+            "graph": 0.00234375
+          },
+          "text": "36/2023, le Amministrazioni contraenti stesse avranno diritto di recedere dal Contratto attuativo ai sensi dell’art. 24 dell'Accordo Quadro “Recesso per giusta causa” oppure di ridurre le quantità in ..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 804,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-5594a13e3c23b9917d9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 233,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 233,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -3.79463791847229,
+          "source_scores": {
+            "graph": 0.0023076923076923075
+          },
+          "text": "Nel caso in cui, anche a seguito di segnalazioni pervenute dalle Amministrazioni Contraenti, a seguito di verifiche effettuate da Regione Toscana - Soggetto Aggrega- tore, anche tramite terzi incarica..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 639,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-6659a99a024724b5f212",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 184,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 184,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.015681743621826,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "18, comma 1 del Codice. Sono a carico dell’aggiudicatario tutte le spese contrattuali, gli oneri fiscali quali imposte e tasse - ivi comprese quelle di registro ove dovute - relative alla stipulazione..."
+        }
+      ],
+      "source_page_hit": true
+    },
+    {
+      "case_id": "Q003",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "due mesi",
+        "presa in carico",
+        "subentro"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.896,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Qual è la durata del periodo di presa in carico e subentro?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q004",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "2 giorni lavorativi",
+        "Scheda Informazioni",
+        "trasferimento"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 4.795,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Entro quanto tempo il Fornitore deve rispondere alle richieste di informazioni durante il trasferimento?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q005",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "120 giorni",
+        "solari continuativi",
+        "trasferimento",
+        "phase-out"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.894,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Qual è la durata massima delle attività di trasferimento a fine fornitura?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q006",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "QC1",
+        "qualificazione ACN",
+        "SaaS",
+        "Decreto direttoriale ACN n. 21/07/2024"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.484,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Quale livello di qualificazione ACN è richiesto per i servizi OSCAT in modalità SaaS?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q007",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "AI2",
+        "determina ACN 307/2022",
+        "AI1/QC1",
+        "AI2/QC2"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.193,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "A quale livello di qualificazione è stata adeguata l'infrastruttura SCT di Regione Toscana?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q008",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "Privacy by Default",
+        "Privacy by Design",
+        "GDPR",
+        "Regolamento UE 2016/679"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.332,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Quali sono i due paradigmi GDPR che i servizi devono implementare?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q009",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "Sergio Papiani",
+        "ing.",
+        "RUP"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 37.965,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Chi è il Responsabile Unico del Progetto (RUP) per questa gara?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.846786975860596,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.884696006774902,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q010",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "start.toscana.it",
+        "piattaforma telematica di negoziazione"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 47.021,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Qual è la piattaforma telematica utilizzata per la procedura di gara?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -1.27262282371521,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -10.123357772827148,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q011",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "offerta economicamente più vantaggiosa",
+        "miglior rapporto qualità prezzo",
+        "OEPV"
+      ],
+      "graph_source_count": 1,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 28.796,
+      "ontology_domain": "ECONOMICO_FINANZIARIO",
+      "precision_at_k": 0.0,
+      "query": "Con quale criterio viene aggiudicata la gara?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        96
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 303,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-2dda268645eb0760b443",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "financial_statement",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "economico_finanziario",
+            "ontology_subdomain": "capacita_economica",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "finance",
+            "page_number": 96,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 96,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.010534286499023,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "13.1.4 Verifica di conformità delle attività di Sviluppo e Manutenzione Evolutiva................34 13.1.5 Verifica di conformità delle attività di Supporto Tecnico Specialistico........................."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q012",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "CART",
+        "ARPA",
+        "SCT",
+        "interoperabilità",
+        "cooperazione applicativa"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.516,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Quali sistemi regionali trasversali devono essere integrati dai servizi dell'Accordo Quadro?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q013",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "dodici mesi",
+        "garanzia",
+        "software collaudato",
+        "48 mese",
+        "49 al 60 mese"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.901,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Per quanto tempo il software collaudato è coperto da garanzia?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q014",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "Fornitore",
+        "dimensionamento",
+        "risorse",
+        "RTI gestore",
+        "SCT"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.678,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Chi è responsabile del corretto dimensionamento delle risorse cloud SCT?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q015",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "Modello di gestione",
+        "Piano Operativo",
+        "modalità organizzative",
+        "governance del contratto",
+        "10 sezioni"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 46.751,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve contenere il Piano Operativo presentato entro la presa in carico?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -6.019190788269043,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.777067184448242,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q016",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "stipula dei contratti attuativi",
+        "approvazione",
+        "Piano Operativo"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 45.619,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Il Piano Operativo deve essere approvato prima di cosa?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.339540958404541,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.534100532531738,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q017",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "55%",
+        "Programmatore",
+        "MAA"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.561,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Qual è la percentuale di Programmatori nel mix professionale per il servizio MAA?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q018",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "tutti i membri componenti",
+        "raggruppamento temporaneo",
+        "consorzio stabile",
+        "consorziate esecutrici"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 27.574,
+      "ontology_domain": "CERTIFICAZIONI",
+      "precision_at_k": 0.0,
+      "query": "Chi deve possedere la certificazione ISO 9001 nel caso di raggruppamento temporaneo di imprese?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        283,
+        1
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1040,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-37ac7d9ca8013b952b9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 283,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 283,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.631647109985352,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "36/2023, finalizzata alla stipula di accordi quadro per la fornitura di servizi di governo, sviluppo, evoluzione e gestione dei sistemi informativi della Regione Autonoma della Sardegna, di Enti e Age..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-4ba324b4b013b02bf263",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 1,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 1,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.957988739013672,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "sviluppo di software Valore Valore stimato al netto dell'IVA: 11 172 582,96 EUR Informazioni generali Informazioni supplementari: Importo a base di gara oltre Iva nei termini di legge è € 5.999.723,60..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q019",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "lingua italiana",
+        "accuratezza",
+        "comprensibilità",
+        "usabilità",
+        "documentazione"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.503,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve garantire il Fornitore riguardo alla documentazione prodotta?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q020",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "tre mesi",
+        "Piano di trasferimento",
+        "PTF",
+        "scadenza Accordo Quadro"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.634,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Entro quanti mesi prima della scadenza il Fornitore deve presentare il Piano di Trasferimento?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q021",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "una settimana",
+        "variazione",
+        "Piano Operativo",
+        "Amministrazione"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.364,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Entro quanto tempo il Fornitore deve recepire le richieste di variazione al Piano Operativo?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q022",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "polizza assicurativa",
+        "Fornitore",
+        "garanzie",
+        "subappaltatrici",
+        "sub-fornitrici"
+      ],
+      "graph_source_count": 5,
+      "hit_keyword_count": 1,
+      "hit_keywords": [
+        "Fornitore"
+      ],
+      "latency_ms": 50.589,
+      "ontology_domain": "CLAUSOLE_CONTRATTUALI",
+      "precision_at_k": 0.2,
+      "query": "Chi copre i danni causati dalle imprese subappaltatrici?",
+      "recall_hit": true,
+      "retrieved_pages": [
+        112,
+        244,
+        233,
+        36,
+        184
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 352,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-572eef74a2b8cfcae8b9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 112,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 112,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.250315189361572,
+          "source_scores": {
+            "graph": 0.0023076923076923075
+          },
+          "text": "36/2023, le Amministrazioni contraenti stesse avranno diritto di recedere dal Contratto attuativo ai sensi dell’art. 24 dell'Accordo Quadro “Recesso per giusta causa” oppure di ridurre le quantità in ..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 845,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-18af1822d076cc6939fb",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 244,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 244,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -5.290176868438721,
+          "source_scores": {
+            "graph": 0.00234375
+          },
+          "text": "Nelle ipotesi di recesso per giusta causa, il Fornitore ha diritto al pagamento delle prestazioni eseguite, purché correttamente effettuate, secondo il corrispettivo contrat- tuale, rinunciando espres..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 804,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-5594a13e3c23b9917d9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 233,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 233,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -5.451213836669922,
+          "source_scores": {
+            "graph": 0.0023809523809523807
+          },
+          "text": "Nel caso in cui, anche a seguito di segnalazioni pervenute dalle Amministrazioni Contraenti, a seguito di verifiche effettuate da Regione Toscana - Soggetto Aggrega- tore, anche tramite terzi incarica..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 190,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-e2e68e1e304064557455",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 36,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 36,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -7.073921203613281,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "contrattuale, verifiche in ordine all’adeguatezza del personale impiegato. 6.6 Entro la scadenza del presente Contratto attuativo, ed in caso di risoluzione o recesso dallo stesso, il Fornitore si imp..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 639,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-6659a99a024724b5f212",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 184,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 184,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.56480884552002,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "18, comma 1 del Codice. Sono a carico dell’aggiudicatario tutte le spese contrattuali, gli oneri fiscali quali imposte e tasse - ivi comprese quelle di registro ove dovute - relative alla stipulazione..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q023",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "risoluzione di diritto",
+        "incameramento della cauzione definitiva",
+        "penale",
+        "polizza"
+      ],
+      "graph_source_count": 5,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 44.945,
+      "ontology_domain": "PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Cosa succede se la polizza assicurativa non è operativa?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        36,
+        112,
+        244,
+        233,
+        184
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 190,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-e2e68e1e304064557455",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 36,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 36,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.548464775085449,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "contrattuale, verifiche in ordine all’adeguatezza del personale impiegato. 6.6 Entro la scadenza del presente Contratto attuativo, ed in caso di risoluzione o recesso dallo stesso, il Fornitore si imp..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 352,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-572eef74a2b8cfcae8b9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 112,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 112,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -7.746973991394043,
+          "source_scores": {
+            "graph": 0.00234375
+          },
+          "text": "36/2023, le Amministrazioni contraenti stesse avranno diritto di recedere dal Contratto attuativo ai sensi dell’art. 24 dell'Accordo Quadro “Recesso per giusta causa” oppure di ridurre le quantità in ..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 845,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-18af1822d076cc6939fb",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 244,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 244,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -7.78324031829834,
+          "source_scores": {
+            "graph": 0.0023809523809523807
+          },
+          "text": "Nelle ipotesi di recesso per giusta causa, il Fornitore ha diritto al pagamento delle prestazioni eseguite, purché correttamente effettuate, secondo il corrispettivo contrat- tuale, rinunciando espres..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 804,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-5594a13e3c23b9917d9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 233,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 233,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.604880332946777,
+          "source_scores": {
+            "graph": 0.0023076923076923075
+          },
+          "text": "Nel caso in cui, anche a seguito di segnalazioni pervenute dalle Amministrazioni Contraenti, a seguito di verifiche effettuate da Regione Toscana - Soggetto Aggrega- tore, anche tramite terzi incarica..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 639,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-6659a99a024724b5f212",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 184,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 184,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -10.537469863891602,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "18, comma 1 del Codice. Sono a carico dell’aggiudicatario tutte le spese contrattuali, gli oneri fiscali quali imposte e tasse - ivi comprese quelle di registro ove dovute - relative alla stipulazione..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q024",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "9 mesi",
+        "pubblicazione del bando",
+        "durata procedimento"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 38.359,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Qual è la durata prevista del procedimento di gara dalla pubblicazione del bando?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -3.8297383785247803,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.747394561767578,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q025",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "Regione Toscana",
+        "ITI1",
+        "NUTS",
+        "sedi delle Amministrazioni"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 39.552,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Qual è il luogo di svolgimento del servizio e qual è il codice NUTS?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.657412052154541,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.500553131103516,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q026",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "procedura aperta",
+        "piattaforma telematica",
+        "start.toscana.it"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 37.855,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Che tipo di procedura è adottata per questa gara?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -1.0045493841171265,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.529433250427246,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q027",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "progettazione",
+        "sviluppo",
+        "installazione",
+        "assistenza",
+        "commercializzazione",
+        "IAF 33",
+        "software"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 2,
+      "hit_keywords": [
+        "sviluppo",
+        "software"
+      ],
+      "latency_ms": 29.733,
+      "ontology_domain": "CERTIFICAZIONI",
+      "precision_at_k": 0.2857,
+      "query": "Cosa prevede la norma ISO/IEC 27001 richiesta al Fornitore come campo di applicazione?",
+      "recall_hit": true,
+      "retrieved_pages": [
+        150,
+        1
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 546,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-ecbdb87160543a4874a0",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 150,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 150,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -3.623479127883911,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "INDICAZIONI E DISPOSIZIONI PER LA STESURA DEI DOCUMENTI INERENTI ALLA SICUREZZA DI CUI ALL’ARTICOLO 26, COMMA 3, DEL DECRETO LEGISLATIVO N. 81 DEL 2008 ..................................................."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-4ba324b4b013b02bf263",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 1,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 1,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -5.905904769897461,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "sviluppo di software Valore Valore stimato al netto dell'IVA: 11 172 582,96 EUR Informazioni generali Informazioni supplementari: Importo a base di gara oltre Iva nei termini di legge è € 5.999.723,60..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q028",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "normative vigenti",
+        "accessibilità",
+        "requisiti funzionali",
+        "standard"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.37,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Quale norma deve rispettare il software realizzato riguardo all'accessibilità?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q029",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "non garantito",
+        "affiancamento",
+        "Fornitore uscente"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 37.629,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "L'affiancamento del Fornitore uscente è garantito durante la presa in carico?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 0.6293742656707764,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.471146583557129,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q030",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "Fornitore",
+        "a carico del Fornitore",
+        "senza oneri aggiuntivi",
+        "Regione Toscana"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.038,
+      "ontology_domain": "ECONOMICO_FINANZIARIO",
+      "precision_at_k": 0.0,
+      "query": "Chi è responsabile delle spese per le attività propedeutiche alla presa in carico?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q031",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "oggetto del trasferimento",
+        "attività",
+        "modalità di accesso",
+        "documentazione",
+        "codice",
+        "architettura"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 42.828,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve contenere il Piano di Trasferimento (PTF)?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        255,
+        336
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.17569637298584,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.266837120056152,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q032",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "risorse contrattualizzate",
+        "RTI gestore",
+        "SCT",
+        "canone",
+        "as a Service"
+      ],
+      "graph_source_count": 3,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 59.324,
+      "ontology_domain": "ECONOMICO_FINANZIARIO",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve comprendere il costo del canone offerto dal Fornitore?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        278,
+        96,
+        133
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1015,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-72da33e88b569cb02d67",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "financial_statement",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "economico_finanziario",
+            "ontology_subdomain": "capacita_economica",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "finance",
+            "page_number": 278,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 278,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.710825443267822,
+          "source_scores": {
+            "graph": 0.0023809523809523807
+          },
+          "text": "36/2023, finalizzata alla stipula di accordi quadro per la fornitura di servizi di governo, sviluppo, evoluzione e gestione dei sistemi informativi della Regione Autonoma della Sardegna, di Enti e Age..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 303,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-2dda268645eb0760b443",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "financial_statement",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "economico_finanziario",
+            "ontology_subdomain": "capacita_economica",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "finance",
+            "page_number": 96,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 96,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.45923900604248,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "13.1.4 Verifica di conformità delle attività di Sviluppo e Manutenzione Evolutiva................34 13.1.5 Verifica di conformità delle attività di Supporto Tecnico Specialistico........................."
+        },
+        {
+          "metadata": {
+            "chunk_index": 416,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-9b0bef86dc95048aa440",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "financial_statement",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "economico_finanziario",
+            "ontology_subdomain": "capacita_economica",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "finance",
+            "page_number": 133,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 133,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.943735122680664,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "La liberazione anticipata della garanzia rispetto alle scadenze di cui alla lettera b) del comma precedente può aver luogo solo con la restituzione al Garante, da parte della Regione Toscana – Soggett..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q033",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "totalmente a carico del Fornitore",
+        "risorse aggiuntive",
+        "piena funzionalità",
+        "dimensionamento"
+      ],
+      "graph_source_count": 5,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 44.803,
+      "ontology_domain": "PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Cosa succede se il Fornitore non dimensiona correttamente le risorse SCT?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        244,
+        36,
+        233,
+        112,
+        184
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 845,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-18af1822d076cc6939fb",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 244,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 244,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 1.9415056705474854,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "Nelle ipotesi di recesso per giusta causa, il Fornitore ha diritto al pagamento delle prestazioni eseguite, purché correttamente effettuate, secondo il corrispettivo contrat- tuale, rinunciando espres..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 190,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-e2e68e1e304064557455",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 36,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 36,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -0.2206721007823944,
+          "source_scores": {
+            "graph": 0.0023809523809523807
+          },
+          "text": "contrattuale, verifiche in ordine all’adeguatezza del personale impiegato. 6.6 Entro la scadenza del presente Contratto attuativo, ed in caso di risoluzione o recesso dallo stesso, il Fornitore si imp..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 804,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-5594a13e3c23b9917d9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 233,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 233,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -7.846613883972168,
+          "source_scores": {
+            "graph": 0.0023076923076923075
+          },
+          "text": "Nel caso in cui, anche a seguito di segnalazioni pervenute dalle Amministrazioni Contraenti, a seguito di verifiche effettuate da Regione Toscana - Soggetto Aggrega- tore, anche tramite terzi incarica..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 352,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-572eef74a2b8cfcae8b9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 112,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 112,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.806859016418457,
+          "source_scores": {
+            "graph": 0.00234375
+          },
+          "text": "36/2023, le Amministrazioni contraenti stesse avranno diritto di recedere dal Contratto attuativo ai sensi dell’art. 24 dell'Accordo Quadro “Recesso per giusta causa” oppure di ridurre le quantità in ..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 639,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-6659a99a024724b5f212",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "contrattuale",
+            "ontology_subdomain": "clausole_penali",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 184,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 184,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -10.024259567260742,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "18, comma 1 del Codice. Sono a carico dell’aggiudicatario tutte le spese contrattuali, gli oneri fiscali quali imposte e tasse - ivi comprese quelle di registro ove dovute - relative alla stipulazione..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q034",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "senza oneri aggiuntivi",
+        "Responsabile del servizio",
+        "gestione del personale"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 7.571,
+      "ontology_domain": "ECONOMICO_FINANZIARIO",
+      "precision_at_k": 0.0,
+      "query": "Il Responsabile del servizio comporta oneri aggiuntivi per l'Amministrazione?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q035",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "Gestione OSCAT-GitLab",
+        "Gestione OSCAT VA",
+        "Sviluppo e Manutenzione Evolutiva",
+        "Manutenzione Adeguativa",
+        "Assistenza tecnica",
+        "Help desk",
+        "Supporto Tecnico Specialistico"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.41,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Quali servizi sono inclusi nell'Accordo Quadro come oggetto principale?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q036",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "Privacy by Design",
+        "fase di progettazione",
+        "valutazione del rischio"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.478,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Che tipo di approccio deve adottare il sistema informativo per la conformità al GDPR fin dalla progettazione?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q037",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "rimozione dei difetti",
+        "a totale carico del Fornitore",
+        "tempestiva rimozione",
+        "basi dati deteriorate"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.338,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve fare il Fornitore riguardo alle anomalie del software non intercettate durante i test?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q038",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "progettuale a corpo",
+        "a giorni/persona",
+        "continuativa a canone"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.063,
+      "ontology_domain": "ECONOMICO_FINANZIARIO",
+      "precision_at_k": 0.0,
+      "query": "Come vengono erogati i servizi previsti nell'Accordo Quadro in termini di modalità?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q039",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "integrazione inevitabile e necessaria",
+        "DevSecOps",
+        "ciclo di vita del software",
+        "CMDBuild",
+        "Service Management"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.175,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Qual è la relazione tra OSCAT e SCT secondo il capitolato?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q040",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "gestione del personale",
+        "ferie",
+        "malattie",
+        "turnazione",
+        "presidio",
+        "reperibilità"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 37.613,
+      "ontology_domain": "ORGANIZZATIVO",
+      "precision_at_k": 0.0,
+      "query": "Quali responsabilità ha il Fornitore verso le risorse umane impiegate?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        143,
+        65
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 523,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-30286bb17a695196fdb0",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "organizational_plan",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "organizzativo",
+            "ontology_subdomain": "organizzazione_team",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "operations",
+            "page_number": 143,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 143,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -3.999703884124756,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "36/2023, finalizzata alla stipula di accordi quadro per la fornitura di servizi di governo, sviluppo, evoluzione e gestione dei sistemi informativi della Regione Autonoma della Sardegna, di Enti e Age..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 140,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-63d50703e1c63f079110",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "organizational_plan",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "organizzativo",
+            "ontology_subdomain": "organizzazione_team",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "operations",
+            "page_number": 65,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 65,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.6707868576049805,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "Agli effetti delle disposizioni che seguono, per “responsabile della struttura” si intende: - il dirigente, per i dipendenti non dirigenti assegnati alla struttura di cui è responsabile; - il responsa..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q041",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "certificato di conformità",
+        "organismo di certificazione accreditato",
+        "ISO/IEC 17021-1",
+        "EA MLA",
+        "IAF MLA"
+      ],
+      "graph_source_count": 3,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 25.471,
+      "ontology_domain": "CERTIFICAZIONI",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve fare il Fornitore per comprovare il possesso della certificazione ISO 9001?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        62,
+        230,
+        1
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 279,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-d5aad80c02295047e271",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 62,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 62,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.79145336151123,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "PRESIDÈNTZIA PRESIDENZA Direzione generale della Centrale Regionale di Committenza Servizio Forniture e Servizi PROCEDURA APERTA, AI SENSI DELL'ART. 71 DEL D.LGS."
+        },
+        {
+          "metadata": {
+            "chunk_index": 846,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-acb97b22264ef7fbd5f9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 230,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 230,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.896346092224121,
+          "source_scores": {
+            "graph": 0.0071476610820873105
+          },
+          "text": "PRESIDÈNTZIA PRESIDENZA Direzione generale della Centrale Regionale di Committenza Servizio Forniture e Servizi Procedura aperta, ai sensi dell’art. 71 del D.Lgs."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-4ba324b4b013b02bf263",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 1,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 1,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -9.690131187438965,
+          "source_scores": {
+            "graph": 0.00234375
+          },
+          "text": "sviluppo di software Valore Valore stimato al netto dell'IVA: 11 172 582,96 EUR Informazioni generali Informazioni supplementari: Importo a base di gara oltre Iva nei termini di legge è € 5.999.723,60..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q042",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "vincolo per l'erogazione",
+        "qualificazione ACN",
+        "QC1",
+        "mantenere",
+        "vigenza contrattuale"
+      ],
+      "graph_source_count": 3,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 42.805,
+      "ontology_domain": "CERTIFICAZIONI",
+      "precision_at_k": 0.0,
+      "query": "L'ottenimento della qualificazione ACN è un obbligo contrattuale per l'erogazione dei servizi SaaS?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        283,
+        62,
+        230
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1040,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-37ac7d9ca8013b952b9b",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.725,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 283,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 283,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -5.678213596343994,
+          "source_scores": {
+            "graph": 0.0023076923076923075
+          },
+          "text": "36/2023, finalizzata alla stipula di accordi quadro per la fornitura di servizi di governo, sviluppo, evoluzione e gestione dei sistemi informativi della Regione Autonoma della Sardegna, di Enti e Age..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 279,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-d5aad80c02295047e271",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 62,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 62,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.007110595703125,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "PRESIDÈNTZIA PRESIDENZA Direzione generale della Centrale Regionale di Committenza Servizio Forniture e Servizi PROCEDURA APERTA, AI SENSI DELL'ART. 71 DEL D.LGS."
+        },
+        {
+          "metadata": {
+            "chunk_index": 846,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-acb97b22264ef7fbd5f9",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "compliance",
+            "ontology_subdomain": "obblighi_normativi",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "legal",
+            "page_number": 230,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 230,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -8.100913047790527,
+          "source_scores": {
+            "graph": 0.007183718774395003
+          },
+          "text": "PRESIDÈNTZIA PRESIDENZA Direzione generale della Centrale Regionale di Committenza Servizio Forniture e Servizi Procedura aperta, ai sensi dell’art. 71 del D.Lgs."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q043",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "49 al 60 mese",
+        "12 mesi",
+        "48 mese",
+        "garanzia"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 5.786,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Quando inizia e quando termina il periodo di garanzia del software rilasciato tra il 37° e il 48° mese?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q044",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "Mandataria",
+        "raggruppamento temporaneo",
+        "qualificazione ACN",
+        "capogruppo"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 49.006,
+      "ontology_domain": "SUBAPPALTO_RTI",
+      "precision_at_k": 0.0,
+      "query": "Chi nel caso di RTI deve ottenere la qualificazione ACN?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        255,
+        336
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 1.129966378211975,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -2.78798770904541,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q045",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "consorziate esecutrici",
+        "consorzio stabile",
+        "certificazione",
+        "ISO 9001",
+        "ISO 27001"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 1,
+      "hit_keywords": [
+        "certificazione"
+      ],
+      "latency_ms": 51.155,
+      "ontology_domain": "SUBAPPALTO_RTI",
+      "precision_at_k": 0.2,
+      "query": "Cosa è previsto nel caso di consorzio stabile riguardo alle certificazioni obbligatorie?",
+      "recall_hit": true,
+      "retrieved_pages": [
+        255,
+        336
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": 2.6173596382141113,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -1.5906727313995361,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q046",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "requisiti specifici dei servizi",
+        "procedure generali di gestione della qualità",
+        "disposizioni organizzative",
+        "approvato da Regione Toscana"
+      ],
+      "graph_source_count": 2,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 51.549,
+      "ontology_domain": "AMMINISTRATIVO",
+      "precision_at_k": 0.0,
+      "query": "Cosa deve includere il Piano di Qualità del Fornitore?",
+      "recall_hit": false,
+      "retrieved_pages": [
+        336,
+        255
+      ],
+      "retrieved_sources": [
+        {
+          "metadata": {
+            "chunk_index": 1081,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 1,
+            "entity_id": "evidence-efd29a39d244f4ed4860",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.85,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 336,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/toscana_1/uploaded/documento_IN_TOSCANA_unificato.pdf",
+            "tender_id": "1"
+          },
+          "page": 336,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -4.911391735076904,
+          "source_scores": {
+            "graph": 0.0024590163934426227
+          },
+          "text": "Sulla base di quanto sopra esposto è opportuno sottolineare che oltre all’infrastruttura hardware anche le eventuali licenze/subscription software necessarie, nessuna esclusa, per l’erogazione dei ser..."
+        },
+        {
+          "metadata": {
+            "chunk_index": 941,
+            "criticality": "medium",
+            "doc_type": "tender",
+            "document_id": 2,
+            "entity_id": "evidence-17c6baf05951ecd2271d",
+            "entity_type": "EvidenceChunk",
+            "evaluation_axis": "mandatory",
+            "evidence_type": "documentary_proof",
+            "has_provenance": true,
+            "mapping_confidence": 0.825,
+            "ontology_domain": "amministrativo",
+            "ontology_subdomain": "rti_avvalimento",
+            "ontology_version": "tw-ontology-v1",
+            "owner_role": "bid_manager",
+            "page_number": 255,
+            "procedure_key": null,
+            "section_title": "Introduction",
+            "source": "knowledge_graph",
+            "source_document_ref": "tenders/admin/sardegna_2/uploaded/documento_unificato_SARDEGNA_IN.pdf",
+            "tender_id": "2"
+          },
+          "page": 255,
+          "retriever_sources": [
+            "graph"
+          ],
+          "score": -10.545648574829102,
+          "source_scores": {
+            "graph": 0.0024193548387096775
+          },
+          "text": "proposte. 4 1.5 Responsabilità Sociale di Impresa Il punteggio verrà assegnato in caso di possesso di certificazione SA 8000 ovvero l’attestazione di un ente terzo di conformità delle politiche aziend..."
+        }
+      ],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q047",
+      "difficulty": "easy",
+      "expected_keywords": [
+        "una settimana",
+        "variazione",
+        "Piano di Qualità"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 7.003,
+      "ontology_domain": "SLA_PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Entro quanto tempo il Fornitore deve recepire le variazioni al Piano di Qualità?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q048",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "Coordinatore/Capo Progetto 10%",
+        "Architetto applicativo 20%",
+        "Specialista sicurezza 20%",
+        "Programmatore 5%"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.727,
+      "ontology_domain": "TECNICO",
+      "precision_at_k": 0.0,
+      "query": "Qual è la composizione percentuale dei profili professionali per il servizio MAA con focus sicurezza (OSCAT VA)?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q049",
+      "difficulty": "hard",
+      "expected_keywords": [
+        "risoluzione di diritto",
+        "incameramento della cauzione definitiva",
+        "penale",
+        "risarcimento del maggior danno"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.523,
+      "ontology_domain": "PENALITA",
+      "precision_at_k": 0.0,
+      "query": "Cosa avviene se il Fornitore non fornisce la prova della piena operatività delle garanzie assicurative?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    },
+    {
+      "case_id": "Q050",
+      "difficulty": "medium",
+      "expected_keywords": [
+        "Fornitore",
+        "fino al termine delle attività di trasferimento",
+        "responsabilità",
+        "PTF"
+      ],
+      "graph_source_count": 0,
+      "hit_keyword_count": 0,
+      "hit_keywords": [],
+      "latency_ms": 3.485,
+      "ontology_domain": "CLAUSOLE_CONTRATTUALI",
+      "precision_at_k": 0.0,
+      "query": "Dove deve essere mantenuta operativa la responsabilità del servizio durante il trasferimento?",
+      "recall_hit": false,
+      "retrieved_pages": [],
+      "retrieved_sources": [],
+      "source_page_hit": false
+    }
+  ],
+  "fusion_weights": {
+    "dense": 0.45,
+    "graph": 0.15,
+    "sparse": 0.35
+  },
+  "graph_case_count": 24,
+  "graph_source_count": 62,
+  "precision_at_k": 0.0187,
+  "precision_k": 3,
+  "recall_at_k": 0.08,
+  "retrievers": {
+    "dense": false,
+    "graph": true,
+    "sparse": false
+  },
+  "source_page_hit_rate": 0.02,
+  "top_k": 5
+}

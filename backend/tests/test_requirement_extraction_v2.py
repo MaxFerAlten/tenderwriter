@@ -97,14 +97,22 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(candidates), 1)
-        self.assertEqual(candidates[0]["summary"], "The bidder must provide ISO 27001 certification.")
+        self.assertEqual(
+            candidates[0]["summary"], "The bidder must provide ISO 27001 certification."
+        )
         self.assertEqual(candidates[0]["priority"], "high")
         self.assertEqual(candidates[0]["category"], "technical")
         self.assertEqual(candidates[0]["schema_version"], "requirement_extraction_v2.schema.v1")
         self.assertEqual(candidates[0]["extraction_method"], "llm_v2")
         self.assertEqual(candidates[0]["citations"][0]["source_document_ref"], "tenders/12/rfp.pdf")
+        self.assertIn("ontology", candidates[0])
+        self.assertEqual(candidates[0]["ontology"]["ontology_domain"], "compliance")
+        self.assertEqual(candidates[0]["ontology"]["ontology_subdomain"], "certificazioni")
+        self.assertEqual(candidates[0]["ontology"]["criticality"], "high")
 
-    async def test_extract_requirement_candidates_v2_from_sections_calls_generator_with_schema_prompt(self) -> None:
+    async def test_extract_requirement_candidates_v2_from_sections_calls_generator_with_schema_prompt(
+        self,
+    ) -> None:
         generator = _FakeGenerator(
             {
                 "schema_version": "requirement_extraction_v2.schema.v1",
@@ -137,13 +145,17 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(generator.calls[0][0], "requirement_extractor_v2")
-        self.assertEqual(generator.calls[0][1]["schema_version"], "requirement_extraction_v2.schema.v1")
+        self.assertEqual(
+            generator.calls[0][1]["schema_version"], "requirement_extraction_v2.schema.v1"
+        )
         self.assertEqual(generator.calls[0][1]["section_path"], "Sezione 4")
         self.assertEqual(generator.calls[0][3], 1200)
         self.assertEqual(candidates[0]["conditions"], ["Applicabile al servizio principale"])
         self.assertEqual(candidates[0]["citations"][0]["section_path"], "Sezione 4")
 
-    async def test_extract_requirement_candidates_v2_splits_oversized_sections_into_bounded_prompt_windows(self) -> None:
+    async def test_extract_requirement_candidates_v2_splits_oversized_sections_into_bounded_prompt_windows(
+        self,
+    ) -> None:
         generator = _FakeGenerator(
             {
                 "schema_version": "requirement_extraction_v2.schema.v1",
@@ -173,11 +185,17 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(len(variables["document_text"]), max_input_chars)
             self.assertEqual(variables["section_path"], "Section 8")
 
-    async def test_ingest_file_keeps_heuristic_extraction_when_llm_v2_flag_is_disabled(self) -> None:
+    async def test_ingest_file_keeps_heuristic_extraction_when_llm_v2_flag_is_disabled(
+        self,
+    ) -> None:
         generator = _FakeGenerator({"requirements": []})
         pipeline = IngestionPipeline(_FakeRagEngine(generator=generator))
         elements = [
-            {"type": "Title", "text": "Mandatory Requirements", "metadata": {"section": "Mandatory Requirements"}},
+            {
+                "type": "Title",
+                "text": "Mandatory Requirements",
+                "metadata": {"section": "Mandatory Requirements"},
+            },
             {
                 "type": "Text",
                 "text": "The bidder must provide ISO 27001 certification.",
@@ -185,10 +203,13 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with patch.object(settings, "requirement_extraction_llm_v2_enabled", False), patch.object(
-            pipeline,
-            "_parse_document",
-            return_value=elements,
+        with (
+            patch.object(settings, "requirement_extraction_llm_v2_enabled", False),
+            patch.object(
+                pipeline,
+                "_parse_document",
+                return_value=elements,
+            ),
         ):
             stats = await pipeline.ingest_file(
                 file_path="rfp.pdf",
@@ -222,7 +243,11 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
         )
         pipeline = IngestionPipeline(_FakeRagEngine(generator=generator))
         elements = [
-            {"type": "Title", "text": "Mandatory Requirements", "metadata": {"section": "Mandatory Requirements"}},
+            {
+                "type": "Title",
+                "text": "Mandatory Requirements",
+                "metadata": {"section": "Mandatory Requirements"},
+            },
             {
                 "type": "Text",
                 "text": "The bidder must provide ISO 27001 certification.",
@@ -230,10 +255,13 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with patch.object(settings, "requirement_extraction_llm_v2_enabled", True), patch.object(
-            pipeline,
-            "_parse_document",
-            return_value=elements,
+        with (
+            patch.object(settings, "requirement_extraction_llm_v2_enabled", True),
+            patch.object(
+                pipeline,
+                "_parse_document",
+                return_value=elements,
+            ),
         ):
             stats = await pipeline.ingest_file(
                 file_path="rfp.pdf",
@@ -244,11 +272,18 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["requirement_extraction_method"], "llm_v2")
         self.assertEqual(stats["requirements_detected"], 1)
         self.assertEqual(stats["requirement_candidates"][0]["extraction_method"], "llm_v2")
-        self.assertEqual(stats["requirement_candidates"][0]["citations"][0]["source_document_ref"], "rfp.pdf")
+        self.assertEqual(
+            stats["requirement_candidates"][0]["citations"][0]["source_document_ref"], "rfp.pdf"
+        )
         self.assertEqual(stats["requirement_scope"], "participation")
-        self.assertEqual(stats["requirement_extractor_pipeline"], "tender_document_llm_participation_v1")
+        self.assertEqual(
+            stats["requirement_extractor_pipeline"], "tender_document_llm_participation_v1"
+        )
         self.assertEqual(stats["requirement_candidates"][0]["requirement_scope"], "participation")
-        self.assertEqual(stats["requirement_candidates"][0]["extractor_pipeline"], "tender_document_llm_participation_v1")
+        self.assertEqual(
+            stats["requirement_candidates"][0]["extractor_pipeline"],
+            "tender_document_llm_participation_v1",
+        )
         self.assertEqual(generator.calls[0][0], "participation_requirement_extractor_v1")
         self.assertEqual(stats["warnings"], [])
 
@@ -258,7 +293,11 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
         )
         pipeline = IngestionPipeline(_FakeRagEngine(generator=generator))
         elements = [
-            {"type": "Title", "text": "Mandatory Requirements", "metadata": {"section": "Mandatory Requirements"}},
+            {
+                "type": "Title",
+                "text": "Mandatory Requirements",
+                "metadata": {"section": "Mandatory Requirements"},
+            },
             {
                 "type": "Text",
                 "text": "The bidder must provide ISO 27001 certification.",
@@ -266,10 +305,13 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with patch.object(settings, "requirement_extraction_llm_v2_enabled", True), patch.object(
-            pipeline,
-            "_parse_document",
-            return_value=elements,
+        with (
+            patch.object(settings, "requirement_extraction_llm_v2_enabled", True),
+            patch.object(
+                pipeline,
+                "_parse_document",
+                return_value=elements,
+            ),
         ):
             stats = await pipeline.ingest_file(
                 file_path="rfp.pdf",
@@ -311,7 +353,11 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
         )
         pipeline = IngestionPipeline(_FakeRagEngine(generator=generator))
         elements = [
-            {"type": "Title", "text": "Mandatory Requirements", "metadata": {"section": "Mandatory Requirements"}},
+            {
+                "type": "Title",
+                "text": "Mandatory Requirements",
+                "metadata": {"section": "Mandatory Requirements"},
+            },
             {
                 "type": "Text",
                 "text": "The bidder must provide ISO 27001 certification.",
@@ -319,25 +365,31 @@ class RequirementExtractionV2Tests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with patch.object(settings, "requirement_extraction_llm_v2_enabled", True), patch.object(
-            settings,
-            "requirement_extraction_llm_v2_rollout_percent",
-            0,
-            create=True,
-        ), patch.object(
-            settings,
-            "requirement_extraction_llm_v2_tender_ids",
-            "",
-            create=True,
-        ), patch.object(
-            settings,
-            "requirement_extraction_llm_v2_blocked_tender_ids",
-            "",
-            create=True,
-        ), patch.object(
-            pipeline,
-            "_parse_document",
-            return_value=elements,
+        with (
+            patch.object(settings, "requirement_extraction_llm_v2_enabled", True),
+            patch.object(
+                settings,
+                "requirement_extraction_llm_v2_rollout_percent",
+                0,
+                create=True,
+            ),
+            patch.object(
+                settings,
+                "requirement_extraction_llm_v2_tender_ids",
+                "",
+                create=True,
+            ),
+            patch.object(
+                settings,
+                "requirement_extraction_llm_v2_blocked_tender_ids",
+                "",
+                create=True,
+            ),
+            patch.object(
+                pipeline,
+                "_parse_document",
+                return_value=elements,
+            ),
         ):
             stats = await pipeline.ingest_file(
                 file_path="rfp.pdf",

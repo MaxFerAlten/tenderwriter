@@ -12,11 +12,11 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from dataclasses import dataclass
 from urllib.parse import quote
 
 import httpx
 import structlog
-from dataclasses import dataclass
 
 logger = structlog.get_logger()
 
@@ -51,10 +51,13 @@ async def _get_admin_token() -> str:
 
     async with httpx.AsyncClient(base_url=MM_INTERNAL_URL, timeout=15) as client:
         # Login
-        resp = await client.post(f"{MM_SUBPATH}/api/v4/users/login", json={
-            "login_id": admin_user,
-            "password": admin_pass,
-        })
+        resp = await client.post(
+            f"{MM_SUBPATH}/api/v4/users/login",
+            json={
+                "login_id": admin_user,
+                "password": admin_pass,
+            },
+        )
         resp.raise_for_status()
         session_token = resp.headers["token"]
 
@@ -80,7 +83,8 @@ async def _api(method: str, path: str, **kwargs) -> httpx.Response:
     token = await _get_admin_token()
     async with httpx.AsyncClient(base_url=MM_INTERNAL_URL, timeout=15) as client:
         resp = await client.request(
-            method, f"{MM_SUBPATH}{path}",
+            method,
+            f"{MM_SUBPATH}{path}",
             headers={"Authorization": f"Bearer {token}"},
             **kwargs,
         )
@@ -133,6 +137,7 @@ async def get_mm_sso_mode() -> str:
         "legacy"       — No SSO, use PAT-based browser sessions
     """
     from app.config import settings
+
     auth_provider = (settings.auth_provider or "").strip().lower()
 
     if auth_provider != "keycloak":
@@ -203,6 +208,7 @@ async def _get_team_id() -> str:
 # User sync
 # ---------------------------------------------------------------------------
 
+
 async def ensure_mm_user(email: str, name: str, tw_user_id: int) -> tuple[str, str]:
     """Ensure a Mattermost user exists for the given TW user. Returns (MM user ID, username)."""
     # Try to find by email
@@ -211,10 +217,14 @@ async def ensure_mm_user(email: str, name: str, tw_user_id: int) -> tuple[str, s
         mm_user = resp.json()
         # Ensure user is in the team (ignore "already member" errors)
         team_id = await _get_team_id()
-        team_resp = await _api("POST", f"/api/v4/teams/{team_id}/members", json={
-            "team_id": team_id,
-            "user_id": mm_user["id"],
-        })
+        team_resp = await _api(
+            "POST",
+            f"/api/v4/teams/{team_id}/members",
+            json={
+                "team_id": team_id,
+                "user_id": mm_user["id"],
+            },
+        )
         if team_resp.status_code not in (200, 201):
             # Log but don't fail — user may already be a member
             logger.debug(
@@ -229,22 +239,30 @@ async def ensure_mm_user(email: str, name: str, tw_user_id: int) -> tuple[str, s
     # Ensure unique
     username = f"{username}-tw{tw_user_id}"
 
-    resp = await _api("POST", "/api/v4/users", json={
-        "email": email,
-        "username": username,
-        "password": f"TW!{secrets.token_urlsafe(32)}",
-        "first_name": name.split()[0] if name else "",
-        "last_name": " ".join(name.split()[1:]) if name and " " in name else "",
-    })
+    resp = await _api(
+        "POST",
+        "/api/v4/users",
+        json={
+            "email": email,
+            "username": username,
+            "password": f"TW!{secrets.token_urlsafe(32)}",
+            "first_name": name.split()[0] if name else "",
+            "last_name": " ".join(name.split()[1:]) if name and " " in name else "",
+        },
+    )
     resp.raise_for_status()
     mm_user = resp.json()
 
     # Add to team
     team_id = await _get_team_id()
-    await _api("POST", f"/api/v4/teams/{team_id}/members", json={
-        "team_id": team_id,
-        "user_id": mm_user["id"],
-    })
+    await _api(
+        "POST",
+        f"/api/v4/teams/{team_id}/members",
+        json={
+            "team_id": team_id,
+            "user_id": mm_user["id"],
+        },
+    )
 
     logger.info("mattermost.user_created", email=email, mm_user_id=mm_user["id"])
     return mm_user["id"], mm_user["username"]
@@ -253,6 +271,7 @@ async def ensure_mm_user(email: str, name: str, tw_user_id: int) -> tuple[str, s
 # ---------------------------------------------------------------------------
 # Best-effort provisioning (called from auth hooks)
 # ---------------------------------------------------------------------------
+
 
 async def provision_mm_user_for_tw_user(
     *,
@@ -293,6 +312,7 @@ async def provision_mm_user_for_tw_user(
 # Channel per tender
 # ---------------------------------------------------------------------------
 
+
 async def ensure_tender_channel(tender_id: int, tender_title: str) -> str:
     """Ensure a Mattermost channel exists for the given tender. Returns channel ID."""
     team_id = await _get_team_id()
@@ -304,13 +324,17 @@ async def ensure_tender_channel(tender_id: int, tender_title: str) -> str:
         return resp.json()["id"]
 
     # Create channel
-    resp = await _api("POST", "/api/v4/channels", json={
-        "team_id": team_id,
-        "name": channel_name,
-        "display_name": f"Tender: {tender_title[:50]}",
-        "type": "P",  # Private channel — only assigned users
-        "purpose": f"Chat & video call per tender #{tender_id}",
-    })
+    resp = await _api(
+        "POST",
+        "/api/v4/channels",
+        json={
+            "team_id": team_id,
+            "name": channel_name,
+            "display_name": f"Tender: {tender_title[:50]}",
+            "type": "P",  # Private channel — only assigned users
+            "purpose": f"Chat & video call per tender #{tender_id}",
+        },
+    )
     resp.raise_for_status()
     channel = resp.json()
     logger.info("mattermost.channel_created", tender_id=tender_id, channel_id=channel["id"])
@@ -321,11 +345,16 @@ async def ensure_tender_channel(tender_id: int, tender_title: str) -> str:
 # Add user to channel
 # ---------------------------------------------------------------------------
 
+
 async def add_user_to_channel(channel_id: str, mm_user_id: str) -> None:
     """Add a Mattermost user to a channel (idempotent)."""
-    resp = await _api("POST", f"/api/v4/channels/{channel_id}/members", json={
-        "user_id": mm_user_id,
-    })
+    resp = await _api(
+        "POST",
+        f"/api/v4/channels/{channel_id}/members",
+        json={
+            "user_id": mm_user_id,
+        },
+    )
     # 201 = added, already member returns 200 or similar
     if resp.status_code not in (200, 201):
         logger.warning("mattermost.add_member_failed", status=resp.status_code, body=resp.text)
@@ -334,6 +363,7 @@ async def add_user_to_channel(channel_id: str, mm_user_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Browser session for Full Chat fallback
 # ---------------------------------------------------------------------------
+
 
 async def create_user_browser_session(
     *,
@@ -379,13 +409,14 @@ async def create_user_browser_session(
 # High-level: Full Chat session
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FullChatSession:
-    mm_url: str          # Deep-link to the channel on MM public URL
-    mm_token: str        # Browser session token for auto-login (empty in SSO mode)
-    channel_name: str    # Channel name for display
-    mm_user_id: str      # MM user ID
-    mm_username: str     # MM username for display/login
+    mm_url: str  # Deep-link to the channel on MM public URL
+    mm_token: str  # Browser session token for auto-login (empty in SSO mode)
+    channel_name: str  # Channel name for display
+    mm_user_id: str  # MM user ID
+    mm_username: str  # MM username for display/login
 
 
 async def create_fullchat_session(
@@ -464,8 +495,7 @@ async def create_sso_chat_session(
 
     if sso_mode == "plugin_oidc":
         mm_url = (
-            "/mm/plugins/com.tenderwriter.oidc/login"
-            f"?redirect_to={quote(channel_path, safe='')}"
+            f"/mm/plugins/com.tenderwriter.oidc/login?redirect_to={quote(channel_path, safe='')}"
         )
 
     return FullChatSession(

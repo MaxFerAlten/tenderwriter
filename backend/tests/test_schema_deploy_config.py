@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKER_COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
@@ -28,6 +26,15 @@ def test_backend_service_mounts_alembic_assets_for_dev_rollout() -> None:
 
     assert "- ./backend/migrations:/app/migrations" in compose
     assert "- ./backend/alembic.ini:/app/alembic.ini:ro" in compose
+
+
+def test_kpi_reason_engine_mounts_alembic_assets_for_dev_rollout() -> None:
+    """The KPI dev container should see Alembic revisions without requiring a rebuild."""
+
+    compose = DOCKER_COMPOSE_PATH.read_text(encoding="utf-8")
+    kpi_block = compose.split("\n  kpi-reason-engine:\n", 1)[1].split("\n  # --- Frontend", 1)[0]
+
+    assert "- ./kpi-reason-engine/migrations:/app/migrations" in kpi_block
 
 
 def test_docker_socket_mounts_stay_out_of_backend_service() -> None:
@@ -56,9 +63,7 @@ def test_anonymizer_admin_token_has_consistent_non_empty_defaults() -> None:
 
     expected = "tw-anonymizer-admin-token-change-me"
 
-    assert (
-        f"ANONYMIZER_ADMIN_TOKEN: ${{ANONYMIZER_ADMIN_TOKEN:-{expected}}}" in compose
-    )
+    assert f"ANONYMIZER_ADMIN_TOKEN: ${{ANONYMIZER_ADMIN_TOKEN:-{expected}}}" in compose
     assert f"ANONYMIZER_ADMIN_TOKEN={expected}" in env_example
     assert f'anonymizer_admin_token: str = "{expected}"' in backend_config
     assert f'admin_token: str = "{expected}"' in anonymizer_config

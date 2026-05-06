@@ -4,9 +4,8 @@ TenderWriter — Application Configuration
 All settings are loaded from environment variables with sensible defaults.
 """
 
-from pydantic_settings import BaseSettings
 from pydantic import model_validator
-
+from pydantic_settings import BaseSettings
 
 UNSAFE_DEFAULTS = [
     "changeme_app_secret_key",
@@ -28,7 +27,7 @@ class Settings(BaseSettings):
     app_debug: bool = False
     app_secret_key: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
-    
+
     # --- Auth ---
     auth_provider: str = "legacy"  # "legacy" | "keycloak" | "hybrid"
     admin_username: str = "admin@admin.com"
@@ -36,10 +35,10 @@ class Settings(BaseSettings):
     admin_enabled: bool = True
 
     # --- Keycloak OIDC (used when auth_provider=keycloak|hybrid) ---
-    keycloak_url: str = "http://localhost:8180"       # Browser/public Keycloak base URL (issuer/logout)
+    keycloak_url: str = "http://localhost:8180"  # Browser/public Keycloak base URL (issuer/logout)
     keycloak_internal_url: str = "http://keycloak:8080"  # Internal Docker URL for JWKS validation
-    keycloak_realm: str = "tenderwriter"              # Keycloak realm name
-    keycloak_client_id: str = "tw-frontend"           # OIDC client ID for token audience / azp
+    keycloak_realm: str = "tenderwriter"  # Keycloak realm name
+    keycloak_client_id: str = "tw-frontend"  # OIDC client ID for token audience / azp
 
     # --- PostgreSQL ---
     database_url: str = ""
@@ -64,7 +63,7 @@ class Settings(BaseSettings):
     # --- Llama Server (for RAG/TenderWriter) ---
     llama_server_url: str = "http://llama-tender:8080/v1"
     llama_model: str = "qwen2.5-coder-7b"
-    llama_timeout: int = 300  # 5 minutes for slow CPU inference
+    llama_timeout: int = 1200  # 20 minutes for slow CPU inference
     llama_max_tokens: int = 256
     llama_temperature: float = 0.3
     llama_stop_tokens: str = "</s>,<|im_end|>,<|endoftext|>"
@@ -111,12 +110,12 @@ class Settings(BaseSettings):
     # smtp_tls: bool = True
 
     # --- SMTP (Email) --- MAILPIT TEST
-    smtp_host: str = "mailpit"   # nome service nel docker-compose
-    smtp_port: int = 1025        # SMTP di Mailpit
-    smtp_user: str = ""          # non serve
-    smtp_password: str = ""      # non serve
+    smtp_host: str = "mailpit"  # nome service nel docker-compose
+    smtp_port: int = 1025  # SMTP di Mailpit
+    smtp_user: str = ""  # non serve
+    smtp_password: str = ""  # non serve
     smtp_from: str = "noreply@tenderwriter.ai"
-    smtp_tls: bool = False       # niente TLS su 1025
+    smtp_tls: bool = False  # niente TLS su 1025
 
     # --- RAG Pipeline ---
     rag_top_k_dense: int = 20
@@ -127,12 +126,15 @@ class Settings(BaseSettings):
     rag_dense_weight: float = 0.4
     rag_sparse_weight: float = 0.3
     rag_graph_weight: float = 1.5
+    rag_retrieval_version: str = "v1"
     requirement_extraction_llm_v2_enabled: bool = False
     requirement_extraction_llm_v2_rollout_percent: int = 100
     requirement_extraction_llm_v2_tender_ids: str = ""
     requirement_extraction_llm_v2_blocked_tender_ids: str = ""
     requirement_extraction_llm_v2_max_sections: int = 12
     requirement_extraction_llm_v2_max_tokens: int = 2048
+    rehearsal_summary_enabled: bool = False
+    rehearsal_summary_publish_enabled: bool = False
 
     # --- Chunking ---
     chunk_min_size: int = 200
@@ -159,29 +161,29 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def validate_secrets(cls, values: dict) -> dict:
         """Validate that sensitive settings are not using unsafe defaults."""
         sensitive_fields = {
-            'app_secret_key': values.get('app_secret_key', ''),
-            'admin_password': values.get('admin_password', ''),
-            'database_url': values.get('database_url', ''),
-            'neo4j_password': values.get('neo4j_password', ''),
-            'minio_secret_key': values.get('minio_secret_key', ''),
-            'onlyoffice_jwt_secret': values.get('onlyoffice_jwt_secret', ''),
+            "app_secret_key": values.get("app_secret_key", ""),
+            "admin_password": values.get("admin_password", ""),
+            "database_url": values.get("database_url", ""),
+            "neo4j_password": values.get("neo4j_password", ""),
+            "minio_secret_key": values.get("minio_secret_key", ""),
+            "onlyoffice_jwt_secret": values.get("onlyoffice_jwt_secret", ""),
         }
-        
+
         errors = []
         for field_name, field_value in sensitive_fields.items():
-            if not field_value or field_value.strip() == '':
+            if not field_value or field_value.strip() == "":
                 errors.append(f"{field_name} è obbligatorio e non può essere vuoto")
             elif any(unsafe in field_value.lower() for unsafe in UNSAFE_DEFAULTS):
                 errors.append(f"{field_name} usa un valore non sicuro. Cambialo da '{field_value}'")
-        
+
         if errors:
             raise ValueError("; ".join(errors))
-        
+
         return values
 
 

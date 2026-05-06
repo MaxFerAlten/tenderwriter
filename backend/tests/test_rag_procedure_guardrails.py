@@ -31,6 +31,7 @@ from app.rag.procedure_guardrails import (
     classify_chunk_procedure,
     fact_sheet_from_guarded_context,
     normalize_guardrail_config,
+    repair_unsupported_protected_facts,
     source_procedure_labels_from_guarded_context,
     validate_guarded_answer,
 )
@@ -71,6 +72,69 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
         self.assertIn("48 mesi", sheet.durations)
         self.assertEqual(sheet.status, FactStatus.VERIFIED)
         self.assertIn("chunk:7", sheet.source_ids)
+
+    def test_build_fact_sheet_extracts_neutral_admin_fields_for_procedure(self) -> None:
+        items = [
+            {
+                "text": "Piattaforma OSCAT con GitLab, Sonar e Nexus. Procedura 012942/2025.",
+                "metadata": {"chunk_index": 7, "document_id": 1, "tender_id": 10},
+            },
+            {
+                "text": (
+                    "DURATA La durata dell'accordo quadro e' di 36 mesi. "
+                    "La durata prevista del procedimento e' pari a 9 mesi."
+                ),
+                "metadata": {"chunk_index": 8, "document_id": 1, "tender_id": 10},
+            },
+            {
+                "text": (
+                    "GARANZIA PROVVISORIA pari al 2% del valore complessivo "
+                    "dell'appalto e precisamente di importo pari ad euro 223.451,66."
+                ),
+                "metadata": {"chunk_index": 9, "document_id": 1, "tender_id": 10},
+            },
+            {
+                "text": (
+                    "Il luogo di svolgimento del servizio e' la Regione Sardegna "
+                    "(codice NUTS ITG2)."
+                ),
+                "metadata": {"chunk_index": 10, "document_id": 1, "tender_id": 10},
+            },
+        ]
+
+        sheet = build_fact_sheet(items, query="descrivimi la gara OSCAT")
+
+        self.assertEqual(sheet.procedure_label, "OSCAT")
+        self.assertIn("012942/2025", sheet.procedure_ids)
+        self.assertEqual(sheet.durations, ("36 mesi", "9 mesi"))
+        self.assertIn("euro 223.451,66", sheet.amounts)
+        self.assertIn("2%", sheet.percentages)
+        self.assertIn("Regione Sardegna", sheet.locations)
+        self.assertEqual(sheet.source_ids, ("chunk:7", "chunk:8", "chunk:9", "chunk:10"))
+
+    def test_build_fact_sheet_rejects_unlinked_neutral_admin_fields(self) -> None:
+        items = [
+            {
+                "text": "Piattaforma OSCAT con GitLab, Sonar e Nexus. Procedura 012942/2025.",
+                "metadata": {"chunk_index": 7, "document_id": 1, "tender_id": 10},
+            },
+            {
+                "text": (
+                    "DURATA La durata dell'accordo quadro e' di 36 mesi. "
+                    "GARANZIA PROVVISORIA pari al 2% e ad euro 223.451,66."
+                ),
+                "metadata": {"chunk_index": 8, "document_id": 2, "tender_id": 20},
+            },
+        ]
+
+        sheet = build_fact_sheet(items, query="descrivimi la gara OSCAT")
+
+        self.assertEqual(sheet.procedure_label, "OSCAT")
+        self.assertEqual(sheet.procedure_ids, ("012942/2025",))
+        self.assertEqual(sheet.durations, ())
+        self.assertEqual(sheet.amounts, ())
+        self.assertEqual(sheet.percentages, ())
+        self.assertEqual(sheet.source_ids, ("chunk:7",))
 
     def test_conflicting_cigs_block_fact_sheet(self) -> None:
         sheet = build_fact_sheet(
@@ -219,9 +283,7 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             ),
             fact_sheet=sheet,
             guarded=True,
-            allowed_procedure_labels=source_procedure_labels_from_guarded_context(
-                guarded_context
-            ),
+            allowed_procedure_labels=source_procedure_labels_from_guarded_context(guarded_context),
         )
 
         self.assertEqual(result.status, "PASS")
@@ -435,14 +497,9 @@ class RagEngineFactSheetWiringTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         envelope_chunk_ids = [
-            int(match)
-            for match in re.findall(
-                r"SOURCE_START id=(\d+)", retrieved.context
-            )
+            int(match) for match in re.findall(r"SOURCE_START id=(\d+)", retrieved.context)
         ]
-        sources_chunk_ids = [
-            source["metadata"]["chunk_index"] for source in retrieved.sources
-        ]
+        sources_chunk_ids = [source["metadata"]["chunk_index"] for source in retrieved.sources]
         self.assertEqual(envelope_chunk_ids, sources_chunk_ids)
         # Procedure tag in envelope must agree with the per-source metadata.
         envelope_procedures = re.findall(
@@ -485,6 +542,15 @@ class RagEngineFactSheetWiringTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("stato_verifica: conflitto", retrieved.context)
         self.assertIn("conflitti: cig", retrieved.context)
+        fact_sheet_body = re.search(
+            r"FACT_SHEET_START\n(?P<body>.*?)\nFACT_SHEET_END",
+            retrieved.context,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(fact_sheet_body)
+        assert fact_sheet_body is not None
+        self.assertIn("cig: conflitto_rilevato", fact_sheet_body.group("body"))
+        self.assertNotIn("CIG B123456789", fact_sheet_body.group("body"))
         self.assertEqual(len(retrieved.sources), 1)
 
 
@@ -545,7 +611,139 @@ class RagEngineGuardrailValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(guarded, answer)
 
-    async def test_query_blocks_answer_with_unverified_number_after_generation(self) -> None:
+    def test_procedure_id_conflict_does_not_block_technical_overview_without_ids(self) -> None:
+        engine = HybridRAGEngine()
+        context = (
+            "FACT_SHEET_START\n"
+            "procedura: OSCAT\n"
+            "stato_verifica: conflitto\n"
+            "procedure_id: 012942/2025, 099999/2025\n"
+            "cig: CIG B33988ECF0\n"
+            "giorni_critici: 30 giorni\n"
+            "durata: 9 mesi, 6 anni, 2 mesi\n"
+            "importi: non_rilevato\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:223, chunk:248\n"
+            "conflitti: procedure_id\n"
+            "FACT_SHEET_END\n"
+            "SOURCE_START id=223 page=1 procedure=OSCAT\n"
+            "OSCAT riguarda GitLab, Sonar, Nexus e Vulnerability Assessment.\n"
+            "SOURCE_END\n"
+            "SOURCE_START id=248 page=2 procedure=OSCAT\n"
+            "Sono richiesti coordinamento gestionale, governance e presidio operativo.\n"
+            "SOURCE_END"
+        )
+        answer = (
+            "Gli aspetti tecnici piu difficili riguardano GitLab, Sonar, Nexus e "
+            "Vulnerability Assessment. Gli aspetti gestionali richiedono governance, "
+            "coordinamento operativo e presidio continuativo."
+        )
+
+        guarded = engine._apply_generation_guardrails(
+            RAGQuery(
+                text=(
+                    "analizza la gara della regione toscana descrivi tutti gli aspetti "
+                    "tecnici e gestionali in ordine di difficolta in 1000 parole"
+                ),
+                mode=QueryMode.QA,
+            ),
+            context=context,
+            answer=answer,
+        )
+
+        self.assertEqual(guarded, answer)
+
+    def test_guardrail_repairs_conflicted_ids_and_unverified_days_instead_of_blocking(
+        self,
+    ) -> None:
+        engine = HybridRAGEngine()
+        context = (
+            "FACT_SHEET_START\n"
+            "procedura: OSCAT\n"
+            "stato_verifica: conflitto\n"
+            "procedure_id: 012942/2025, 099999/2025\n"
+            "cig: CIG B33988ECF0\n"
+            "giorni_critici: 30 giorni\n"
+            "durata: 9 mesi, 6 anni, 2 mesi\n"
+            "importi: non_rilevato\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:223, chunk:248\n"
+            "conflitti: procedure_id\n"
+            "FACT_SHEET_END\n"
+            "SOURCE_START id=223 page=1 procedure=OSCAT\n"
+            "OSCAT riguarda GitLab, Sonar, Nexus e Vulnerability Assessment.\n"
+            "SOURCE_END"
+        )
+        answer = (
+            "La procedura 012942/2025 richiede GitLab, Sonar, Nexus e "
+            "Vulnerability Assessment. La fase di migrazione dura 270 giorni."
+        )
+
+        guarded = engine._apply_generation_guardrails(
+            RAGQuery(
+                text=(
+                    "analizza la gara della regione toscana descrivi tutti gli aspetti "
+                    "tecnici e gestionali in ordine di difficolta in 1000 parole"
+                ),
+                mode=QueryMode.QA,
+            ),
+            context=context,
+            answer=answer,
+        )
+
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, guarded)
+        self.assertNotIn("012942/2025", guarded)
+        self.assertNotIn("270 giorni", guarded)
+        self.assertIn("non verificato", guarded)
+        self.assertIn("GitLab", guarded)
+
+    def test_guardrail_repairs_numeric_placeholder_instead_of_blocking(self) -> None:
+        engine = HybridRAGEngine()
+        context = (
+            "FACT_SHEET_START\n"
+            "procedura: OSCAT\n"
+            "stato_verifica: verificato\n"
+            "procedure_id: 012942/2025\n"
+            "cig: CIG B33988ECF0\n"
+            "giorni_critici: non_rilevato\n"
+            "durata: 6 anni\n"
+            "importi: non_rilevato\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:223, chunk:248\n"
+            "conflitti: nessuno\n"
+            "FACT_SHEET_END\n"
+            "SOURCE_START id=223 page=1 procedure=OSCAT\n"
+            "OSCAT riguarda GitLab, Sonar, Nexus e Vulnerability Assessment.\n"
+            "SOURCE_END"
+        )
+        answer = (
+            "La gara OSCAT ha durata di 6 anni. Gli aspetti tecnici richiedono "
+            "interventi entro giorni, CIG: e presidio GitLab, Sonar e Nexus."
+        )
+
+        guarded = engine._apply_generation_guardrails(
+            RAGQuery(
+                text=(
+                    "analizza la gara della regione toscana descrivi tutti gli aspetti "
+                    "tecnici e gestionali in ordine di difficolta in 1000 parole"
+                ),
+                mode=QueryMode.QA,
+            ),
+            context=context,
+            answer=answer,
+        )
+
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, guarded)
+        self.assertNotIn("entro giorni", guarded)
+        self.assertNotIn("CIG:", guarded)
+        self.assertIn("termine non verificato", guarded)
+        self.assertIn("CIG non verificato", guarded)
+        self.assertIn("GitLab", guarded)
+
+    async def test_query_repairs_answer_with_unverified_number_after_generation(self) -> None:
         engine = HybridRAGEngine()
         engine.ensure_initialized = AsyncMock()
         engine._retrieve_context_and_sources = AsyncMock(
@@ -601,9 +799,10 @@ class RagEngineGuardrailValidationTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
-        self.assertIn("Fatti verificati disponibili", response.answer)
-        self.assertIn("CIG B123456789", response.answer)
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
+        self.assertIn("48 mesi", response.answer)
+        self.assertNotIn("270 giorni", response.answer)
+        self.assertIn("giorni non verificati", response.answer)
         self.assertIn("48 mesi", response.answer)
         self.assertNotIn("270 giorni", response.answer)
 
@@ -650,7 +849,7 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
         )
         return engine
 
-    async def test_factsheet_conflict_blocks_answer_and_masks_protected_values(self) -> None:
+    async def test_factsheet_conflict_repairs_answer_and_masks_protected_values(self) -> None:
         context = (
             "FACT_SHEET_START\n"
             "procedura: OSCAT\n"
@@ -680,8 +879,8 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
                 mode=QueryMode.QA,
             )
         )
-        self.assertIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
-        self.assertIn("CIG: conflitto rilevato", response.answer)
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
+        self.assertIn("CIG non verificato", response.answer)
         # Conflicting raw values must NEVER reach the user surface.
         self.assertNotIn("CIG B123456789", response.answer)
         self.assertNotIn("CIG C987654321", response.answer)
@@ -925,7 +1124,109 @@ class RagGuardrailBranchCoverageTests(unittest.TestCase):
         self.assertEqual(result.status, "BLOCK")
         self.assertIn("numeric_placeholder", result.failures)
 
-    def test_blockOnUnverifiedNumbers_disabled_lets_unverified_numbers_pass(self) -> None:
+    def test_masked_cig_with_raw_value_is_blocked_and_repaired(self) -> None:
+        sheet = build_fact_sheet(
+            [{"text": "Gara OSCAT con CIG B33988ECF0.", "metadata": {}}],
+            query="OSCAT",
+        )
+        answer = "Fatti verificati: CIG non verificato B33988ECF2."
+
+        result = validate_guarded_answer(answer=answer, fact_sheet=sheet, guarded=True)
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired_result = validate_guarded_answer(
+            answer=repaired,
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("masked_cig_value", result.failures)
+        self.assertEqual(repaired, "Fatti verificati: CIG non verificato.")
+        self.assertEqual(repaired_result.status, "PASS")
+
+    def test_short_procedure_id_year_is_blocked_and_repaired(self) -> None:
+        sheet = build_fact_sheet(
+            [{"text": "Gara OSCAT procedura 012942/2025.", "metadata": {}}],
+            query="OSCAT",
+        )
+        answer = "Fatti verificati: ID procedura 012942/25."
+
+        result = validate_guarded_answer(answer=answer, fact_sheet=sheet, guarded=True)
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired_result = validate_guarded_answer(
+            answer=repaired,
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("unverified_procedure_id:012942/25", result.failures)
+        self.assertNotIn("012942/25", repaired)
+        self.assertEqual(repaired_result.status, "PASS")
+
+    def test_broken_procedure_id_field_is_normalized_to_verified_value(self) -> None:
+        sheet = build_fact_sheet(
+            [{"text": "Gara OSCAT procedura 012942/2025.", "metadata": {}}],
+            query="OSCAT",
+        )
+        answer = "Fatti verificati\n- ID procedura: 012942/2\n\n5/2025\n- CIG non rilevato"
+
+        result = validate_guarded_answer(answer=answer, fact_sheet=sheet, guarded=True)
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired_result = validate_guarded_answer(
+            answer=repaired,
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("malformed_procedure_id:012942/25/2025", result.failures)
+        self.assertIn("ID procedura: 012942/2025", repaired)
+        self.assertNotIn("5/2025", repaired)
+        self.assertEqual(repaired_result.status, "PASS")
+
+    def test_incomplete_procedure_id_fragment_is_normalized_to_verified_value(self) -> None:
+        sheet = build_fact_sheet(
+            [{"text": "Gara OSCAT procedura 012942/2025.", "metadata": {}}],
+            query="OSCAT",
+        )
+        answer = "La Regione Toscana identifica la procedura OSCAT con ID 012942/2."
+
+        result = validate_guarded_answer(answer=answer, fact_sheet=sheet, guarded=True)
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired_result = validate_guarded_answer(
+            answer=repaired,
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("incomplete_procedure_id:012942/2", result.failures)
+        self.assertIn("ID 012942/2025", repaired)
+        self.assertEqual(repaired_result.status, "PASS")
+
+    def test_wrapped_procedure_id_fragment_is_normalized_to_verified_value(self) -> None:
+        sheet = build_fact_sheet(
+            [{"text": "Gara OSCAT procedura 012942/2025.", "metadata": {}}],
+            query="OSCAT",
+        )
+        answer = "La gara riguarda la procedura 012942/2\n\n025 per OSCAT."
+
+        result = validate_guarded_answer(answer=answer, fact_sheet=sheet, guarded=True)
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired_result = validate_guarded_answer(
+            answer=repaired,
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("incomplete_procedure_id:012942/2025", result.failures)
+        self.assertIn("procedura 012942/2025", repaired)
+        self.assertNotIn("012942/2\n\n025", repaired)
+        self.assertEqual(repaired_result.status, "PASS")
+
+    def test_block_on_unverified_numbers_disabled_lets_unverified_numbers_pass(self) -> None:
         sheet = build_fact_sheet(
             [{"text": "Gara OSCAT con CIG B123456789.", "metadata": {}}],
             query="OSCAT",

@@ -36,7 +36,7 @@ class _FakeAsyncSession:
         self.flush_count += 1
         for instance in self.added:
             if getattr(instance, "id", None) is None:
-                setattr(instance, "id", self._next_id)
+                instance.id = self._next_id
                 self._next_id += 1
 
 
@@ -77,7 +77,9 @@ class RequirementCandidateStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(staged_candidates[0].priority, "high")
         self.assertAlmostEqual(staged_candidates[0].confidence, 0.91)
 
-    async def test_stage_extracted_requirement_candidates_preserves_llm_v2_citations_in_raw_payload(self) -> None:
+    async def test_stage_extracted_requirement_candidates_preserves_llm_v2_citations_in_raw_payload(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
 
         extraction_run, staged_candidates = await stage_extracted_requirement_candidates(
@@ -111,9 +113,14 @@ class RequirementCandidateStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(staged_candidates[0].category, "certifications")
         raw_candidate = staged_candidates[0].metadata_json["raw_candidate"]
         self.assertEqual(raw_candidate["schema_version"], "requirement_extraction_v2.schema.v1")
-        self.assertEqual(raw_candidate["citations"][0]["quote"], "The bidder must provide ISO 27001 certification.")
+        self.assertEqual(
+            raw_candidate["citations"][0]["quote"],
+            "The bidder must provide ISO 27001 certification.",
+        )
 
-    async def test_stage_extracted_requirement_candidates_filters_duplicates_and_short_rows(self) -> None:
+    async def test_stage_extracted_requirement_candidates_filters_duplicates_and_short_rows(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
 
         extraction_run, staged_candidates = await stage_extracted_requirement_candidates(

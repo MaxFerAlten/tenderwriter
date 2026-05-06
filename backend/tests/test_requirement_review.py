@@ -24,14 +24,16 @@ _SERVICE_MODULE = load_service_test_module("app.services.requirement_review")
 ConsolidatedRequirement = _MODELS.ConsolidatedRequirement
 RequirementReview = _MODELS.RequirementReview
 apply_requirement_review = _SERVICE_MODULE.apply_requirement_review
-list_consolidated_requirements_for_review = _SERVICE_MODULE.list_consolidated_requirements_for_review
+list_consolidated_requirements_for_review = (
+    _SERVICE_MODULE.list_consolidated_requirements_for_review
+)
 
 
 class _FakeExecuteResult:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
 
-    def scalars(self) -> "_FakeExecuteResult":
+    def scalars(self) -> _FakeExecuteResult:
         return self
 
     def all(self) -> list[object]:
@@ -57,12 +59,14 @@ class _FakeAsyncSession:
         self.flush_count += 1
         for instance in self.added:
             if getattr(instance, "id", None) is None:
-                setattr(instance, "id", self._next_id)
+                instance.id = self._next_id
                 self._next_id += 1
 
 
 class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
-    async def test_list_consolidated_requirements_for_review_orders_by_priority_and_confidence(self) -> None:
+    async def test_list_consolidated_requirements_for_review_orders_by_priority_and_confidence(
+        self,
+    ) -> None:
         db = _FakeAsyncSession(
             rows=[
                 ConsolidatedRequirement(
@@ -210,7 +214,9 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requirement.review_state, "pending")
         self.assertEqual(requirement.graph_state, "active")
         self.assertEqual(requirement.canonical_text, "Provide updated cyber insurance certificate.")
-        self.assertEqual(requirement.normalized_text, "provide updated cyber insurance certificate.")
+        self.assertEqual(
+            requirement.normalized_text, "provide updated cyber insurance certificate."
+        )
         self.assertEqual(requirement.priority, "high")
         self.assertEqual(requirement.conditions, ["Before contract signature"])
         self.assertEqual(requirement.exceptions, ["Optional modules excluded"])
@@ -218,10 +224,15 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.action, "edit")
         self.assertEqual(review.previous_review_state, "approved")
         self.assertEqual(review.new_review_state, "pending")
-        self.assertEqual(review.metadata_json["edit"]["before"]["canonical_text"], "Provide old insurance certificate.")
+        self.assertEqual(
+            review.metadata_json["edit"]["before"]["canonical_text"],
+            "Provide old insurance certificate.",
+        )
         self.assertEqual(review.metadata_json["edit"]["after"]["priority"], "high")
 
-    async def test_apply_requirement_review_dismiss_marks_requirement_obsolete_without_deleting_audit(self) -> None:
+    async def test_apply_requirement_review_dismiss_marks_requirement_obsolete_without_deleting_audit(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         requirement = ConsolidatedRequirement(
             id=17,
@@ -252,7 +263,9 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.action, "dismiss")
         self.assertEqual(review.metadata_json["previous_graph_state"], "active")
 
-    async def test_apply_requirement_review_merge_marks_source_obsolete_and_updates_target_metadata(self) -> None:
+    async def test_apply_requirement_review_merge_marks_source_obsolete_and_updates_target_metadata(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         source = ConsolidatedRequirement(
             id=18,
@@ -295,7 +308,9 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target.metadata_json["manual_merges"][0]["source_requirement_id"], 18)
         self.assertEqual(review.metadata_json["merge_target"]["id"], 19)
 
-    async def test_apply_requirement_review_split_creates_pending_children_and_obsoletes_source(self) -> None:
+    async def test_apply_requirement_review_split_creates_pending_children_and_obsoletes_source(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         requirement = ConsolidatedRequirement(
             id=20,
@@ -327,10 +342,13 @@ class RequirementReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requirement.review_state, "split")
         self.assertEqual(requirement.graph_state, "obsolete")
         self.assertEqual(requirement.metadata_json["lifecycle"]["reason"], "manual_split")
-        self.assertEqual([item.canonical_text for item in created_children], [
-            "Provide ISO 27001 certification.",
-            "Provide cyber insurance certificate.",
-        ])
+        self.assertEqual(
+            [item.canonical_text for item in created_children],
+            [
+                "Provide ISO 27001 certification.",
+                "Provide cyber insurance certificate.",
+            ],
+        )
         self.assertTrue(all(item.review_state == "pending" for item in created_children))
         self.assertEqual(review.metadata_json["split_children"][0]["id"], created_children[0].id)
 

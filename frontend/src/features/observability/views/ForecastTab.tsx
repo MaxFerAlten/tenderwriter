@@ -1,5 +1,12 @@
-import { TrendingUp } from 'lucide-react';
-import type { KpiForecast, KpiDiagnostics, KpiAnalysisJob, Tender } from '../../../api/client';
+import { TrendingUp, Users } from 'lucide-react';
+import type {
+    KpiForecast,
+    KpiDiagnostics,
+    KpiAnalysisJob,
+    RehearsalHealthProjection,
+    RehearsalSummary,
+    Tender,
+} from '../../../api/client';
 import {
     chipStyle,
     forecastSignalLabel,
@@ -13,6 +20,84 @@ interface ForecastTabProps {
     diagnostics: KpiDiagnostics | null;
     analysisJob: KpiAnalysisJob | null;
     tender: Tender | null;
+}
+
+const HEALTH_TONE: Record<RehearsalHealthProjection, { accent: string; soft: string; label: string }> = {
+    green: { accent: '#22c55e', soft: 'rgba(34, 197, 94, 0.12)', label: 'Green' },
+    amber: { accent: '#f59e0b', soft: 'rgba(245, 158, 11, 0.12)', label: 'Amber' },
+    red: { accent: '#ef4444', soft: 'rgba(239, 68, 68, 0.12)', label: 'Red' },
+};
+
+function formatRehearsalDate(iso: string | null): string {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+    } catch {
+        return iso;
+    }
+}
+
+function formatScore(score: number | null): string {
+    return score === null || score === undefined ? '—' : score.toFixed(1);
+}
+
+function formatDivergence(value: number | null): string {
+    return value === null || value === undefined ? '—' : value.toFixed(2);
+}
+
+function RehearsalSummaryCard({ summary }: { summary: RehearsalSummary }) {
+    const health = summary.health_projection ? HEALTH_TONE[summary.health_projection] : null;
+    const hasRun = summary.run_id !== null && summary.run_id !== undefined;
+
+    return (
+        <div className="card" data-testid="rehearsal-summary-card">
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Users size={16} color="#a78bfa" /> Rehearsal Summary
+            </h3>
+            {!hasRun ? (
+                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }} data-testid="rehearsal-summary-empty">
+                    No rehearsal has completed yet for this tender.
+                </p>
+            ) : (
+                <>
+                    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
+                        {health && (
+                            <span
+                                style={chipStyle(health.accent, health.soft)}
+                                data-testid="rehearsal-health-chip"
+                            >
+                                Health: {health.label}
+                            </span>
+                        )}
+                        <span style={chipStyle('#a78bfa', 'rgba(167, 139, 250, 0.12)')}>
+                            Score: {formatScore(summary.overall_score)}
+                        </span>
+                        <span style={chipStyle('#38bdf8', 'rgba(56, 189, 248, 0.12)')}>
+                            Divergence: {formatDivergence(summary.persona_divergence)}
+                        </span>
+                        {summary.blocking_findings > 0 && (
+                            <span style={chipStyle('#ef4444', 'rgba(239, 68, 68, 0.12)')}>
+                                Blocking: {summary.blocking_findings}
+                            </span>
+                        )}
+                        {summary.high_severity_rework_suggestions > 0 && (
+                            <span style={chipStyle('#f59e0b', 'rgba(245, 158, 11, 0.12)')}>
+                                High-severity rework: {summary.high_severity_rework_suggestions}
+                            </span>
+                        )}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Last rehearsal: {formatRehearsalDate(summary.last_rehearsal_at)}
+                        {summary.run_id !== null && summary.run_id !== undefined && (
+                            <span style={{ marginLeft: '0.75rem' }}>Run #{summary.run_id}</span>
+                        )}
+                    </div>
+                </>
+            )}
+        </div>
+    );
 }
 
 export default function ForecastTab({ forecast, diagnostics, analysisJob: _analysisJob, tender: _tender }: ForecastTabProps) {
@@ -134,6 +219,10 @@ export default function ForecastTab({ forecast, diagnostics, analysisJob: _analy
                         })}
                     </div>
                 </div>
+            )}
+
+            {forecast?.rehearsal_summary && (
+                <RehearsalSummaryCard summary={forecast.rehearsal_summary} />
             )}
 
             {(forecast?.scenarios || []).length > 0 && (

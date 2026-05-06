@@ -29,7 +29,9 @@ build_consolidated_requirement_payloads = _SERVICE_MODULE.build_consolidated_req
 build_consolidated_requirement_payloads_from_legacy = (
     _SERVICE_MODULE.build_consolidated_requirement_payloads_from_legacy
 )
-rebuild_consolidated_requirements_from_staging = _SERVICE_MODULE.rebuild_consolidated_requirements_from_staging
+rebuild_consolidated_requirements_from_staging = (
+    _SERVICE_MODULE.rebuild_consolidated_requirements_from_staging
+)
 build_requirement_relation_payloads = _SERVICE_MODULE.build_requirement_relation_payloads
 replace_consolidated_requirements = _SERVICE_MODULE.replace_consolidated_requirements
 replace_requirement_relations = _SERVICE_MODULE.replace_requirement_relations
@@ -57,13 +59,17 @@ class _FakeAsyncSession:
         self.flush_count += 1
         for instance in self.added:
             if getattr(instance, "id", None) is None:
-                setattr(instance, "id", self._next_id)
+                instance.id = self._next_id
                 self._next_id += 1
 
 
 class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_build_consolidated_requirement_payloads_merges_duplicates_and_aggregates_sources(self) -> None:
-        latest_run = RequirementExtractionRun(id=12, tender_id=51, extraction_method="heuristic_v1", filename="latest.pdf")
+    async def test_build_consolidated_requirement_payloads_merges_duplicates_and_aggregates_sources(
+        self,
+    ) -> None:
+        latest_run = RequirementExtractionRun(
+            id=12, tender_id=51, extraction_method="heuristic_v1", filename="latest.pdf"
+        )
         latest_run.candidates = [
             RequirementCandidate(
                 id=101,
@@ -91,7 +97,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        older_run = RequirementExtractionRun(id=11, tender_id=51, extraction_method="heuristic_v1", filename="older.pdf")
+        older_run = RequirementExtractionRun(
+            id=11, tender_id=51, extraction_method="heuristic_v1", filename="older.pdf"
+        )
         older_run.candidates = [
             RequirementCandidate(
                 id=91,
@@ -120,7 +128,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payloads[0]["metadata_json"]["precedence_policy"], "document_role_v1")
         self.assertEqual(payloads[0]["metadata_json"]["merge_kind"], "cross_document_duplicate")
 
-    async def test_build_consolidated_requirement_payloads_promotes_highest_precedence_document_source(self) -> None:
+    async def test_build_consolidated_requirement_payloads_promotes_highest_precedence_document_source(
+        self,
+    ) -> None:
         base_run = RequirementExtractionRun(
             id=31,
             tender_id=77,
@@ -170,10 +180,14 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         payloads = build_consolidated_requirement_payloads([base_run, clarification_run])
 
         self.assertEqual(len(payloads), 1)
-        self.assertEqual(payloads[0]["canonical_text"], "Provide signed annex A with wet signature.")
+        self.assertEqual(
+            payloads[0]["canonical_text"], "Provide signed annex A with wet signature."
+        )
         self.assertEqual(payloads[0]["priority"], "high")
         self.assertEqual(payloads[0]["category"], "FAQ 7")
-        self.assertEqual(payloads[0]["metadata_json"]["primary_source"]["document_role"], "clarification")
+        self.assertEqual(
+            payloads[0]["metadata_json"]["primary_source"]["document_role"], "clarification"
+        )
         self.assertEqual(
             payloads[0]["metadata_json"]["source_document_roles"],
             ["clarification", "disciplinare"],
@@ -184,12 +198,16 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             "clarification",
         )
         self.assertEqual(
-            payloads[0]["metadata_json"]["document_precedence"]["superseded_sources"][0]["document_role"],
+            payloads[0]["metadata_json"]["document_precedence"]["superseded_sources"][0][
+                "document_role"
+            ],
             "disciplinare",
         )
         self.assertEqual(payloads[0]["metadata_json"]["source_variants"]["variant_count"], 2)
 
-    async def test_build_requirement_relation_payloads_infers_override_from_clarification(self) -> None:
+    async def test_build_requirement_relation_payloads_infers_override_from_clarification(
+        self,
+    ) -> None:
         base_requirement = _MODELS.ConsolidatedRequirement(
             id=401,
             tender_id=77,
@@ -253,9 +271,13 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             "lexical_override_v1",
         )
         self.assertIn("annex", relation_payloads[0]["metadata_json"]["shared_terms"])
-        self.assertEqual(relation_payloads[0]["metadata_json"]["precedence_policy"], "document_role_v1")
+        self.assertEqual(
+            relation_payloads[0]["metadata_json"]["precedence_policy"], "document_role_v1"
+        )
 
-    async def test_build_requirement_relation_payloads_flags_cross_document_override_conflict(self) -> None:
+    async def test_build_requirement_relation_payloads_flags_cross_document_override_conflict(
+        self,
+    ) -> None:
         base_requirement = _MODELS.ConsolidatedRequirement(
             id=421,
             tender_id=78,
@@ -314,7 +336,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             "tenders/78/capitolato.pdf",
         )
 
-    async def test_build_requirement_relation_payloads_infers_conflict_for_same_precedence_documents(self) -> None:
+    async def test_build_requirement_relation_payloads_infers_conflict_for_same_precedence_documents(
+        self,
+    ) -> None:
         first_annex_requirement = _MODELS.ConsolidatedRequirement(
             id=431,
             tender_id=78,
@@ -366,7 +390,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(relation_payloads[0]["metadata_json"]["source_role"], "annex")
         self.assertEqual(relation_payloads[0]["metadata_json"]["target_role"], "annex")
 
-    async def test_build_requirement_relation_payloads_infers_depends_on_from_explicit_clause(self) -> None:
+    async def test_build_requirement_relation_payloads_infers_depends_on_from_explicit_clause(
+        self,
+    ) -> None:
         dependency_requirement = _MODELS.ConsolidatedRequirement(
             id=451,
             tender_id=79,
@@ -436,7 +462,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rebuild_consolidated_requirements_from_staging_replaces_rows(self) -> None:
         db = _FakeAsyncSession()
-        extraction_run = RequirementExtractionRun(id=22, tender_id=52, extraction_method="heuristic_v1", filename="rfp.pdf")
+        extraction_run = RequirementExtractionRun(
+            id=22, tender_id=52, extraction_method="heuristic_v1", filename="rfp.pdf"
+        )
         extraction_run.candidates = [
             RequirementCandidate(
                 id=201,
@@ -452,18 +480,22 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        with patch.object(
-            _SERVICE_MODULE,
-            "list_staged_requirement_candidate_runs",
-            AsyncMock(return_value=[extraction_run]),
-        ) as list_mock, patch.object(
-            _SERVICE_MODULE,
-            "_load_existing_consolidated_requirements",
-            AsyncMock(return_value=[]),
-        ), patch.object(
-            _SERVICE_MODULE,
-            "_load_existing_requirement_relations",
-            AsyncMock(return_value=[]),
+        with (
+            patch.object(
+                _SERVICE_MODULE,
+                "list_staged_requirement_candidate_runs",
+                AsyncMock(return_value=[extraction_run]),
+            ) as list_mock,
+            patch.object(
+                _SERVICE_MODULE,
+                "_load_existing_consolidated_requirements",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                _SERVICE_MODULE,
+                "_load_existing_requirement_relations",
+                AsyncMock(return_value=[]),
+            ),
         ):
             rows = await rebuild_consolidated_requirements_from_staging(
                 db,
@@ -480,12 +512,18 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0].consolidation_method, "staging_v1")
         self.assertEqual(rows[0].graph_state, "active")
         self.assertEqual(rows[0].metadata_json["primary_source"]["document_role"], "other")
-        relation_rows = [item for item in db.added if item.__class__.__name__ == "RequirementRelation"]
+        relation_rows = [
+            item for item in db.added if item.__class__.__name__ == "RequirementRelation"
+        ]
         self.assertEqual(len(relation_rows), 0)
         self.assertGreaterEqual(db.flush_count, 1)
 
-    async def test_build_consolidated_requirement_payloads_skips_rejected_llm_candidates(self) -> None:
-        extraction_run = RequirementExtractionRun(id=33, tender_id=54, extraction_method="llm_v2", filename="rfp.pdf")
+    async def test_build_consolidated_requirement_payloads_skips_rejected_llm_candidates(
+        self,
+    ) -> None:
+        extraction_run = RequirementExtractionRun(
+            id=33, tender_id=54, extraction_method="llm_v2", filename="rfp.pdf"
+        )
         extraction_run.candidates = [
             RequirementCandidate(
                 id=301,
@@ -530,11 +568,19 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         payloads = build_consolidated_requirement_payloads([extraction_run])
 
         self.assertEqual(len(payloads), 1)
-        self.assertEqual(payloads[0]["canonical_text"], "The bidder must provide ISO 27001 certification.")
-        self.assertEqual(payloads[0]["metadata_json"]["sources"][0]["verification"]["state"], "verified")
+        self.assertEqual(
+            payloads[0]["canonical_text"], "The bidder must provide ISO 27001 certification."
+        )
+        self.assertEqual(
+            payloads[0]["metadata_json"]["sources"][0]["verification"]["state"], "verified"
+        )
 
-    async def test_build_consolidated_requirement_payloads_carries_graph_v2_fields_from_llm_candidates(self) -> None:
-        extraction_run = RequirementExtractionRun(id=34, tender_id=55, extraction_method="llm_v2", filename="rfp.pdf")
+    async def test_build_consolidated_requirement_payloads_carries_graph_v2_fields_from_llm_candidates(
+        self,
+    ) -> None:
+        extraction_run = RequirementExtractionRun(
+            id=34, tender_id=55, extraction_method="llm_v2", filename="rfp.pdf"
+        )
         extraction_run.candidates = [
             RequirementCandidate(
                 id=401,
@@ -566,9 +612,13 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payloads[0]["conditions"], ["Before service start"])
         self.assertEqual(payloads[0]["exceptions"], ["Not required for optional modules"])
         self.assertEqual(payloads[0]["parent_requirement_key"], "Security governance")
-        self.assertEqual(payloads[0]["metadata_json"]["graph_v2"]["conditions"], ["Before service start"])
+        self.assertEqual(
+            payloads[0]["metadata_json"]["graph_v2"]["conditions"], ["Before service start"]
+        )
 
-    async def test_replace_consolidated_requirements_resolves_parent_links_and_parent_relation(self) -> None:
+    async def test_replace_consolidated_requirements_resolves_parent_links_and_parent_relation(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
 
         with patch.object(
@@ -609,12 +659,16 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[1].exceptions, ["Optional modules excluded"])
 
         relation_payloads = build_requirement_relation_payloads(rows)
-        parent_relations = [item for item in relation_payloads if item["relation_type"] == "parent_of"]
+        parent_relations = [
+            item for item in relation_payloads if item["relation_type"] == "parent_of"
+        ]
         self.assertEqual(len(parent_relations), 1)
         self.assertEqual(parent_relations[0]["source_requirement_id"], rows[0].id)
         self.assertEqual(parent_relations[0]["target_requirement_id"], rows[1].id)
 
-    async def test_build_consolidated_requirement_payloads_from_legacy_preserves_source_audit(self) -> None:
+    async def test_build_consolidated_requirement_payloads_from_legacy_preserves_source_audit(
+        self,
+    ) -> None:
         payloads = build_consolidated_requirement_payloads_from_legacy(
             [
                 TenderRequirement(
@@ -643,7 +697,9 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payloads[0]["metadata_json"]["legacy_requirement_ids"], [301, 302])
         self.assertEqual(payloads[0]["metadata_json"]["sources"][0]["legacy_requirement_id"], 301)
 
-    async def test_replace_consolidated_requirements_preserves_review_state_and_obsoletes_missing_rows(self) -> None:
+    async def test_replace_consolidated_requirements_preserves_review_state_and_obsoletes_missing_rows(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         existing_row = _MODELS.ConsolidatedRequirement(
             id=610,
@@ -709,9 +765,13 @@ class RequirementConsolidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0].metadata_json["lifecycle"]["graph_state"], "active")
         self.assertEqual(missing_row.graph_state, "obsolete")
         self.assertEqual(missing_row.metadata_json["lifecycle"]["graph_state"], "obsolete")
-        self.assertEqual(missing_row.metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild")
+        self.assertEqual(
+            missing_row.metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild"
+        )
 
-    async def test_replace_requirement_relations_preserves_review_state_and_obsoletes_missing_rows(self) -> None:
+    async def test_replace_requirement_relations_preserves_review_state_and_obsoletes_missing_rows(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         existing_relation = _MODELS.RequirementRelation(
             id=710,

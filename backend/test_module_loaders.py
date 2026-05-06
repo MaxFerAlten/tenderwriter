@@ -10,7 +10,6 @@ from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
     "ADMIN_PASSWORD": "test-admin-password-1234567890",
@@ -68,8 +67,12 @@ def _build_fake_jose_module():
 
     fake_jose.JWTError = _JWTError
     fake_jose.jwt = SimpleNamespace(
-        encode=lambda payload, secret, algorithm="HS256": _build_fake_pyjwt_module().encode(payload, secret, algorithm),
-        decode=lambda token, secret, algorithms=None: _build_fake_pyjwt_module().decode(token, secret, algorithms),
+        encode=lambda payload, secret, algorithm="HS256": _build_fake_pyjwt_module().encode(
+            payload, secret, algorithm
+        ),
+        decode=lambda token, secret, algorithms=None: _build_fake_pyjwt_module().decode(
+            token, secret, algorithms
+        ),
     )
     return fake_jose
 
@@ -147,9 +150,10 @@ def _build_fake_kpi_module():
         "build_terminal_lifecycle_event_payload",
     ):
         setattr(fake_kpi, name, _payload_builder)
-    fake_kpi.build_tender_stopped_at_gate_event_payload = (
-        lambda *args, **kwargs: {"outcome": "stopped", **_payload_builder(*args, **kwargs)}
-    )
+    fake_kpi.build_tender_stopped_at_gate_event_payload = lambda *args, **kwargs: {
+        "outcome": "stopped",
+        **_payload_builder(*args, **kwargs),
+    }
     fake_kpi.publish_domain_event = AsyncMock(side_effect=_fake_async_noop)
     fake_kpi.publish_tender_sync = AsyncMock(side_effect=_fake_async_noop)
     fake_kpi.sync_tender_and_publish_event = AsyncMock(side_effect=_fake_async_noop)
@@ -177,7 +181,9 @@ def _build_fake_compliance_module(models_module=None):
         primary_source = metadata_json.get("primary_source")
         if isinstance(primary_source, dict):
             payloads.append(primary_source)
-        payloads.extend(source for source in metadata_json.get("sources") or [] if isinstance(source, dict))
+        payloads.extend(
+            source for source in metadata_json.get("sources") or [] if isinstance(source, dict)
+        )
         return payloads
 
     def _coverage_from_legacy(requirement):
@@ -189,7 +195,9 @@ def _build_fake_compliance_module(models_module=None):
             priority=str(getattr(requirement, "priority", None) or "medium"),
             compliance_status=getattr(requirement, "compliance_status", None),
             proposal_section_id=getattr(requirement, "proposal_section_id", None),
-            proposal_section_title=getattr(mapped_section, "title", None) if mapped_section else None,
+            proposal_section_title=getattr(mapped_section, "title", None)
+            if mapped_section
+            else None,
             coverage_source="legacy",
         )
 
@@ -200,49 +208,77 @@ def _build_fake_compliance_module(models_module=None):
             for requirement in list(getattr(tender, "consolidated_requirements", None) or [])
             if str(getattr(requirement, "graph_state", None) or "active").casefold() == "active"
         ]
-        if not any(str(getattr(requirement, "review_state", None) or "pending").casefold() == "approved" for requirement in active_consolidated):
+        if not any(
+            str(getattr(requirement, "review_state", None) or "pending").casefold() == "approved"
+            for requirement in active_consolidated
+        ):
             return [_coverage_from_legacy(requirement) for requirement in legacy_requirements]
 
         legacy_by_id = {
-            int(getattr(requirement, "id")): requirement
+            int(requirement.id): requirement
             for requirement in legacy_requirements
             if getattr(requirement, "id", None) is not None
         }
-        not_addressed = getattr(models_module, "ComplianceStatus", SimpleNamespace(NOT_ADDRESSED="not_addressed")).NOT_ADDRESSED
+        not_addressed = getattr(
+            models_module, "ComplianceStatus", SimpleNamespace(NOT_ADDRESSED="not_addressed")
+        ).NOT_ADDRESSED
         coverage_items = []
         for requirement in active_consolidated:
-            is_approved = str(getattr(requirement, "review_state", None) or "pending").casefold() == "approved"
+            is_approved = (
+                str(getattr(requirement, "review_state", None) or "pending").casefold()
+                == "approved"
+            )
             legacy_requirement = None
             for payload in _source_payloads(getattr(requirement, "metadata_json", None)):
                 legacy_id = payload.get("legacy_requirement_id")
                 if legacy_id is not None and int(legacy_id) in legacy_by_id:
                     legacy_requirement = legacy_by_id[int(legacy_id)]
                     break
-            mapped_section = getattr(legacy_requirement, "proposal_section", None) if legacy_requirement else None
+            mapped_section = (
+                getattr(legacy_requirement, "proposal_section", None)
+                if legacy_requirement
+                else None
+            )
             coverage_items.append(
                 _ComplianceRequirementCoverage(
                     id=int(getattr(requirement, "id", 0) or 0),
                     requirement_text=str(getattr(requirement, "canonical_text", "") or ""),
                     category=getattr(requirement, "category", None)
-                    or (getattr(legacy_requirement, "category", None) if legacy_requirement else None),
+                    or (
+                        getattr(legacy_requirement, "category", None)
+                        if legacy_requirement
+                        else None
+                    ),
                     priority=str(
                         getattr(requirement, "priority", None)
-                        or (getattr(legacy_requirement, "priority", None) if legacy_requirement else "medium")
+                        or (
+                            getattr(legacy_requirement, "priority", None)
+                            if legacy_requirement
+                            else "medium"
+                        )
                     ),
                     compliance_status=(
                         getattr(legacy_requirement, "compliance_status", None)
                         if is_approved and legacy_requirement is not None
                         else not_addressed
                     ),
-                    proposal_section_id=getattr(legacy_requirement, "proposal_section_id", None) if is_approved and legacy_requirement else None,
-                    proposal_section_title=getattr(mapped_section, "title", None) if is_approved and mapped_section else None,
-                    coverage_source="consolidated_approved" if is_approved else "consolidated_review_pending",
+                    proposal_section_id=getattr(legacy_requirement, "proposal_section_id", None)
+                    if is_approved and legacy_requirement
+                    else None,
+                    proposal_section_title=getattr(mapped_section, "title", None)
+                    if is_approved and mapped_section
+                    else None,
+                    coverage_source="consolidated_approved"
+                    if is_approved
+                    else "consolidated_review_pending",
                 )
             )
         return coverage_items
 
     fake_compliance.ComplianceRequirementCoverage = _ComplianceRequirementCoverage
-    fake_compliance.build_compliance_requirement_coverage = Mock(side_effect=_build_compliance_requirement_coverage)
+    fake_compliance.build_compliance_requirement_coverage = Mock(
+        side_effect=_build_compliance_requirement_coverage
+    )
     fake_compliance.sync_requirement_compliance_and_gate = AsyncMock(return_value=[])
     return fake_compliance
 
@@ -450,9 +486,13 @@ def load_rag_api_test_modules():
     fake_rag_engine.QueryMode = _QueryMode
     fake_rag_engine.RAGQuery = _RAGQuery
 
+    fake_tenders = types.ModuleType("app.api.tenders")
+    fake_tenders.check_tender_access = AsyncMock(side_effect=_fake_async_noop)
+
     load_models_test_module()
     fake_modules = {
         "app.api.auth": fake_auth,
+        "app.api.tenders": fake_tenders,
         "app.privacy_audit": fake_privacy_audit,
         "app.privacy_policy": fake_privacy_policy,
         "app.rag.engine": fake_rag_engine,

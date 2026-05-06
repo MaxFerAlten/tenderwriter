@@ -173,8 +173,12 @@ class TenderOverviewLongFormTests(unittest.TestCase):
 
         self.assertTrue(engine._query_requests_broad_summary(query))
         self.assertTrue(engine._query_requests_structured_tender_overview(query))
-        self.assertEqual(engine._effective_final_top_k(RAGQuery(text=query, mode=QueryMode.QA, top_k=5)), 12)
-        self.assertEqual(engine._effective_retrieval_top_k(RAGQuery(text=query, mode=QueryMode.QA)), 30)
+        self.assertEqual(
+            engine._effective_final_top_k(RAGQuery(text=query, mode=QueryMode.QA, top_k=5)), 12
+        )
+        self.assertEqual(
+            engine._effective_retrieval_top_k(RAGQuery(text=query, mode=QueryMode.QA)), 30
+        )
         self.assertEqual(engine._query_text_for_retrieval(query), "gara toscana")
 
     def test_detailed_tender_overview_gets_expanded_default_generation_budget(self) -> None:

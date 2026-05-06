@@ -30,6 +30,8 @@ const routeLoaders = {
     '/tenders/:id/chat': loadPage(() => import('../pages/TenderChat')),
     '/data-explorer': loadPage(() => import('../pages/DataExplorer')),
     '/llmsetting': loadPage(() => import('../pages/LlmSetting')),
+    '/planningcoverage': loadPage(() => import('../pages/PlanningCoverage')),
+    '/intelligence': loadPage(() => import('../pages/TenderIntelligence')),
 } satisfies Record<string, RouteLoader>;
 
 const warmedRoutes = new Set<string>();
@@ -77,7 +79,7 @@ export function normalizeRoutePath(path: string): keyof typeof routeLoaders | nu
 export function getLikelyRoutePaths(role?: string | null): Array<keyof typeof routeLoaders> {
     const common: Array<keyof typeof routeLoaders> = ['/proposals', '/library', '/tasks'];
     if (role === 'admin') {
-        return [...common, '/observability-kpi', '/markov-state-process', '/monitor'];
+        return [...common, '/observability-kpi', '/markov-state-process', '/monitor', '/planningcoverage'];
     }
     return common;
 }
@@ -125,3 +127,5 @@ export const OperationalWorkspacePage = lazyPage('/observability-kpi/:tenderId/o
 export const TenderChatPage = lazyPage('/tenders/:id/chat');
 export const DataExplorerPage = lazyPage('/data-explorer');
 export const LlmSettingPage = lazyPage('/llmsetting');
+export const PlanningCoveragePage = lazyPage('/planningcoverage');
+export const TenderIntelligencePage = lazyPage('/intelligence');

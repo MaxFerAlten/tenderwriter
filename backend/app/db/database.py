@@ -24,6 +24,7 @@ async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_o
 
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
+
     pass
 
 
@@ -51,6 +52,7 @@ async def init_db():
             logger.info("Initializing database schema via Alembic migrations")
 
         from app.db.migrations import run_migrations
+
         await asyncio.to_thread(run_migrations, database_url=settings.database_url)
         return
 

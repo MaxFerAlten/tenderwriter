@@ -7,6 +7,8 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -162,10 +164,79 @@ fake_sparse.SparseRetriever = type("SparseRetriever", (), {})
 sys.modules.setdefault("app.rag.sparse_retriever", fake_sparse)
 
 
-from app.rag.engine import HybridRAGEngine
+from app.rag.engine import HybridRAGEngine, QueryMode, RAGQuery
 
 
 class PromptLeakageLoopTests(unittest.TestCase):
+    def _collect_stream(self, iterator):
+        async def collect() -> str:
+            chunks: list[str] = []
+            async for chunk in iterator:
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        import asyncio
+
+        return asyncio.run(collect())
+
+    def test_structured_tender_overview_constraints_include_required_sections(self) -> None:
+        engine = HybridRAGEngine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text="Prepara un elenco dettagliato della gara e dei punti critici",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("Oggetto e perimetro", constraints)
+        self.assertIn("Architettura tecnologica", constraints)
+        self.assertIn("Fasi operative critiche", constraints)
+        self.assertIn("Punti di rischio contrattuale", constraints)
+        self.assertIn("Governance multi-soggetto", constraints)
+        self.assertIn("non disponibile nei documenti forniti", constraints)
+        self.assertIn("prosa narrativa coesa", constraints)
+
+    def test_explicit_word_target_uses_timeout_safe_initial_token_budget_for_local_model(
+        self,
+    ) -> None:
+        engine = HybridRAGEngine()
+        length_target = engine._extract_requested_length_target("Riassumi la gara in 1000 parole")
+
+        budget = engine._generation_pass_token_budget(
+            length_target,
+            generator=SimpleNamespace(provider="llama"),
+        )
+
+        self.assertEqual(budget, 1536)
+
+    def test_guarded_tender_overview_buffers_streaming_even_with_word_target(self) -> None:
+        engine = HybridRAGEngine()
+        query = "descrivimi la gara della regione sardegna evidenzia i punti critici in 1000 parole"
+
+        should_buffer = engine._should_buffer_stream_for_quality(
+            RAGQuery(
+                text=query,
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertTrue(should_buffer)
+
+    def test_guardrail_disabled_keeps_explicit_word_target_unbuffered(self) -> None:
+        engine = HybridRAGEngine()
+        query = "descrivimi la gara della regione sardegna evidenzia i punti critici in 1000 parole"
+
+        should_buffer = engine._should_buffer_stream_for_quality(
+            RAGQuery(
+                text=query,
+                mode=QueryMode.QA,
+                guardrail_config={"enabled": False},
+            )
+        )
+
+        self.assertFalse(should_buffer)
+
     def test_clean_final_answer_text_removes_repeated_own_answer_loop(self) -> None:
         engine = HybridRAGEngine()
 
@@ -176,6 +247,117 @@ class PromptLeakageLoopTests(unittest.TestCase):
         )
 
         self.assertEqual(cleaned, "Dettaglio utile sulla gara.\nConclusione utile.")
+
+    def test_clean_final_answer_text_removes_inline_restarted_sections(self) -> None:
+        engine = HybridRAGEngine()
+
+        cleaned = engine._clean_final_answer_text(
+            "**Dettagli della Gara e Ambito Operativo** La Regione Toscana ha indetto "
+            "una procedura per il Sistema Cloud Toscano. In parallelo emerge una "
+            "procedura specifica (Gara/."
+            "**Dettagli della Gara e Ambito Operativo** La Regione Toscana ha indetto "
+            "una procedura per il Sistema Cloud Toscano. In parallelo emerge una "
+            "procedura specifica (Gara 012942/25) dedicata alla piattaforma OSCAT."
+            " **Aspetti Tecnologici e Infrastrutturali** L'architettura si basa sul "
+            "Sistema Cloud Toscano."
+        )
+
+        self.assertEqual(cleaned.count("**Dettagli della Gara e Ambito Operativo**"), 1)
+        self.assertIn("Gara 012942/25", cleaned)
+        self.assertNotIn("Gara/.", cleaned)
+        self.assertIn("\n\n**Aspetti Tecnologici e Infrastrutturali**", cleaned)
+
+    def test_clean_final_answer_text_removes_common_generation_artifacts(self) -> None:
+        engine = HybridRAGEngine()
+
+        cleaned = engine._clean_final_answer_text(
+            "Il consolidamento e sviluppo evolutivoを del Sistema Cloud Toscana. "
+            "Un ulter ulteriore focus riguarda la Manutenzione Adeguativa e Migliore "
+            "(MAM) presso il Settore Sistema Cloud Toscano, Infrastruttura Digitali "
+            "e Piattaforme Abilitanti."
+        )
+
+        self.assertNotIn("を", cleaned)
+        self.assertNotIn("ulter ulteriore", cleaned)
+        self.assertNotIn("Migliore (MAM)", cleaned)
+        self.assertNotIn("Infrastruttura Digitali", cleaned)
+
+    def test_clean_final_answer_text_removes_generated_fact_sheet_prefix(self) -> None:
+        engine = HybridRAGEngine()
+
+        cleaned = engine._clean_final_answer_text(
+            "Fatti verificati\n"
+            "procedura: SCT\n"
+            "stato_verifica: verificato\n"
+            "procedure_id: non_rilevato\n"
+            "cig: non_rilevato\n"
+            "giorni_critici: 180 giorni, 270 giorno\n"
+            "durata: non_rilevato\n"
+            "importi: non_rilevato\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:1200, chunk:943\n"
+            "conflitti: nessuno\n\n"
+            "La procedura SCT riguarda il Sistema Cloud Toscana."
+        )
+
+        self.assertEqual(
+            cleaned,
+            "La procedura SCT riguarda il Sistema Cloud Toscana.",
+        )
+
+    def test_clean_final_answer_text_normalizes_known_tender_cig(self) -> None:
+        engine = HybridRAGEngine()
+
+        cleaned = engine._clean_final_answer_text(
+            "Il capitolato indica il CIG B33988ECF1. "
+            "In un altro passaggio il CIG B33988ECF3 viene richiamato in forma errata. "
+            "La sintesi finale cita anche CIG B33988ECF."
+        )
+
+        self.assertEqual(cleaned.count("CIG B33988ECF2"), 3)
+        self.assertNotIn("CIG B33988ECF1", cleaned)
+        self.assertNotIn("CIG B33988ECF3", cleaned)
+        self.assertNotRegex(cleaned, r"CIG\s+B33988ECF\b")
+
+    def test_structured_tender_overview_stream_uses_clean_full_answer(self) -> None:
+        engine = HybridRAGEngine()
+        engine.query = AsyncMock(
+            return_value=SimpleNamespace(
+                answer="**Dettagli della gara e ambito operativo** Testo pulito.",
+            )
+        )
+
+        streamed = self._collect_stream(
+            engine.query_stream(
+                RAGQuery(
+                    text="Prepara un elenco dettagliato della gara e dei punti critici",
+                    mode=QueryMode.QA,
+                )
+            )
+        )
+
+        self.assertEqual(
+            streamed,
+            "**Dettagli della gara e ambito operativo** Testo pulito.",
+        )
+        engine.query.assert_awaited_once()
+
+    def test_broad_tender_summary_stream_uses_clean_full_answer(self) -> None:
+        engine = HybridRAGEngine()
+        engine.query = AsyncMock(return_value=SimpleNamespace(answer="Sintesi pulita della gara."))
+
+        streamed = self._collect_stream(
+            engine.query_stream(
+                RAGQuery(
+                    text="Riassumi la gara Toscana",
+                    mode=QueryMode.QA,
+                )
+            )
+        )
+
+        self.assertEqual(streamed, "Sintesi pulita della gara.")
+        engine.query.assert_awaited_once()
 
     def test_clean_final_answer_text_removes_inline_own_answer_suffix(self) -> None:
         engine = HybridRAGEngine()
@@ -222,7 +404,7 @@ class PromptLeakageLoopTests(unittest.TestCase):
         cleaned = engine._sanitize_continuation_text(
             "",
             "s own language:// a own own own own own own "
-            "L'analisi della gara della Regione Toscana e dei suoi requisiti principali."
+            "L'analisi della gara della Regione Toscana e dei suoi requisiti principali.",
         )
 
         self.assertEqual(
@@ -230,7 +412,9 @@ class PromptLeakageLoopTests(unittest.TestCase):
             "L'analisi della gara della Regione Toscana e dei suoi requisiti principali.",
         )
 
-    def test_clean_final_answer_text_preserves_accented_answer_start_after_garbage_prefix(self) -> None:
+    def test_clean_final_answer_text_preserves_accented_answer_start_after_garbage_prefix(
+        self,
+    ) -> None:
         engine = HybridRAGEngine()
 
         cleaned = engine._clean_final_answer_text(

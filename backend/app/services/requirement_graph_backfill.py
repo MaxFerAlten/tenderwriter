@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,9 +74,7 @@ async def list_requirement_graph_backfill_tender_ids(
     )
     staged_ids = list(result.scalars().all())
     legacy_result = await db.execute(
-        select(TenderRequirement.tender_id)
-        .distinct()
-        .order_by(TenderRequirement.tender_id.asc())
+        select(TenderRequirement.tender_id).distinct().order_by(TenderRequirement.tender_id.asc())
     )
     legacy_ids = list(legacy_result.scalars().all())
     return _normalize_tender_ids([*staged_ids, *legacy_ids])

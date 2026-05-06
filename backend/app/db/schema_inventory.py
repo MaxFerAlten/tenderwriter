@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.db.database import Base
 import app.models  # noqa: F401  Ensures metadata is fully registered.
+from app.db.database import Base
 
 _COMPATIBILITY_COLUMNS = {
     "users": ["is_active", "is_verified"],

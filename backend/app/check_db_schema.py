@@ -44,10 +44,7 @@ async def check():
             print(f"AI_GATEWAY_TARGET_COLUMNS: {', '.join([r[0] for r in res_gateway])}")
 
             res_tables = await conn.execute(
-                text(
-                    "SELECT COUNT(*) FROM information_schema.tables "
-                    "WHERE table_schema = 'public'"
-                )
+                text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
             )
             print(f"PUBLIC_TABLE_COUNT: {res_tables.scalar()}")
             print("SCHEMA_END")
@@ -55,5 +52,5 @@ async def check():
         print(f"ERROR: {e}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(check())

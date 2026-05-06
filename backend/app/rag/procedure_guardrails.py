@@ -59,7 +59,17 @@ PROCEDURE_ANCHORS: dict[ProcedureLabel, tuple[str, ...]] = {
 }
 
 _CIG_RE = re.compile(r"\bCIG\s*[:\-]?\s*([A-Z0-9]{8,12})\b", re.IGNORECASE)
-_PROCEDURE_ID_RE = re.compile(r"\b[0-9]{5,6}/20[0-9]{2}\b", re.IGNORECASE)
+_PROCEDURE_ID_RE = re.compile(r"\b[0-9]{5,6}/(?:20)?[0-9]{2}\b", re.IGNORECASE)
+_PROCEDURE_ID_FIELD_RE = re.compile(
+    r"(?P<prefix>\bID\s+procedura\s*:\s*)"
+    r"(?P<value>[0-9/\s]{3,30}?)(?=(?:\n\s*[-*])|$|[.;,])",
+    re.IGNORECASE,
+)
+_INCOMPLETE_PROCEDURE_ID_RE = re.compile(
+    r"\b(?P<prefix>(?:ID(?:\s+procedura)?|procedura)\s+)"
+    r"(?P<value>[0-9]{5,6}/(?:[0-9](?:\s+[0-9]{1,3})+|[0-9]{1,3}(?![0-9])))\b",
+    re.IGNORECASE,
+)
 _DAY_RE = re.compile(r"\b([1-9][0-9]{0,3})\s+giorn[oi]\b", re.IGNORECASE)
 _MONTH_RE = re.compile(r"\b([1-9][0-9]{0,2})\s+mesi\b", re.IGNORECASE)
 _YEAR_RE = re.compile(r"\b([1-9][0-9]{0,2})\s+anni\b", re.IGNORECASE)
@@ -69,6 +79,11 @@ _MONEY_RE = re.compile(
     re.IGNORECASE,
 )
 _ADDRESS_RE = re.compile(r"\bvia\s+san\s+piero\s+a\s+quaracchi\s+\d+\b", re.IGNORECASE)
+_SERVICE_LOCATION_RE = re.compile(
+    r"\bluogo\s+di\s+svolgimento\s+del\s+servizio\s+(?:è|e'|e)\s+la\s+"
+    r"(Regione\s+[A-Za-zÀ-ÿ' -]+?)(?=\s*(?:\(|[.;,\n]|$))",
+    re.IGNORECASE,
+)
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)*\b")
 _SOURCE_BODY_RE = re.compile(
     r"SOURCE_START[^\n]*\n(?P<body>.*?)\nSOURCE_END",
@@ -80,7 +95,21 @@ _SOURCE_PROCEDURE_RE = re.compile(
 )
 _PLACEHOLDER_RE = re.compile(
     r"\b(?:entro|fino a|non oltre)\s+giorni\b|"
-    r"\bCIG\s*[:\-]?\s*(?:[A-Z0-9]{1,7}\b|(?=$|[,.;:)\]\n]))",
+    r"\bCIG\s*[:\-]?\s*(?!(?:non\s+(?:verificato|rilevato))\b)"
+    r"(?:[A-Z0-9]{1,7}\b|(?=$|[,.;:)\]\n]))",
+    re.IGNORECASE,
+)
+_DAY_PLACEHOLDER_RE = re.compile(
+    r"\b(?P<prefix>entro|fino a|non oltre)\s+giorni\b",
+    re.IGNORECASE,
+)
+_INCOMPLETE_CIG_RE = re.compile(
+    r"\bCIG\s*[:\-]?\s*(?!(?:non\s+(?:verificato|rilevato))\b)"
+    r"(?:[A-Z0-9]{1,7}\b|(?=$|[,.;:)\]\n]))",
+    re.IGNORECASE,
+)
+_MASKED_CIG_WITH_VALUE_RE = re.compile(
+    r"\bCIG\s+non\s+(?:verificato|rilevato)\s*[:\-]?\s+[A-Z0-9]{8,12}\b",
     re.IGNORECASE,
 )
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
@@ -224,6 +253,50 @@ def _extract_percentage_values(text: str) -> tuple[str, ...]:
     return _unique([f"{value}%" for value in _extract_all(_PERCENT_RE, text)])
 
 
+def _extract_location_values(text: str) -> tuple[str, ...]:
+    values = [*_extract_all(_ADDRESS_RE, text), *_extract_all(_SERVICE_LOCATION_RE, text)]
+    return _unique(values)
+
+
+def _has_extractable_protected_fact(text: str) -> bool:
+    return any(
+        pattern.search(text)
+        for pattern in (
+            _CIG_RE,
+            _PROCEDURE_ID_RE,
+            _DAY_RE,
+            _MONTH_RE,
+            _YEAR_RE,
+            _PERCENT_RE,
+            _MONEY_RE,
+            _ADDRESS_RE,
+            _SERVICE_LOCATION_RE,
+        )
+    )
+
+
+def _metadata_link_values(item: Mapping[str, Any]) -> set[tuple[str, str]]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    values: set[tuple[str, str]] = set()
+
+    tender_id = metadata.get("tender_id")
+    document_id = metadata.get("document_id")
+    if tender_id not in (None, "") and document_id not in (None, ""):
+        values.add(("tender_document", f"{tender_id}:{document_id}"))
+
+    for key in (
+        "source_document_ref",
+        "source_file",
+        "tender_id",
+        "document_id",
+    ):
+        value = metadata.get(key)
+        if value in (None, ""):
+            continue
+        values.add((key, str(value)))
+    return values
+
+
 def _detect_conflicts(values: tuple[str, ...], field_name: str) -> tuple[str, ...]:
     return (field_name,) if len(values) > 1 else ()
 
@@ -253,12 +326,26 @@ def build_fact_sheet(
     percentages: list[str] = []
 
     extraction_items: list[tuple[int, Mapping[str, Any]]] = []
+    procedure_link_values: set[tuple[str, str]] = set()
+    if procedure_label in PROCEDURE_ANCHORS:
+        for item in context_items:
+            if classify_chunk_procedure(str(item.get("text") or "")) == procedure_label:
+                procedure_link_values.update(_metadata_link_values(item))
+
     for index, item in enumerate(context_items):
         text = str(item.get("text") or "")
         if not text:
             continue
         item_label = classify_chunk_procedure(text)
-        if procedure_label in PROCEDURE_ANCHORS and item_label != procedure_label:
+        if (
+            procedure_label in PROCEDURE_ANCHORS
+            and item_label != procedure_label
+            and not (
+                item_label == "non_attribuibile"
+                and _has_extractable_protected_fact(text)
+                and bool(procedure_link_values & _metadata_link_values(item))
+            )
+        ):
             continue
         extraction_items.append((index, item))
 
@@ -270,7 +357,7 @@ def build_fact_sheet(
         critical_days.extend(_extract_day_values(text))
         durations.extend(_extract_duration_values(text))
         amounts.extend(_extract_all(_MONEY_RE, text))
-        locations.extend(_extract_all(_ADDRESS_RE, text))
+        locations.extend(_extract_location_values(text))
         percentages.extend(_extract_percentage_values(text))
 
     normalized_procedure_ids = _unique(procedure_ids)
@@ -355,12 +442,23 @@ def _unverified_cig_failures(answer: str, fact_sheet: FactSheet) -> tuple[str, .
 
 
 def _unverified_procedure_id_failures(answer: str, fact_sheet: FactSheet) -> tuple[str, ...]:
+    allowed_exact = {value.strip() for value in fact_sheet.procedure_ids}
     allowed = {_canonical_token(value) for value in fact_sheet.procedure_ids}
     failures = [
         f"unverified_procedure_id:{value}"
-        for value in re.findall(r"\b[0-9]{5,6}/20[0-9]{2}\b", answer)
+        for value in _extract_all(_PROCEDURE_ID_RE, answer)
         if _canonical_token(value) not in allowed
     ]
+    for match in _PROCEDURE_ID_FIELD_RE.finditer(answer or ""):
+        raw_value = match.group("value").strip()
+        value = re.sub(r"\s+", "", match.group("value")).strip()
+        if value and (value not in allowed_exact or raw_value != value):
+            failures.append(f"malformed_procedure_id:{value[:40]}")
+    for match in _INCOMPLETE_PROCEDURE_ID_RE.finditer(answer or ""):
+        raw_value = match.group("value")
+        value = re.sub(r"\s+", "", raw_value).strip()
+        if _canonical_token(value) not in allowed or raw_value != value:
+            failures.append(f"incomplete_procedure_id:{value}")
     return tuple(failures)
 
 
@@ -449,6 +547,198 @@ def _unverified_protected_fact_failures(answer: str, fact_sheet: FactSheet) -> t
     return _unique(failures)
 
 
+def _replace_unverified_cigs(answer: str, fact_sheet: FactSheet) -> str:
+    allowed = {_canonical_token(value) for value in fact_sheet.cigs}
+
+    def replacement(match: re.Match[str]) -> str:
+        value = match.group(1)
+        if _canonical_token(value) in allowed and "cig" not in fact_sheet.conflicts:
+            return match.group(0)
+        return "CIG non verificato"
+
+    return _CIG_RE.sub(replacement, answer)
+
+
+def _replace_unverified_procedure_ids(answer: str, fact_sheet: FactSheet) -> str:
+    allowed = {_canonical_token(value) for value in fact_sheet.procedure_ids}
+    allowed_exact = {value.strip() for value in fact_sheet.procedure_ids}
+
+    def field_replacement(match: re.Match[str]) -> str:
+        raw_value = match.group("value").strip()
+        value = re.sub(r"\s+", "", match.group("value")).strip()
+        if (
+            value in allowed_exact
+            and raw_value == value
+            and "procedure_id" not in fact_sheet.conflicts
+        ):
+            return match.group(0)
+        if len(fact_sheet.procedure_ids) == 1 and "procedure_id" not in fact_sheet.conflicts:
+            return f"{match.group('prefix')}{fact_sheet.procedure_ids[0]}"
+        return f"{match.group('prefix')}ID procedura non verificato"
+
+    def incomplete_replacement(match: re.Match[str]) -> str:
+        raw_value = match.group("value")
+        value = re.sub(r"\s+", "", raw_value).strip()
+        if (
+            _canonical_token(value) in allowed
+            and raw_value == value
+            and "procedure_id" not in fact_sheet.conflicts
+        ):
+            return match.group(0)
+        if len(fact_sheet.procedure_ids) == 1 and "procedure_id" not in fact_sheet.conflicts:
+            return f"{match.group('prefix')}{fact_sheet.procedure_ids[0]}"
+        return f"{match.group('prefix')}ID procedura non verificato"
+
+    def replacement(match: re.Match[str]) -> str:
+        value = match.group(0)
+        if _canonical_token(value) in allowed and "procedure_id" not in fact_sheet.conflicts:
+            return value
+        return "ID procedura non verificato"
+
+    repaired = _PROCEDURE_ID_FIELD_RE.sub(field_replacement, answer)
+    repaired = _INCOMPLETE_PROCEDURE_ID_RE.sub(incomplete_replacement, repaired)
+    return _PROCEDURE_ID_RE.sub(replacement, repaired)
+
+
+def _replace_unverified_pattern_values(
+    answer: str,
+    *,
+    pattern: re.Pattern[str],
+    allowed_values: Sequence[str],
+    replacement_text: str,
+) -> str:
+    allowed_numbers = {
+        _canonical_number(number)
+        for value in allowed_values
+        for number in _NUMBER_RE.findall(value)
+    }
+
+    def replacement(match: re.Match[str]) -> str:
+        value = match.group(1) if match.groups() else match.group(0)
+        if _canonical_number(value) in allowed_numbers:
+            return match.group(0)
+        return replacement_text
+
+    return pattern.sub(replacement, answer)
+
+
+def _replace_unverified_token_values(
+    answer: str,
+    *,
+    pattern: re.Pattern[str],
+    allowed_values: Sequence[str],
+    replacement_text: str,
+) -> str:
+    allowed = {_canonical_token(value) for value in allowed_values}
+
+    def replacement(match: re.Match[str]) -> str:
+        value = match.group(1) if match.groups() else match.group(0)
+        if _canonical_token(value) in allowed:
+            return match.group(0)
+        return replacement_text
+
+    return pattern.sub(replacement, answer)
+
+
+def _replace_numeric_placeholders(answer: str) -> str:
+    repaired = _DAY_PLACEHOLDER_RE.sub(
+        lambda match: f"{match.group('prefix')} termine non verificato",
+        answer,
+    )
+    repaired = _INCOMPLETE_CIG_RE.sub("CIG non verificato", repaired)
+    return _MASKED_CIG_WITH_VALUE_RE.sub("CIG non verificato", repaired)
+
+
+def repair_unsupported_protected_facts(answer: str, fact_sheet: FactSheet) -> str:
+    """Mask unsupported protected facts while preserving the rest of the answer."""
+
+    repaired = str(answer or "")
+    repaired = _replace_numeric_placeholders(repaired)
+    repaired = _replace_unverified_cigs(repaired, fact_sheet)
+    repaired = _replace_unverified_procedure_ids(repaired, fact_sheet)
+    repaired = _replace_unverified_pattern_values(
+        repaired,
+        pattern=_DAY_RE,
+        allowed_values=fact_sheet.critical_days,
+        replacement_text="giorni non verificati",
+    )
+    repaired = _replace_unverified_pattern_values(
+        repaired,
+        pattern=_MONTH_RE,
+        allowed_values=fact_sheet.durations,
+        replacement_text="durata non verificata",
+    )
+    repaired = _replace_unverified_pattern_values(
+        repaired,
+        pattern=_YEAR_RE,
+        allowed_values=fact_sheet.durations,
+        replacement_text="durata non verificata",
+    )
+    repaired = _replace_unverified_pattern_values(
+        repaired,
+        pattern=_PERCENT_RE,
+        allowed_values=fact_sheet.percentages,
+        replacement_text="percentuale non verificata",
+    )
+    repaired = _replace_unverified_token_values(
+        repaired,
+        pattern=_MONEY_RE,
+        allowed_values=fact_sheet.amounts,
+        replacement_text="importo non verificato",
+    )
+    repaired = _replace_unverified_token_values(
+        repaired,
+        pattern=_ADDRESS_RE,
+        allowed_values=fact_sheet.locations,
+        replacement_text="sede non verificata",
+    )
+    return repaired
+
+
+def guardrail_issue_snippets(answer: str, *, limit: int = 6) -> tuple[str, ...]:
+    """Return short protected-fact snippets that explain guardrail blocks."""
+
+    snippets: list[str] = []
+    for label, pattern in (
+        ("placeholder", _PLACEHOLDER_RE),
+        ("masked_cig_value", _MASKED_CIG_WITH_VALUE_RE),
+        ("cig", _CIG_RE),
+        ("procedure_id_field", _PROCEDURE_ID_FIELD_RE),
+        ("incomplete_procedure_id", _INCOMPLETE_PROCEDURE_ID_RE),
+        ("procedure_id", _PROCEDURE_ID_RE),
+        ("day", _DAY_RE),
+        ("month", _MONTH_RE),
+        ("year", _YEAR_RE),
+        ("percent", _PERCENT_RE),
+        ("money", _MONEY_RE),
+        ("address", _ADDRESS_RE),
+    ):
+        for match in pattern.finditer(answer or ""):
+            snippet = " ".join(match.group(0).split())
+            snippets.append(f"{label}:{snippet[:80]}")
+            if len(snippets) >= limit:
+                return tuple(snippets)
+    return tuple(snippets)
+
+
+def _conflicted_protected_fact_failures(answer: str, fact_sheet: FactSheet) -> tuple[str, ...]:
+    conflicts = set(fact_sheet.conflicts)
+    if not conflicts:
+        return ("fact_sheet_conflict",) if fact_sheet.status == FactStatus.CONFLICT else ()
+
+    failures: list[str] = []
+    if "cig" in conflicts and _extract_all(_CIG_RE, answer):
+        failures.append("fact_sheet_conflict")
+    if "procedure_id" in conflicts and _extract_all(_PROCEDURE_ID_RE, answer):
+        failures.append("fact_sheet_conflict")
+
+    unknown_conflicts = conflicts - {"cig", "procedure_id"}
+    if unknown_conflicts:
+        failures.append("fact_sheet_conflict")
+
+    return _unique(failures)
+
+
 def fact_sheet_from_guarded_context(context: str) -> FactSheet | None:
     match = re.search(r"FACT_SHEET_START\n(?P<body>.*?)\nFACT_SHEET_END", context, re.DOTALL)
     if not match:
@@ -521,9 +811,11 @@ def validate_guarded_answer(
 
     failures: list[str] = []
     if cfg["blockOnConflict"] and fact_sheet.status == FactStatus.CONFLICT:
-        failures.append("fact_sheet_conflict")
+        failures.extend(_conflicted_protected_fact_failures(answer, fact_sheet))
     if _PLACEHOLDER_RE.search(answer):
         failures.append("numeric_placeholder")
+    if _MASKED_CIG_WITH_VALUE_RE.search(answer):
+        failures.append("masked_cig_value")
     failures.extend(_duplicate_paragraph_failures(answer))
     if cfg["blockOnUnverifiedNumbers"]:
         failures.extend(_unverified_protected_fact_failures(answer, fact_sheet))

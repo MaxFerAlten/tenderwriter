@@ -1,15 +1,17 @@
 """Buddy companion service."""
 
-from dataclasses import dataclass
-from enum import Enum
 import random
 import uuid
+from dataclasses import dataclass
+from enum import Enum
+
 
 class Rarity(str, Enum):
     COMMON = "common"
     RARE = "rare"
     EPIC = "epic"
     LEGENDARY = "legendary"
+
 
 class Species(str, Enum):
     CAT = "cat"
@@ -18,11 +20,13 @@ class Species(str, Enum):
     OWL = "owl"
     DRAGON = "dragon"
 
+
 class Mood(str, Enum):
     HAPPY = "happy"
     NEUTRAL = "neutral"
     THINKING = "thinking"
     SLEEPING = "sleeping"
+
 
 @dataclass
 class BuddyStats:
@@ -30,6 +34,7 @@ class BuddyStats:
     level: int = 1
     happiness: int = 100
     energy: int = 100
+
 
 @dataclass
 class Buddy:
@@ -41,16 +46,28 @@ class Buddy:
     mood: Mood = Mood.NEUTRAL
     accessory: str | None = None
 
+
 NAMES = [
-    "Clawdia", "Paws", "Whiskers", "Mittens", "Shadow",
-    "Pixel", "Nova", "Sage", "Ember", "Frost",
+    "Clawdia",
+    "Paws",
+    "Whiskers",
+    "Mittens",
+    "Shadow",
+    "Pixel",
+    "Nova",
+    "Sage",
+    "Ember",
+    "Frost",
 ]
+
 
 def generate_buddy() -> Buddy:
     """Generate a random buddy companion."""
     species = random.choice(list(Species))
-    rarity = random.choice([Rarity.COMMON] * 50 + [Rarity.RARE] * 30 + [Rarity.EPIC] * 15 + [Rarity.LEGENDARY] * 5)
-    
+    rarity = random.choice(
+        [Rarity.COMMON] * 50 + [Rarity.RARE] * 30 + [Rarity.EPIC] * 15 + [Rarity.LEGENDARY] * 5
+    )
+
     return Buddy(
         id=str(uuid.uuid4()),
         name=random.choice(NAMES),
@@ -58,6 +75,7 @@ def generate_buddy() -> Buddy:
         rarity=rarity,
         stats=BuddyStats(),
     )
+
 
 class BuddyService:
     _buddies: dict[str, Buddy] = {}
@@ -72,12 +90,12 @@ class BuddyService:
     def add_xp(cls, user_id: str, amount: int) -> Buddy:
         buddy = cls.get_buddy(user_id)
         buddy.stats.xp += amount
-        
+
         xp_needed = buddy.stats.level * 100
         while buddy.stats.xp >= xp_needed:
             buddy.stats.level += 1
             buddy.stats.happiness = min(100, buddy.stats.happiness + 10)
-        
+
         return buddy
 
     @classmethod

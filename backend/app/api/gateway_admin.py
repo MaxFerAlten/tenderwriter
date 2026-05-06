@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_user, UserResponse
+from app.api.auth import UserResponse, get_current_user
 from app.db.database import get_db
 from app.models import AIGatewayTarget, LLMSettings
 
@@ -130,15 +130,15 @@ def _validate_target_configuration(
         )
 
 
-
-
 class LLMSettingsPayload(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stop_tokens: str | None = None
 
+
 class LLMSettingsOut(LLMSettingsPayload):
     id: int | None = None
+
 
 class TargetCreate(BaseModel):
     route_key: str = Field(pattern="^(tender|opencode)$")
@@ -251,7 +251,6 @@ def _serialize_active_target(target: AIGatewayTarget) -> ActiveTargetOut:
     )
 
 
-
 @router.get("/llm-settings", response_model=LLMSettingsOut)
 async def get_llm_settings(
     current_user: UserResponse = Depends(get_current_user),
@@ -261,8 +260,14 @@ async def get_llm_settings(
     result = await db.execute(select(LLMSettings).limit(1))
     row = result.scalar_one_or_none()
     if row:
-        return {"id": row.id, "max_tokens": row.max_tokens, "temperature": row.temperature, "stop_tokens": row.stop_tokens}
+        return {
+            "id": row.id,
+            "max_tokens": row.max_tokens,
+            "temperature": row.temperature,
+            "stop_tokens": row.stop_tokens,
+        }
     from app.config import settings
+
     return {
         "id": None,
         "max_tokens": getattr(settings, "llama_max_tokens", None),
@@ -287,7 +292,13 @@ async def update_llm_settings(
         setattr(row, k, v)
     await db.flush()
     await db.refresh(row)
-    return {"id": row.id, "max_tokens": row.max_tokens, "temperature": row.temperature, "stop_tokens": row.stop_tokens}
+    return {
+        "id": row.id,
+        "max_tokens": row.max_tokens,
+        "temperature": row.temperature,
+        "stop_tokens": row.stop_tokens,
+    }
+
 
 @router.get("/targets", response_model=list[TargetOut])
 async def list_targets(
@@ -306,7 +317,7 @@ async def list_active_targets(
     db: AsyncSession = Depends(get_db),
 ):
     """Internal endpoint for the gateway container to fetch live routing config."""
-    stmt = select(AIGatewayTarget).where(AIGatewayTarget.enabled == True).order_by(AIGatewayTarget.priority)
+    stmt = select(AIGatewayTarget).where(AIGatewayTarget.enabled).order_by(AIGatewayTarget.priority)
     if route:
         stmt = stmt.where(AIGatewayTarget.route_key == route)
     result = await db.execute(stmt)
@@ -382,9 +393,7 @@ async def update_target(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(current_user)
-    result = await db.execute(
-        select(AIGatewayTarget).where(AIGatewayTarget.id == target_id)
-    )
+    result = await db.execute(select(AIGatewayTarget).where(AIGatewayTarget.id == target_id))
     target = result.scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
@@ -453,9 +462,7 @@ async def delete_target(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(current_user)
-    result = await db.execute(
-        select(AIGatewayTarget).where(AIGatewayTarget.id == target_id)
-    )
+    result = await db.execute(select(AIGatewayTarget).where(AIGatewayTarget.id == target_id))
     target = result.scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
@@ -463,4 +470,3 @@ async def delete_target(
     await db.delete(target)
     await db.commit()
     return None
-

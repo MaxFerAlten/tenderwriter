@@ -18,6 +18,16 @@ async def _collect_streaming_body(response) -> str:
     return "".join(chunks)
 
 
+def test_gateway_timeout_reads_compose_env_name(monkeypatch):
+    monkeypatch.setenv("GATEWAY_TIMEOUT", "300")
+    monkeypatch.delenv("GATEWAY_GATEWAY_TIMEOUT", raising=False)
+
+    import gateway.app as gateway_app
+    gateway_app = importlib.reload(gateway_app)
+
+    assert gateway_app.Settings().gateway_timeout == 300.0
+
+
 @pytest.mark.asyncio
 async def test_fallback_to_dmz_without_anonymizer(monkeypatch):
     os.environ["GATEWAY_TENDER_UPSTREAM"] = "http://primary"

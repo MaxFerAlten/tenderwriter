@@ -1,15 +1,18 @@
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, desc
+
 from app.models import Document, Tender
 
 DATABASE_URL = "postgresql+asyncpg://tenderwriter:DefaultPg2024Pass@tw-postgres:5432/tenderwriter"
 
+
 async def test_list():
     engine = create_async_engine(DATABASE_URL)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    
+
     async with async_session() as db:
         try:
             query = (
@@ -28,9 +31,11 @@ async def test_list():
         except Exception as e:
             print(f"Error: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             await engine.dispose()
+
 
 if __name__ == "__main__":
     asyncio.run(test_list())

@@ -32,7 +32,9 @@ def _read_env_file() -> dict[str, str]:
     return values
 
 
-def _request_json(url: str, *, method: str = "GET", payload: dict | None = None) -> tuple[int, dict]:
+def _request_json(
+    url: str, *, method: str = "GET", payload: dict | None = None
+) -> tuple[int, dict]:
     data = None
     headers = {}
     if payload is not None:

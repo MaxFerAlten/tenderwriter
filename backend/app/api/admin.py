@@ -10,13 +10,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.auth import UserResponse, get_current_user
 from app.db.database import get_db
-from app.models import User, Tender, TenderPermission
-from app.api.auth import get_current_user, UserResponse
+from app.models import Tender, TenderPermission, User
 from app.services.chat import (
     deactivate_chat_member_for_tender,
     sync_chat_members_from_tender_permissions,
@@ -90,9 +90,7 @@ async def list_users(
     """List all users (admin only)."""
     _require_admin(current_user)
 
-    result = await db.execute(
-        select(User).order_by(User.created_at.desc())
-    )
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
     users = result.scalars().all()
 
     return [
@@ -130,25 +128,29 @@ async def list_all_tender_permissions(
     items = []
     for t in tenders:
         perms = []
-        for p in (t.permissions or []):
-            perms.append(PermissionResponse(
-                id=p.id,
-                tender_id=p.tender_id,
-                user_id=p.user_id,
-                user_name=p.user.name if p.user else "Unknown",
-                user_email=p.user.email if p.user else "",
-                permission=p.permission or "viewer",
-                granted_by=p.granted_by,
-                created_at=p.created_at,
-            ))
+        for p in t.permissions or []:
+            perms.append(
+                PermissionResponse(
+                    id=p.id,
+                    tender_id=p.tender_id,
+                    user_id=p.user_id,
+                    user_name=p.user.name if p.user else "Unknown",
+                    user_email=p.user.email if p.user else "",
+                    permission=p.permission or "viewer",
+                    granted_by=p.granted_by,
+                    created_at=p.created_at,
+                )
+            )
 
-        items.append(TenderPermissionOverview(
-            tender_id=t.id,
-            tender_title=t.title,
-            owner_id=t.created_by,
-            owner_name=t.created_by_user.name if t.created_by_user else None,
-            permissions=perms,
-        ))
+        items.append(
+            TenderPermissionOverview(
+                tender_id=t.id,
+                tender_title=t.title,
+                owner_id=t.created_by,
+                owner_name=t.created_by_user.name if t.created_by_user else None,
+                permissions=perms,
+            )
+        )
 
     return items
 
@@ -219,7 +221,9 @@ async def grant_tender_permission(
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Permission already exists for this user on this tender")
+        raise HTTPException(
+            status_code=400, detail="Permission already exists for this user on this tender"
+        )
 
     perm = TenderPermission(
         tender_id=tender_id,

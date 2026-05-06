@@ -93,7 +93,9 @@ async def resolve_effective_privacy_policy(
     if hasattr(db, "execute"):
         settings_result = await db.execute(select(AppSettings).limit(1))
     settings_row = settings_result.scalar_one_or_none() if settings_result is not None else None
-    settings_data = settings_row.data if settings_row and isinstance(settings_row.data, dict) else {}
+    settings_data = (
+        settings_row.data if settings_row and isinstance(settings_row.data, dict) else {}
+    )
     policy_doc = settings_data.get("anonymizer_policy")
     policy_doc = policy_doc if isinstance(policy_doc, dict) else _default_policy_payload()
 
@@ -106,7 +108,7 @@ async def resolve_effective_privacy_policy(
     if hasattr(db, "execute"):
         stmt = (
             select(AIGatewayTarget)
-            .where(AIGatewayTarget.enabled == True, AIGatewayTarget.route_key == route_key)
+            .where(AIGatewayTarget.enabled, AIGatewayTarget.route_key == route_key)
             .order_by(AIGatewayTarget.priority, AIGatewayTarget.id)
         )
         target_result = await db.execute(stmt)
@@ -148,7 +150,10 @@ async def resolve_effective_privacy_policy(
             source_notes.append(f"{label}.anonymizer_enabled")
 
     apply_rule(_coerce_rule(policy_doc.get("default")), label="policy.default")
-    apply_rule(_coerce_rule((policy_doc.get("routes") or {}).get(route_key)), label=f"policy.route.{route_key}")
+    apply_rule(
+        _coerce_rule((policy_doc.get("routes") or {}).get(route_key)),
+        label=f"policy.route.{route_key}",
+    )
     if tender_id is not None:
         apply_rule(
             _coerce_rule((policy_doc.get("tenders") or {}).get(str(tender_id))),

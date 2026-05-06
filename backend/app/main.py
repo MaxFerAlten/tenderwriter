@@ -26,16 +26,19 @@ async def lifespan(app: FastAPI):
             debug=settings.app_debug,
         )
 
+        from sqlalchemy import select
+
+        from app.api.auth import hash_password
         from app.db.database import async_session_factory, init_db
         from app.models import User
-        from sqlalchemy import select
-        from app.api.auth import hash_password
 
         await init_db()
         logger.info("Database initialized")
 
         async with async_session_factory() as session:
-            result = await session.execute(select(User).where(User.email == settings.admin_username))
+            result = await session.execute(
+                select(User).where(User.email == settings.admin_username)
+            )
             admin_user = result.scalar_one_or_none()
 
             if admin_user:
@@ -69,9 +72,9 @@ async def lifespan(app: FastAPI):
         app.state.rag_engine_initialization_task = None
         logger.info("HybridRAG engine ready for lazy initialization")
 
-        from hooks.builtins import register_builtin_hooks
-        register_builtin_hooks()
-        logger.info("Built-in hooks registered")
+        from app.intelligence.lifecycle_projector import set_active_rag_engine
+
+        set_active_rag_engine(app.state.rag_engine)
 
     except Exception as e:
         logger.exception("Startup failed", error=str(e))
@@ -88,8 +91,9 @@ async def lifespan(app: FastAPI):
                 await init_task
         if hasattr(app.state, "rag_engine"):
             await app.state.rag_engine.shutdown()
-        from app.db.redis import close_redis
         from app.db.database import close_db
+        from app.db.redis import close_redis
+
         await close_redis()
         await close_db()
     except Exception as e:
@@ -117,10 +121,30 @@ def create_app() -> FastAPI:
     )
 
     from app.api.auth import limiter
+
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    from app.api import admin, anonymizer_admin, auth, chat, content_library, data_explorer, gateway_admin, hooks_api, ingestions, kpi_admin, mattermost, observability, onlyoffice, proposals, rag, system, tenders
+    from app.api import (
+        admin,
+        anonymizer_admin,
+        auth,
+        chat,
+        content_library,
+        data_explorer,
+        gateway_admin,
+        ingestions,
+        intelligence,
+        kpi_admin,
+        mattermost,
+        observability,
+        onlyoffice,
+        planningcoverage,
+        proposals,
+        rag,
+        system,
+        tenders,
+    )
     from app.api.tasks import router as tasks_router
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
@@ -131,16 +155,29 @@ def create_app() -> FastAPI:
     app.include_router(gateway_admin.router, prefix="/api/gateway", tags=["Gateway"])
     app.include_router(onlyoffice.router, prefix="/api/onlyoffice", tags=["OnlyOffice"])
     app.include_router(tenders.router, prefix="/api/tenders", tags=["Tenders"])
-    app.include_router(observability.router, prefix="/api/tenders", tags=["Operational Observability"])
+    app.include_router(
+        observability.router,
+        prefix="/api/tenders",
+        tags=["Operational Observability"],
+    )
     app.include_router(chat.router, prefix="/api/tenders", tags=["Tender Chat"])
     app.include_router(mattermost.router, prefix="/api/tenders", tags=["Mattermost Full Chat"])
     app.include_router(proposals.router, prefix="/api/proposals", tags=["Proposals"])
-    app.include_router(content_library.router, prefix="/api/content-blocks", tags=["Content Library"])
+    app.include_router(
+        content_library.router,
+        prefix="/api/content-blocks",
+        tags=["Content Library"],
+    )
     app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])
+    app.include_router(
+        planningcoverage.router,
+        prefix="/api/planningcoverage",
+        tags=["Planning Coverage"],
+    )
     app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(data_explorer.router, prefix="/api/data-explorer", tags=["Data Explorer"])
-    app.include_router(hooks_api.router, prefix="/api/hooks", tags=["Hooks"])
     app.include_router(ingestions.router, prefix="/api/ingestions", tags=["Ingestion Monitor"])
+    app.include_router(intelligence.router, prefix="/api/intelligence", tags=["Intelligence"])
 
     @app.get("/health", tags=["Health"])
     async def health_check():

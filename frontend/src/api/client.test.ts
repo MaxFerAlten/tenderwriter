@@ -8,11 +8,12 @@ vi.mock('../auth/keycloak', () => keycloakMock);
 
 import {
     authApi,
-    hooksApi,
+    intelligenceApi,
     kpiAdminApi,
     observabilityApi,
     prefetchTenderChatContext,
     prefetchTenderChatRetrospective,
+    planningCoverageApi,
     proposalApi,
     ragApi,
     resetTenderChatContextCacheForTest,
@@ -372,59 +373,6 @@ describe('kpiAdminApi', () => {
             '/api/admin/kpi/tenders/12/analysis-jobs/latest',
             expect.objectContaining({
                 method: 'GET',
-            })
-        );
-    });
-});
-
-describe('hooksApi', () => {
-    beforeEach(() => {
-        storage.clear();
-        fetchMock.mockReset();
-        vi.stubGlobal('fetch', fetchMock);
-        vi.stubGlobal('localStorage', localStorageMock);
-    });
-
-    afterEach(() => {
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
-    });
-
-    it('preserves the hooks listing contract through the shared client', async () => {
-        fetchMock.mockResolvedValue(
-            new Response(JSON.stringify([{ id: 'hook-1', name: 'Pre-save hook' }]), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            })
-        );
-
-        const response = await hooksApi.list<{ id: string; name: string }>();
-
-        expect(response[0].id).toBe('hook-1');
-        expect(fetchMock).toHaveBeenCalledWith(
-            '/api/hooks/hooks',
-            expect.objectContaining({
-                method: 'GET',
-            })
-        );
-    });
-
-    it('sends hook test requests with the encoded event type query string', async () => {
-        fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ ok: true }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            })
-        );
-
-        const response = await hooksApi.test<{ ok: boolean }>('hook-1', 'before save', { payload: 'demo' });
-
-        expect(response.ok).toBe(true);
-        expect(fetchMock).toHaveBeenCalledWith(
-            '/api/hooks/hooks/hook-1/test?event_type=before%20save',
-            expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ payload: 'demo' }),
             })
         );
     });
@@ -1440,6 +1388,92 @@ describe('ragApi streaming', () => {
     });
 });
 
+describe('planningCoverageApi', () => {
+    beforeEach(() => {
+        storage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', localStorageMock);
+    });
+
+    afterEach(() => {
+        resetTenderChatContextCacheForTest();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    it('loads and updates the planning coverage config through the admin endpoint', async () => {
+        const config = {
+            enabled: false,
+            mode: 'adaptive' as const,
+            slots: { cig_lots: true },
+            retrievers: { sparse: true, dense: true, graph: false },
+            topkPerSlot: 2,
+            maxSourcesPerSlot: 2,
+            globalMaxCoverageChunks: 8,
+            minScore: 0.2,
+            onlyTenderQueries: true,
+            alwaysRunPlanner: true,
+        };
+        fetchMock
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(config), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ ...config, enabled: true }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+
+        await expect(planningCoverageApi.getConfig()).resolves.toEqual(config);
+        await planningCoverageApi.updateConfig({ ...config, enabled: true });
+
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            '/api/planningcoverage/config',
+            expect.objectContaining({ method: 'GET' })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/planningcoverage/config',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ ...config, enabled: true }),
+            })
+        );
+    });
+
+    it('tests planner activation without running a full RAG query', async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({
+                queryClass: 'tender_structured',
+                activated: true,
+                slotsTriggered: ['cig_lots'],
+                generatedQueries: { cig_lots: ['CIG lotto gara'] },
+                notes: ['Sparse retrieval consigliato per token numerici.'],
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const result = await planningCoverageApi.test({ query: 'trova CIG della gara' });
+
+        expect(result.slotsTriggered).toEqual(['cig_lots']);
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/planningcoverage/test',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ query: 'trova CIG della gara' }),
+            })
+        );
+    });
+});
+
 describe('observabilityApi', () => {
     beforeEach(() => {
         storage.clear();
@@ -1527,6 +1561,96 @@ describe('observabilityApi', () => {
         );
     });
 
+    it('runs the proposal writer with apply=false for preview', async () => {
+        localStorageMock.setItem('token', 'editor-token');
+        const result = {
+            tender_id: 42,
+            proposal_id: 601,
+            section_id: 701,
+            mode: 'improve',
+            draft_text: 'Bozza migliorata.',
+            coverage_summary: { open_gaps: 2 },
+            evidence_summary: {},
+            contradictions: [],
+            rehearsal_context: null,
+            warnings: [],
+            applied: false,
+            agent_version: 'tw-proposal-writer-v1',
+        };
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify(result), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        );
+
+        const response = await intelligenceApi.runProposalWriter({
+            tender_id: 42,
+            proposal_id: 601,
+            section_id: 701,
+            mode: 'improve',
+            apply: false,
+            instruction: 'Strengthen SLA',
+        });
+
+        expect(response.applied).toBe(false);
+        expect(response.draft_text).toBe('Bozza migliorata.');
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/intelligence/proposal-writer/draft',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer editor-token',
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify({
+                    tender_id: 42,
+                    proposal_id: 601,
+                    section_id: 701,
+                    mode: 'improve',
+                    apply: false,
+                    instruction: 'Strengthen SLA',
+                }),
+            })
+        );
+    });
+
+    it('runs the proposal writer with apply=true and reports applied=true', async () => {
+        localStorageMock.setItem('token', 'editor-token');
+        fetchMock.mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    tender_id: 42,
+                    proposal_id: 601,
+                    section_id: 701,
+                    mode: 'draft',
+                    draft_text: 'Sezione applicata.',
+                    coverage_summary: {},
+                    evidence_summary: {},
+                    contradictions: [],
+                    rehearsal_context: null,
+                    warnings: [],
+                    applied: true,
+                    agent_version: 'tw-proposal-writer-v1',
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+        );
+
+        const response = await intelligenceApi.runProposalWriter({
+            tender_id: 42,
+            proposal_id: 601,
+            section_id: 701,
+            mode: 'draft',
+            apply: true,
+        });
+
+        expect(response.applied).toBe(true);
+        const callArgs = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
+        const body = JSON.parse(callArgs?.[1]?.body as string);
+        expect(body.apply).toBe(true);
+    });
+
     it('starts a review cycle through the tender observability endpoint', async () => {
         localStorageMock.setItem('token', 'editor-token');
         fetchMock.mockResolvedValue(
@@ -1557,6 +1681,3 @@ describe('observabilityApi', () => {
         );
     });
 });
-
-
-

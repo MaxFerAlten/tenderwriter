@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from app.services.tender_requirements import normalize_requirement_text
-
 
 VERIFICATION_METHOD = "grounded_quote_overlap_v1"
 VERIFIED = "verified"
@@ -15,15 +15,51 @@ REJECTED = "rejected"
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "con", "da", "de", "dei", "del",
-    "della", "delle", "di", "e", "for", "gli", "i", "il", "in", "is", "la", "le",
-    "lo", "must", "of", "or", "shall", "the", "to", "un", "una", "with",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "con",
+    "da",
+    "de",
+    "dei",
+    "del",
+    "della",
+    "delle",
+    "di",
+    "e",
+    "for",
+    "gli",
+    "i",
+    "il",
+    "in",
+    "is",
+    "la",
+    "le",
+    "lo",
+    "must",
+    "of",
+    "or",
+    "shall",
+    "the",
+    "to",
+    "un",
+    "una",
+    "with",
 }
 
 
 def _tokenize(value: str) -> set[str]:
     normalized = normalize_requirement_text(value)
-    return {token for token in _TOKEN_RE.findall(normalized) if len(token) > 1 and token not in _STOPWORDS}
+    return {
+        token
+        for token in _TOKEN_RE.findall(normalized)
+        if len(token) > 1 and token not in _STOPWORDS
+    }
 
 
 def _normalize_confidence(value: Any) -> float | None:
@@ -82,7 +118,9 @@ def verify_requirement_candidate(
 
     enriched = dict(candidate)
     summary = str(enriched.get("summary") or enriched.get("requirement_text") or "").strip()
-    citations = [item for item in list(enriched.get("citations") or []) if isinstance(item, Mapping)]
+    citations = [
+        item for item in list(enriched.get("citations") or []) if isinstance(item, Mapping)
+    ]
     summary_tokens = _tokenize(summary)
 
     if not summary_tokens:
@@ -138,7 +176,9 @@ def verify_requirement_candidate(
             verification = _verification_payload(
                 state=REJECTED,
                 score=best_score,
-                reason="citation_quote_not_in_source" if quote_missing_from_source else "insufficient_citation_overlap",
+                reason="citation_quote_not_in_source"
+                if quote_missing_from_source
+                else "insufficient_citation_overlap",
                 citation_count=len(citations),
                 best_quote=best_quote or None,
             )
@@ -165,6 +205,5 @@ def verify_requirement_candidates(
     """Verify a batch of extracted requirement candidates."""
 
     return [
-        verify_requirement_candidate(candidate, source_text=source_text)
-        for candidate in candidates
+        verify_requirement_candidate(candidate, source_text=source_text) for candidate in candidates
     ]

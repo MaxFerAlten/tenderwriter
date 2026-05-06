@@ -14,7 +14,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from qdrant_client import QdrantClient
 
-from app.api.auth import get_current_user, UserResponse
+from app.api.auth import UserResponse, get_current_user
 from app.config import settings
 
 logger = structlog.get_logger()
@@ -43,7 +43,7 @@ async def _get_qdrant_client(request: Request) -> QdrantClient:
             timeout=10.0,
         )
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Cannot connect to Qdrant: {e}")
+        raise HTTPException(status_code=503, detail=f"Cannot connect to Qdrant: {e}") from e
 
 
 async def _get_neo4j_driver(request: Request):
@@ -56,12 +56,13 @@ async def _get_neo4j_driver(request: Request):
 
     try:
         from neo4j import AsyncGraphDatabase
+
         return AsyncGraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
         )
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Cannot connect to Neo4j: {e}")
+        raise HTTPException(status_code=503, detail=f"Cannot connect to Neo4j: {e}") from e
 
 
 # ── Status ──
@@ -126,7 +127,7 @@ async def initialize_engine(request: Request, _user: UserResponse = Depends(admi
         return {"status": "initialized"}
     except Exception as e:
         logger.error("Engine initialization failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Initialization failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Initialization failed: {e}") from e
 
 
 # ── Qdrant Introspection ──
@@ -150,22 +151,25 @@ async def qdrant_overview(request: Request, _user: UserResponse = Depends(admin_
                 dimension = None
                 distance = "multi-vector"
 
-            collections.append({
-                "name": col.name,
-                "points_count": info.points_count or 0,
-                "vectors_count": getattr(info, "vectors_count", info.points_count) or 0,
-                "indexed_vectors_count": getattr(info, "indexed_vectors_count", 0) or 0,
-                "dimension": dimension,
-                "distance": distance,
-                "status": info.status.value if info.status else "unknown",
-                "segments_count": getattr(info, "segments_count", 0) or 0,
-                "on_disk_payload": getattr(info.config.params, "on_disk_payload", False) or False,
-            })
+            collections.append(
+                {
+                    "name": col.name,
+                    "points_count": info.points_count or 0,
+                    "vectors_count": getattr(info, "vectors_count", info.points_count) or 0,
+                    "indexed_vectors_count": getattr(info, "indexed_vectors_count", 0) or 0,
+                    "dimension": dimension,
+                    "distance": distance,
+                    "status": info.status.value if info.status else "unknown",
+                    "segments_count": getattr(info, "segments_count", 0) or 0,
+                    "on_disk_payload": getattr(info.config.params, "on_disk_payload", False)
+                    or False,
+                }
+            )
 
         return {"collections": collections}
     except Exception as e:
         logger.error("Qdrant overview failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}")
+        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}") from e
 
 
 @router.get("/qdrant/collection/{collection_name}/sample")
@@ -197,11 +201,13 @@ async def qdrant_sample_points(
             text_preview = payload.pop("text", "")
             if len(text_preview) > 300:
                 text_preview = text_preview[:300] + "..."
-            items.append({
-                "id": str(p.id),
-                "text_preview": text_preview,
-                "metadata": payload,
-            })
+            items.append(
+                {
+                    "id": str(p.id),
+                    "text_preview": text_preview,
+                    "metadata": payload,
+                }
+            )
 
         return {
             "collection": collection_name,
@@ -211,7 +217,7 @@ async def qdrant_sample_points(
         }
     except Exception as e:
         logger.error("Qdrant sample failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}")
+        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}") from e
 
 
 @router.get("/qdrant/collection/{collection_name}/payload-keys")
@@ -252,7 +258,7 @@ async def qdrant_payload_keys(
         }
     except Exception as e:
         logger.error("Qdrant payload keys failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}")
+        raise HTTPException(status_code=503, detail=f"Qdrant error: {e}") from e
 
 
 # ── Neo4j Introspection ──
@@ -294,13 +300,15 @@ async def neo4j_overview(request: Request, _user: UserResponse = Depends(admin_r
             result = await session.run("SHOW CONSTRAINTS")
             constraints = []
             async for r in result:
-                constraints.append({
-                    "name": r.get("name", ""),
-                    "type": r.get("type", ""),
-                    "entity_type": r.get("entityType", ""),
-                    "labels_or_types": r.get("labelsOrTypes", []),
-                    "properties": r.get("properties", []),
-                })
+                constraints.append(
+                    {
+                        "name": r.get("name", ""),
+                        "type": r.get("type", ""),
+                        "entity_type": r.get("entityType", ""),
+                        "labels_or_types": r.get("labelsOrTypes", []),
+                        "properties": r.get("properties", []),
+                    }
+                )
 
         return {
             "total_nodes": total_nodes,
@@ -311,7 +319,7 @@ async def neo4j_overview(request: Request, _user: UserResponse = Depends(admin_r
         }
     except Exception as e:
         logger.error("Neo4j overview failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}")
+        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}") from e
 
 
 @router.get("/neo4j/sample/{label}")
@@ -325,9 +333,19 @@ async def neo4j_sample_nodes(
     driver = await _get_neo4j_driver(request)
 
     # Sanitize label to prevent injection
-    allowed_labels = {"Tender", "Project", "TeamMember", "Client", "Certification", "Category", "Requirement"}
+    allowed_labels = {
+        "Tender",
+        "Project",
+        "TeamMember",
+        "Client",
+        "Certification",
+        "Category",
+        "Requirement",
+    }
     if label not in allowed_labels:
-        raise HTTPException(status_code=400, detail=f"Invalid label. Allowed: {', '.join(sorted(allowed_labels))}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid label. Allowed: {', '.join(sorted(allowed_labels))}"
+        )
 
     limit = min(limit, 50)
 
@@ -339,11 +357,13 @@ async def neo4j_sample_nodes(
             async for r in result:
                 node = r["n"]
                 props = dict(node.items())
-                nodes.append({
-                    "id": node.element_id,
-                    "labels": list(node.labels),
-                    "properties": props,
-                })
+                nodes.append(
+                    {
+                        "id": node.element_id,
+                        "labels": list(node.labels),
+                        "properties": props,
+                    }
+                )
 
             rel_query = (
                 f"MATCH (n:{label})-[r]-(m) "
@@ -355,20 +375,22 @@ async def neo4j_sample_nodes(
             result = await session.run(rel_query, limit=limit * 3)
             relationships = []
             async for r in result:
-                relationships.append({
-                    "source_id": r["source_id"],
-                    "rel_type": r["rel_type"],
-                    "rel_props": dict(r["rel_props"]) if r["rel_props"] else {},
-                    "target_id": r["target_id"],
-                    "target_labels": list(r["target_labels"]),
-                    "target_name": (
-                        r["target_props"].get("name")
-                        or r["target_props"].get("title")
-                        or r["target_props"].get("id")
-                        or r["target_props"].get("category")
-                        or str(r["target_props"].get("text", ""))[:80]
-                    ),
-                })
+                relationships.append(
+                    {
+                        "source_id": r["source_id"],
+                        "rel_type": r["rel_type"],
+                        "rel_props": dict(r["rel_props"]) if r["rel_props"] else {},
+                        "target_id": r["target_id"],
+                        "target_labels": list(r["target_labels"]),
+                        "target_name": (
+                            r["target_props"].get("name")
+                            or r["target_props"].get("title")
+                            or r["target_props"].get("id")
+                            or r["target_props"].get("category")
+                            or str(r["target_props"].get("text", ""))[:80]
+                        ),
+                    }
+                )
 
         return {
             "label": label,
@@ -377,7 +399,7 @@ async def neo4j_sample_nodes(
         }
     except Exception as e:
         logger.error("Neo4j sample failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}")
+        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}") from e
 
 
 @router.get("/neo4j/graph-snapshot")
@@ -423,12 +445,14 @@ async def neo4j_graph_snapshot(
                         "name": r["tgt_name"],
                     }
 
-                edges.append({
-                    "source": src_id,
-                    "target": tgt_id,
-                    "type": r["rel_type"],
-                    "properties": dict(r["rel_props"]) if r["rel_props"] else {},
-                })
+                edges.append(
+                    {
+                        "source": src_id,
+                        "target": tgt_id,
+                        "type": r["rel_type"],
+                        "properties": dict(r["rel_props"]) if r["rel_props"] else {},
+                    }
+                )
 
             standalone_result = await session.run(
                 "MATCH (n) "
@@ -454,4 +478,4 @@ async def neo4j_graph_snapshot(
         }
     except Exception as e:
         logger.error("Neo4j graph snapshot failed", error=str(e))
-        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}")
+        raise HTTPException(status_code=503, detail=f"Neo4j error: {e}") from e

@@ -121,7 +121,6 @@ class TestDocumentFullConstruction(unittest.TestCase):
     """Verify that a Document with all new fields can be constructed without error."""
 
     def test_full_document_construction(self) -> None:
-        now = datetime.now(timezone.utc)
         doc = Document(
             filename="bando_gara_2026.pdf",
             file_url="minio://tw-uploads/tenders/1/bando_gara_2026.pdf",

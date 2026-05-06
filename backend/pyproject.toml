@@ -69,12 +69,51 @@ dev = [
 requires = ["setuptools>=75.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["migrations*", "reports*", "tests*"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+extend-exclude = [
+    "fix_tasks.py",
+    "fix_tenders.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+ignore = [
+    # FastAPI intentionally uses dependency factories in endpoint defaults.
+    "B008",
+    # SQLAlchemy/Pydantic models currently rely on explicit str + Enum semantics.
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/auth.py" = ["E501"]
+"app/api/data_explorer.py" = ["E501"]
+"app/api/kpi_admin.py" = ["E501"]
+"app/api/onlyoffice.py" = ["E501"]
+"app/api/rag.py" = ["N815"]
+"app/db/database.py" = ["E501"]
+"app/export_requirement_gold_set.py" = ["E501"]
+"app/intelligence/agent.py" = ["E501"]
+"app/intelligence/lifecycle_projector.py" = ["E501"]
+"app/intelligence/proposal_writer_agent.py" = ["E501"]
+"app/intelligence/tools/compliance_panorama.py" = ["E501"]
+"app/intelligence/tools/contradiction_finder.py" = ["E501"]
+"app/models/__init__.py" = ["A003", "E402"]
+"app/rag/engine.py" = ["E501"]
+"app/rag/fusion.py" = ["E501"]
+"app/rag/generator.py" = ["E501", "SIM117"]
+"app/services/chat.py" = ["E501"]
+"app/services/compliance_observability.py" = ["E501"]
+"app/services/requirement_evaluation.py" = ["E501"]
+"app/tasks.py" = ["E501"]
+"migrations/versions/*.py" = ["E501"]
+"test_*.py" = ["E501"]
+"tests/**/*.py" = ["E501", "E402", "SIM117", "UP017"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

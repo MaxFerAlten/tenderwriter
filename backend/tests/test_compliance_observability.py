@@ -3,6 +3,7 @@
 import os
 import unittest
 from datetime import datetime, timezone
+
 from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
@@ -45,7 +46,9 @@ class RequirementComplianceMappingTests(unittest.TestCase):
         status = derive_requirement_compliance_status(SectionStatus.TODO)
         self.assertEqual(status, ComplianceStatus.NOT_ADDRESSED)
 
-    def test_coverage_falls_back_to_legacy_requirements_without_approved_consolidated_rows(self) -> None:
+    def test_coverage_falls_back_to_legacy_requirements_without_approved_consolidated_rows(
+        self,
+    ) -> None:
         tender = Tender(id=71, title="Legacy tender")
         tender.requirements = [
             TenderRequirement(
@@ -79,9 +82,13 @@ class RequirementComplianceMappingTests(unittest.TestCase):
         self.assertEqual(coverage[0].coverage_source, "legacy")
         self.assertEqual(coverage[0].compliance_status, ComplianceStatus.PARTIALLY_ADDRESSED)
 
-    def test_coverage_prefers_approved_consolidated_requirements_and_reuses_legacy_mapping(self) -> None:
+    def test_coverage_prefers_approved_consolidated_requirements_and_reuses_legacy_mapping(
+        self,
+    ) -> None:
         tender = Tender(id=72, title="Consolidated tender")
-        mapped_section = ProposalSection(id=601, proposal_id=88, title="Compliance matrix", status=SectionStatus.APPROVED)
+        mapped_section = ProposalSection(
+            id=601, proposal_id=88, title="Compliance matrix", status=SectionStatus.APPROVED
+        )
         legacy_requirement = TenderRequirement(
             id=502,
             tender_id=72,
@@ -148,11 +155,19 @@ class AutoComplianceGateDecisionTests(unittest.TestCase):
 
     def test_in_review_with_unresolved_requirements_opens_gate(self) -> None:
         requirements = [
-            TenderRequirement(requirement_text="Provide signed annex", compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED),
-            TenderRequirement(requirement_text="Provide insurance", compliance_status=ComplianceStatus.NOT_ADDRESSED),
+            TenderRequirement(
+                requirement_text="Provide signed annex",
+                compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED,
+            ),
+            TenderRequirement(
+                requirement_text="Provide insurance",
+                compliance_status=ComplianceStatus.NOT_ADDRESSED,
+            ),
         ]
         sections = [
-            ProposalSection(id=11, proposal_id=7, title="Compliance", status=SectionStatus.IN_REVIEW),
+            ProposalSection(
+                id=11, proposal_id=7, title="Compliance", status=SectionStatus.IN_REVIEW
+            ),
         ]
 
         gate_status = determine_auto_gate_target_status(
@@ -166,10 +181,15 @@ class AutoComplianceGateDecisionTests(unittest.TestCase):
 
     def test_in_progress_only_does_not_open_gate_when_sections_exist(self) -> None:
         requirements = [
-            TenderRequirement(requirement_text="Provide signed annex", compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED),
+            TenderRequirement(
+                requirement_text="Provide signed annex",
+                compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED,
+            ),
         ]
         sections = [
-            ProposalSection(id=11, proposal_id=7, title="Compliance", status=SectionStatus.IN_PROGRESS),
+            ProposalSection(
+                id=11, proposal_id=7, title="Compliance", status=SectionStatus.IN_PROGRESS
+            ),
         ]
 
         gate_status = determine_auto_gate_target_status(
@@ -183,11 +203,19 @@ class AutoComplianceGateDecisionTests(unittest.TestCase):
 
     def test_all_fully_addressed_passes_gate(self) -> None:
         requirements = [
-            TenderRequirement(requirement_text="Provide signed annex", compliance_status=ComplianceStatus.FULLY_ADDRESSED),
-            TenderRequirement(requirement_text="Provide insurance", compliance_status=ComplianceStatus.FULLY_ADDRESSED),
+            TenderRequirement(
+                requirement_text="Provide signed annex",
+                compliance_status=ComplianceStatus.FULLY_ADDRESSED,
+            ),
+            TenderRequirement(
+                requirement_text="Provide insurance",
+                compliance_status=ComplianceStatus.FULLY_ADDRESSED,
+            ),
         ]
         sections = [
-            ProposalSection(id=11, proposal_id=7, title="Compliance", status=SectionStatus.APPROVED),
+            ProposalSection(
+                id=11, proposal_id=7, title="Compliance", status=SectionStatus.APPROVED
+            ),
         ]
 
         gate_status = determine_auto_gate_target_status(
@@ -201,10 +229,15 @@ class AutoComplianceGateDecisionTests(unittest.TestCase):
 
     def test_overdue_unresolved_requirements_fail_gate(self) -> None:
         requirements = [
-            TenderRequirement(requirement_text="Provide signed annex", compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED),
+            TenderRequirement(
+                requirement_text="Provide signed annex",
+                compliance_status=ComplianceStatus.PARTIALLY_ADDRESSED,
+            ),
         ]
         sections = [
-            ProposalSection(id=11, proposal_id=7, title="Compliance", status=SectionStatus.APPROVED),
+            ProposalSection(
+                id=11, proposal_id=7, title="Compliance", status=SectionStatus.APPROVED
+            ),
         ]
 
         gate_status = determine_auto_gate_target_status(
@@ -219,4 +252,3 @@ class AutoComplianceGateDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

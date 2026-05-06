@@ -260,7 +260,10 @@ class AnonymizerAdminApiTests(unittest.TestCase):
             "FakeRagEngine",
             (),
             {
-                "get_anonymizer_runtime_stats": lambda self: {"fallback_events": 2, "circuit_open": False},
+                "get_anonymizer_runtime_stats": lambda self: {
+                    "fallback_events": 2,
+                    "circuit_open": False,
+                },
                 "get_last_privacy_debug_trace": lambda self: {
                     "timestamp": "2026-03-27T10:30:00+00:00",
                     "mode": "qa",
@@ -351,7 +354,9 @@ class AnonymizerAdminApiTests(unittest.TestCase):
         with patch.object(
             self.admin_module,
             "_proxy_anonymizer",
-            AsyncMock(return_value={"text": "Mario Rossi", "mapping_size": 1, "session_id": "sess-1"}),
+            AsyncMock(
+                return_value={"text": "Mario Rossi", "mapping_size": 1, "session_id": "sess-1"}
+            ),
         ) as proxy_mock:
             response = self.client.post(
                 "/anonymizer/deanonymize",

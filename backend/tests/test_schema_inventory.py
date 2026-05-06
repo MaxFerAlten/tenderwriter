@@ -13,8 +13,8 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import sqlalchemy as sa
-from test_module_loaders import load_models_test_module
 
+from test_module_loaders import load_models_test_module
 
 _TEST_ENV = {
     "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
@@ -55,9 +55,12 @@ def _load_schema_inventory_module():
         patch.dict(sys.modules, {"app.config": fake_config}),
     ):
         for module_name in list(sys.modules):
-            if module_name == "app.db.database" or module_name == "app.db.schema_inventory":
-                sys.modules.pop(module_name, None)
-            elif module_name == "app.models" or module_name.startswith("app.models."):
+            if (
+                module_name == "app.db.database"
+                or module_name == "app.db.schema_inventory"
+                or module_name == "app.models"
+                or module_name.startswith("app.models.")
+            ):
                 sys.modules.pop(module_name, None)
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -165,6 +168,9 @@ def test_schema_inventory_tracks_requirement_candidate_staging_tables() -> None:
 
     assert new_tables == {
         "consolidated_requirements",
+        "rehearsal_persona_results",
+        "rehearsal_recommendations",
+        "rehearsal_runs",
         "requirement_candidates",
         "requirement_extraction_runs",
         "requirement_relation_reviews",

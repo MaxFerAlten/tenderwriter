@@ -6,11 +6,11 @@ Wraps the existing jose-based JWT validation as an AuthProvider.
 
 from __future__ import annotations
 
+import structlog
 from fastapi import HTTPException, status
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
 from app.auth.base import AuthenticatedUser
 from app.config import settings
@@ -37,20 +37,18 @@ class LegacyJWTProvider:
 
         # ── Decode JWT ──
         try:
-            payload = jwt.decode(
-                token, settings.app_secret_key, algorithms=[ALGORITHM]
-            )
+            payload = jwt.decode(token, settings.app_secret_key, algorithms=[ALGORITHM])
             user_id: str | None = payload.get("sub")
             if user_id is None:
                 raise credentials_exception
-        except JWTError:
-            raise credentials_exception
+        except JWTError as exc:
+            raise credentials_exception from exc
 
         # ── Fetch user from DB ──
         try:
             uid = int(user_id)
-        except (ValueError, TypeError):
-            raise credentials_exception
+        except (ValueError, TypeError) as exc:
+            raise credentials_exception from exc
         result = await db.execute(select(User).where(User.id == uid))
         user = result.scalar_one_or_none()
         if user is None:
@@ -69,6 +67,4 @@ class LegacyJWTProvider:
                 detail="Account not verified",
             )
 
-        return AuthenticatedUser.model_validate(user).model_copy(
-            update={"auth_source": "legacy"}
-        )
+        return AuthenticatedUser.model_validate(user).model_copy(update={"auth_source": "legacy"})

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +47,7 @@ class ComplianceRequirementCoverage:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def derive_requirement_compliance_status(section_status: SectionStatus | None) -> ComplianceStatus:
@@ -97,16 +98,16 @@ def _legacy_requirement_for_consolidated(
             return legacy_requirement
 
     normalized_text = normalize_requirement_text(
-        consolidated_requirement.normalized_text
-        or consolidated_requirement.canonical_text
-        or ""
+        consolidated_requirement.normalized_text or consolidated_requirement.canonical_text or ""
     )
     if normalized_text:
         return legacy_by_text.get(normalized_text)
     return None
 
 
-def _legacy_requirement_to_coverage(requirement: TenderRequirement) -> ComplianceRequirementCoverage:
+def _legacy_requirement_to_coverage(
+    requirement: TenderRequirement,
+) -> ComplianceRequirementCoverage:
     mapped_section = requirement.proposal_section
     return ComplianceRequirementCoverage(
         id=int(requirement.id or 0),
@@ -130,8 +131,12 @@ def _consolidated_requirement_to_coverage(
     return ComplianceRequirementCoverage(
         id=int(requirement.id or 0),
         requirement_text=str(requirement.canonical_text or ""),
-        category=requirement.category or (legacy_requirement.category if legacy_requirement else None),
-        priority=str(requirement.priority or (legacy_requirement.priority if legacy_requirement else "medium")),
+        category=requirement.category
+        or (legacy_requirement.category if legacy_requirement else None),
+        priority=str(
+            requirement.priority
+            or (legacy_requirement.priority if legacy_requirement else "medium")
+        ),
         compliance_status=_coerce_compliance_status(
             legacy_requirement.compliance_status
             if is_approved and legacy_requirement is not None
@@ -212,16 +217,17 @@ def determine_auto_gate_target_status(
         for status in requirement_statuses
     )
     review_or_completion_started = any(
-        status in {SectionStatus.IN_REVIEW, SectionStatus.APPROVED}
-        for status in section_statuses
+        status in {SectionStatus.IN_REVIEW, SectionStatus.APPROVED} for status in section_statuses
     )
-    all_fully_addressed = all(status == ComplianceStatus.FULLY_ADDRESSED for status in requirement_statuses)
+    all_fully_addressed = all(
+        status == ComplianceStatus.FULLY_ADDRESSED for status in requirement_statuses
+    )
 
     if all_fully_addressed:
         return ComplianceGateStatus.PASSED
 
     if tender_due_at is not None:
-        due_at = tender_due_at if tender_due_at.tzinfo else tender_due_at.replace(tzinfo=timezone.utc)
+        due_at = tender_due_at if tender_due_at.tzinfo else tender_due_at.replace(tzinfo=UTC)
         if due_at <= now and (review_or_completion_started or any_progress):
             return ComplianceGateStatus.FAILED
 
@@ -342,7 +348,9 @@ async def sync_requirement_compliance_and_gate(
         await db.flush()
         events.append(
             (
-                "compliance_gate_passed" if gate_target == ComplianceGateStatus.PASSED else "compliance_gate_failed",
+                "compliance_gate_passed"
+                if gate_target == ComplianceGateStatus.PASSED
+                else "compliance_gate_failed",
                 build_compliance_gate_decision_event_payload(gate=gate),
             )
         )
@@ -353,4 +361,3 @@ async def sync_requirement_compliance_and_gate(
         gate.evaluated_at = now
     await db.flush()
     return events
-

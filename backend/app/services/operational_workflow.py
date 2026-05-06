@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.intelligence.lifecycle_projector import project_workflow_events
 from app.models import (
     ContributionRequest,
     ContributionRequestStatus,
     ContributionUnit,
     ContributionUnitStatus,
     ProposalSection,
-    ReworkAction,
-    ReworkStatus,
     ReviewCycle,
     ReviewCycleStatus,
+    ReworkAction,
+    ReworkStatus,
     SectionStatus,
 )
 from app.services.kpi_reason_engine import (
@@ -43,7 +44,7 @@ class SectionTransitionPlan:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def derive_contribution_status(
@@ -59,7 +60,11 @@ def derive_contribution_status(
     if section_status == SectionStatus.IN_REVIEW:
         return ContributionUnitStatus.IN_REVIEW
     if section_status == SectionStatus.IN_PROGRESS:
-        return ContributionUnitStatus.RECEIVED if assigned_to is not None else ContributionUnitStatus.REQUESTED
+        return (
+            ContributionUnitStatus.RECEIVED
+            if assigned_to is not None
+            else ContributionUnitStatus.REQUESTED
+        )
     if assigned_to is not None:
         return ContributionUnitStatus.REQUESTED
     return ContributionUnitStatus.OPEN
@@ -77,7 +82,11 @@ def build_section_transition_plan(
 
     if assignment_changed:
         plan.cancel_open_requests = True
-    if assignment_changed and new_assigned_to is not None and new_status in {SectionStatus.TODO, SectionStatus.IN_PROGRESS}:
+    if (
+        assignment_changed
+        and new_assigned_to is not None
+        and new_status in {SectionStatus.TODO, SectionStatus.IN_PROGRESS}
+    ):
         plan.ensure_request = True
 
     if new_status == SectionStatus.IN_REVIEW and previous_status != SectionStatus.IN_REVIEW:
@@ -145,7 +154,9 @@ async def ensure_contribution_for_section(
     return contribution
 
 
-async def _load_open_requests(db: AsyncSession, *, contribution_id: int) -> list[ContributionRequest]:
+async def _load_open_requests(
+    db: AsyncSession, *, contribution_id: int
+) -> list[ContributionRequest]:
     result = await db.execute(
         select(ContributionRequest)
         .where(
@@ -223,7 +234,9 @@ async def _ensure_request_for_assignment(
     events = [
         (
             "contribution_request_created",
-            build_contribution_request_created_event_payload(request=request_row, contribution=contribution),
+            build_contribution_request_created_event_payload(
+                request=request_row, contribution=contribution
+            ),
         )
     ]
     events.append(
@@ -242,7 +255,9 @@ async def _ensure_request_for_assignment(
         events.append(
             (
                 "contribution_due_date_set",
-                build_contribution_due_date_set_event_payload(request=request_row, contribution=contribution),
+                build_contribution_due_date_set_event_payload(
+                    request=request_row, contribution=contribution
+                ),
             )
         )
     return events
@@ -256,14 +271,18 @@ async def _mark_latest_request_received(
 ) -> list[tuple[str, dict]]:
     for request_row in await _load_open_requests(db, contribution_id=contribution.id):
         request_row.response_received_at = request_row.response_received_at or occurred_at
-        request_row.response_summary = request_row.response_summary or "Auto-received from proposal section workflow."
+        request_row.response_summary = (
+            request_row.response_summary or "Auto-received from proposal section workflow."
+        )
         request_row.status = ContributionRequestStatus.RECEIVED
         contribution.status = ContributionUnitStatus.RECEIVED
         await db.flush()
         return [
             (
                 "contribution_received",
-                build_contribution_received_event_payload(request=request_row, contribution=contribution),
+                build_contribution_received_event_payload(
+                    request=request_row, contribution=contribution
+                ),
             )
         ]
     return []
@@ -327,7 +346,9 @@ async def _complete_review(
     else:
         review.notes = review.notes or "Changes requested from proposal workflow."
     await db.flush()
-    review_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
+    review_payload = build_contribution_review_completed_event_payload(
+        review=review, contribution=contribution
+    )
     events.append(
         (
             "review_approved" if outcome == "approved" else "review_changes_requested",
@@ -346,7 +367,9 @@ async def _resolve_open_reworks(
     events: list[tuple[str, dict]] = []
     for rework in await _load_open_reworks(db, contribution_id=contribution.id):
         rework.resolved_at = rework.resolved_at or occurred_at
-        rework.resolution_notes = rework.resolution_notes or "Auto-resolved from proposal section workflow."
+        rework.resolution_notes = (
+            rework.resolution_notes or "Auto-resolved from proposal section workflow."
+        )
         rework.status = ReworkStatus.RESOLVED
         events.append(
             (
@@ -469,7 +492,9 @@ async def sync_section_operational_workflow(
             events.append(
                 (
                     "contribution_review_started",
-                    build_review_cycle_started_event_payload(review=review, contribution=contribution),
+                    build_review_cycle_started_event_payload(
+                        review=review, contribution=contribution
+                    ),
                 )
             )
 
@@ -500,7 +525,15 @@ async def sync_section_operational_workflow(
         has_open_rework=bool(await _load_open_reworks(db, contribution_id=contribution.id)),
     )
     await db.flush()
+
+    if events:
+        await project_workflow_events(
+            db=db,
+            rag_engine=None,
+            tender_id=tender_id,
+            contribution=contribution,
+            events=events,
+            actor_id=actor_id,
+        )
+
     return events
-
-
-

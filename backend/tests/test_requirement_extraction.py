@@ -46,7 +46,9 @@ class RequirementExtractionTests(unittest.TestCase):
         self.assertGreaterEqual(len(candidates), 2)
         self.assertTrue(any("iso 27001" in summary for summary in summaries))
         self.assertTrue(any("continuita' operativa" in summary for summary in summaries))
-        self.assertTrue(all(candidate["priority"] in {"high", "medium", "low"} for candidate in candidates))
+        self.assertTrue(
+            all(candidate["priority"] in {"high", "medium", "low"} for candidate in candidates)
+        )
 
     def test_extract_requirement_candidates_ignores_academic_prose_with_modal_verbs(self) -> None:
         pipeline = IngestionPipeline(rag_engine=None)

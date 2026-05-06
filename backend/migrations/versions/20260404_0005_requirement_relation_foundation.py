@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
-
 
 revision = "20260404_0005"
 down_revision = "20260404_0004"
@@ -17,7 +16,12 @@ def upgrade() -> None:
     op.create_table(
         "requirement_relations",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("tender_id", sa.Integer(), sa.ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tender_id",
+            sa.Integer(),
+            sa.ForeignKey("tenders.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column(
             "source_requirement_id",
             sa.Integer(),
@@ -33,7 +37,9 @@ def upgrade() -> None:
         sa.Column("relation_type", sa.String(length=50), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=True),
         sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")
+        ),
         sa.CheckConstraint(
             "source_requirement_id <> target_requirement_id",
             name="ck_requirement_relations_not_self",

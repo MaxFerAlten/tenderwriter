@@ -27,6 +27,7 @@ _REQUIRED_TABLES = {
     'kpi_snapshots',
     'kpi_findings',
     'kpi_phase_transitions',
+    'kpi_tender_rehearsal_summaries',
 }
 _DATA_TABLES = tuple(sorted(_REQUIRED_TABLES - {'alembic_version'}))
 
@@ -217,6 +218,7 @@ class SqliteStore:
             connection.execute('DELETE FROM kpi_document_contexts')
             connection.execute('DELETE FROM kpi_domain_events')
             connection.execute('DELETE FROM kpi_model_versions')
+            connection.execute('DELETE FROM kpi_tender_rehearsal_summaries')
             connection.execute('DELETE FROM kpi_tenders')
             connection.commit()
 
@@ -610,6 +612,49 @@ class SqliteStore:
             'analytical_phase': row['analytical_phase'],
             'last_synced_at': _to_iso_value(row['last_synced_at']),
         }
+
+    def set_rehearsal_summary(
+        self,
+        external_tender_id: str,
+        summary: dict[str, Any],
+    ) -> None:
+        payload_json = _to_json(summary)
+        now = _utcnow_iso()
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """
+                INSERT INTO kpi_tender_rehearsal_summaries (
+                    external_tender_id,
+                    summary_json,
+                    updated_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(external_tender_id) DO UPDATE SET
+                    summary_json = excluded.summary_json,
+                    updated_at = excluded.updated_at
+                """,
+                (external_tender_id, payload_json, now),
+            )
+            connection.commit()
+
+    def get_rehearsal_summary(self, external_tender_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(
+                """
+                SELECT summary_json, updated_at
+                FROM kpi_tender_rehearsal_summaries
+                WHERE external_tender_id = ?
+                """,
+                (external_tender_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        summary = _from_json_value(row['summary_json'], default={})
+        if not isinstance(summary, dict):
+            return None
+        summary.setdefault('updated_at', _to_iso_value(row['updated_at']))
+        return summary
 
     def get_latest_snapshot_record(self, external_tender_id: str) -> dict[str, Any] | None:
         with self._lock:

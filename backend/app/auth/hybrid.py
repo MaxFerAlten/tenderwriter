@@ -10,9 +10,9 @@ Used when ``AUTH_PROVIDER=hybrid`` so users can authenticate with either:
 from __future__ import annotations
 
 import jwt as pyjwt
+import structlog
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
 from app.auth.base import AuthenticatedUser
 from app.auth.keycloak import KeycloakOIDCProvider

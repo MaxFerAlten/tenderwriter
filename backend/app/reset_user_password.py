@@ -12,7 +12,6 @@ import argparse
 import asyncio
 import secrets
 import string
-import sys
 
 from sqlalchemy import select
 

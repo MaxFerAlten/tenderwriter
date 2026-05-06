@@ -92,7 +92,9 @@ if "app.services.tender_document_requirement_extractor" not in sys.modules:
         del kwargs
         return _FakeExtractionResult(fallback_candidates)
 
-    fake_extractor_module.extract_tender_participation_requirements = _extract_tender_participation_requirements
+    fake_extractor_module.extract_tender_participation_requirements = (
+        _extract_tender_participation_requirements
+    )
     sys.modules["app.services.tender_document_requirement_extractor"] = fake_extractor_module
 
 if "fastapi.concurrency" not in sys.modules:
@@ -132,8 +134,16 @@ class IngestionChunkScopeTests(unittest.IsolatedAsyncioTestCase):
         pipeline = IngestionPipeline(rag_engine)
         elements = [
             {"type": "Title", "text": "Scope", "metadata": {"page_number": 1}},
-            {"type": "Text", "text": "The supplier must provide a delivery schedule.", "metadata": {"page_number": 1}},
-            {"type": "Text", "text": "The supplier must maintain ISO 27001 certification.", "metadata": {"page_number": 2}},
+            {
+                "type": "Text",
+                "text": "The supplier must provide a delivery schedule.",
+                "metadata": {"page_number": 1},
+            },
+            {
+                "type": "Text",
+                "text": "The supplier must maintain ISO 27001 certification.",
+                "metadata": {"page_number": 2},
+            },
         ]
 
         with patch.object(pipeline, "_parse_document", return_value=elements):
@@ -163,24 +173,33 @@ class IngestionChunkScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_meta.filename, "tender.pdf")
         self.assertEqual(first_meta.source_document_ref, "tenders/88/tender.pdf")
         self.assertEqual(second_meta.page_number, 2)
-        self.assertEqual([chunk.metadata.chunk_index for chunk in rag_engine.index_calls[0]], [0, 1])
+        self.assertEqual(
+            [chunk.metadata.chunk_index for chunk in rag_engine.index_calls[0]], [0, 1]
+        )
 
     async def test_ingest_file_emits_stage_progress_events(self) -> None:
         rag_engine = _CapturingRagEngine()
         pipeline = IngestionPipeline(rag_engine)
         elements = [
             {"type": "Title", "text": "Scope", "metadata": {"page_number": 1}},
-            {"type": "Text", "text": "The supplier must provide a delivery schedule.", "metadata": {"page_number": 1}},
+            {
+                "type": "Text",
+                "text": "The supplier must provide a delivery schedule.",
+                "metadata": {"page_number": 1},
+            },
         ]
         events: list[dict] = []
 
         async def capture_progress(event: dict) -> None:
             events.append(event)
 
-        with patch.object(settings, "requirement_extraction_llm_v2_enabled", False), patch.object(
-            pipeline,
-            "_parse_document",
-            return_value=elements,
+        with (
+            patch.object(settings, "requirement_extraction_llm_v2_enabled", False),
+            patch.object(
+                pipeline,
+                "_parse_document",
+                return_value=elements,
+            ),
         ):
             await pipeline.ingest_file(
                 file_path="/tmp/tender.pdf",
@@ -208,6 +227,130 @@ class IngestionChunkScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[3]["stats"]["extraction_method"], "heuristic_v1")
         self.assertEqual(events[5]["stats"]["chunks_created"], 1)
         self.assertEqual(events[7]["stats"]["points_indexed"], 1)
+
+    def test_build_chunk_inputs_marks_logical_procedure_boundaries(self) -> None:
+        rag_engine = _CapturingRagEngine()
+        pipeline = IngestionPipeline(rag_engine)
+        elements = [
+            {
+                "type": "Title",
+                "text": "Gara 040961/2024 - Sistema Cloud Toscano",
+                "metadata": {"page_number": 1},
+            },
+            {
+                "type": "Text",
+                "text": "Il fornitore deve garantire la gestione del CCTT.",
+                "metadata": {"page_number": 1},
+            },
+            {
+                "type": "Title",
+                "text": "Gara 012942/2025 - OSCAT DevSecOps",
+                "metadata": {"page_number": 11},
+            },
+            {
+                "type": "Text",
+                "text": "Il servizio deve includere pipeline GitLab e vulnerability assessment.",
+                "metadata": {"page_number": 11},
+            },
+        ]
+
+        chunk_inputs = pipeline._build_chunk_inputs(
+            elements,
+            file_path="/tmp/toscana.pdf",
+            document_id=25,
+            doc_type="tender",
+            metadata={"tender_id": 900},
+            fallback_text="",
+        )
+
+        self.assertEqual(len(chunk_inputs), 2)
+        first_meta = chunk_inputs[0][1]
+        second_meta = chunk_inputs[1][1]
+        self.assertEqual(
+            first_meta.extra["procedure_label"],
+            "Gara 040961/2024 - Sistema Cloud Toscano",
+        )
+        self.assertEqual(
+            second_meta.extra["procedure_label"],
+            "Gara 012942/2025 - OSCAT DevSecOps",
+        )
+        self.assertNotEqual(first_meta.extra["procedure_key"], second_meta.extra["procedure_key"])
+
+    def test_build_chunk_inputs_keeps_structured_tables_as_dedicated_chunks(self) -> None:
+        rag_engine = _CapturingRagEngine()
+        pipeline = IngestionPipeline(rag_engine)
+        elements = [
+            {"type": "Title", "text": "SLA e penali", "metadata": {"page_number": 4}},
+            {
+                "type": "Text",
+                "text": "Il servizio deve rispettare i livelli minimi.",
+                "metadata": {"page_number": 4},
+            },
+            {
+                "type": "Table",
+                "text": "Ritardo | Penale\n15 giorni | risoluzione",
+                "metadata": {
+                    "page_number": 4,
+                    "is_table": True,
+                    "text_as_html": "<table><tr><td>15 giorni</td></tr></table>",
+                },
+            },
+            {
+                "type": "Text",
+                "text": "La verifica finale chiude la fase.",
+                "metadata": {"page_number": 4},
+            },
+        ]
+
+        chunk_inputs = pipeline._build_chunk_inputs(
+            elements,
+            file_path="/tmp/capitolato.pdf",
+            document_id=26,
+            doc_type="tender",
+            metadata={"tender_id": 901},
+            fallback_text="",
+        )
+
+        self.assertEqual(len(chunk_inputs), 3)
+        table_text, table_meta = chunk_inputs[1]
+        self.assertIn("15 giorni", table_text)
+        self.assertTrue(table_meta.extra["is_table"])
+        self.assertEqual(
+            table_meta.extra["table_html"],
+            "<table><tr><td>15 giorni</td></tr></table>",
+        )
+
+    def test_build_chunk_inputs_attaches_numeric_mentions_and_parse_warnings(self) -> None:
+        rag_engine = _CapturingRagEngine()
+        pipeline = IngestionPipeline(rag_engine)
+        elements = [
+            {"type": "Title", "text": "Fasi e penali", "metadata": {"page_number": 8}},
+            {
+                "type": "Text",
+                "text": "La fase deve concludersi entro 180 giorni con penale Euro 100/giorno.",
+                "metadata": {"page_number": 8},
+            },
+            {
+                "type": "Text",
+                "text": "Un frammento OCR indica solo entro giorni.",
+                "metadata": {"page_number": 8},
+            },
+        ]
+
+        chunk_inputs = pipeline._build_chunk_inputs(
+            elements,
+            file_path="/tmp/capitolato.pdf",
+            document_id=27,
+            doc_type="tender",
+            metadata={"tender_id": 902},
+            fallback_text="",
+        )
+
+        self.assertEqual(len(chunk_inputs), 1)
+        extra = chunk_inputs[0][1].extra
+        self.assertIn("180 giorni", extra["numeric_mentions"])
+        self.assertIn("Euro 100", extra["numeric_mentions"])
+        self.assertIn("broken_numeric_fragment", extra["parse_warnings"])
 
 
 if __name__ == "__main__":

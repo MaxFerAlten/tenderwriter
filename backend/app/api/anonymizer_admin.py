@@ -308,8 +308,10 @@ async def list_anonymizer_audit(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin(current_user)
-    stmt = select(AnonymizerAuditLog).order_by(AnonymizerAuditLog.created_at.desc()).limit(
-        max(1, min(limit, 200))
+    stmt = (
+        select(AnonymizerAuditLog)
+        .order_by(AnonymizerAuditLog.created_at.desc())
+        .limit(max(1, min(limit, 200)))
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -11,9 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import UserResponse, get_current_user
+from app.config import settings
 from app.db.database import get_db
+from app.intelligence.rehearsal_summary import (
+    build_rehearsal_summary,
+    empty_rehearsal_summary,
+)
 from app.models import KpiAdminAuditLog, KpiEventDeliveryStatus, Tender
-from app.services.kpi_reason_engine import KpiClientResult, KpiReasonEngineClient, publish_tender_sync
+from app.services.kpi_reason_engine import (
+    KpiClientResult,
+    KpiReasonEngineClient,
+    publish_tender_sync,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -142,7 +151,13 @@ def _unwrap_action_result(result: KpiClientResult, *, action: str) -> dict[str, 
     )
 
 
-def _audit_admin_event(*, action: str, current_user: UserResponse, tender_id: int | None = None, result: KpiClientResult | None = None) -> None:
+def _audit_admin_event(
+    *,
+    action: str,
+    current_user: UserResponse,
+    tender_id: int | None = None,
+    result: KpiClientResult | None = None,
+) -> None:
     logger.info(
         "admin_kpi.audit",
         action=action,
@@ -193,7 +208,9 @@ async def _persist_sensitive_admin_audit(
         )
 
 
-def _service_status_component(result: KpiClientResult, *, action: str, fallback: dict[str, Any]) -> dict[str, Any]:
+def _service_status_component(
+    result: KpiClientResult, *, action: str, fallback: dict[str, Any]
+) -> dict[str, Any]:
     if result.delivered:
         payload = dict(result.response_json)
         payload.setdefault("degraded", False)
@@ -224,19 +241,25 @@ def _normalize_analysis_metadata(payload: dict[str, Any] | None) -> dict[str, An
     for key, default in normalized.items():
         if key in _ANALYSIS_METADATA_LIST_FIELDS:
             value = source.get(key)
-            normalized[key] = [str(item) for item in value] if isinstance(value, list) else list(default)
+            normalized[key] = (
+                [str(item) for item in value] if isinstance(value, list) else list(default)
+            )
             continue
         if key in _ANALYSIS_METADATA_INT_DICT_FIELDS:
             value = source.get(key)
             if isinstance(value, dict):
-                normalized[key] = {str(item_key): int(item_value) for item_key, item_value in value.items()}
+                normalized[key] = {
+                    str(item_key): int(item_value) for item_key, item_value in value.items()
+                }
             else:
                 normalized[key] = dict(default)
             continue
         if key in _ANALYSIS_METADATA_FLOAT_DICT_FIELDS:
             value = source.get(key)
             if isinstance(value, dict):
-                normalized[key] = {str(item_key): float(item_value) for item_key, item_value in value.items()}
+                normalized[key] = {
+                    str(item_key): float(item_value) for item_key, item_value in value.items()
+                }
             else:
                 normalized[key] = dict(default)
             continue
@@ -307,7 +330,8 @@ def _normalize_semantic_payload(payload: dict[str, Any] | None) -> dict[str, Any
         return None
     return {
         "enabled": bool(payload.get("enabled", True)),
-        "status": payload.get("status") or ("fallback" if payload.get("fallback_reason") else "official"),
+        "status": payload.get("status")
+        or ("fallback" if payload.get("fallback_reason") else "official"),
         "engine_kind": payload.get("engine_kind"),
         "execution_mode": payload.get("execution_mode"),
         "semantic_score": payload.get("semantic_score"),
@@ -361,7 +385,8 @@ def _normalize_kpi_score(payload: dict[str, Any]) -> dict[str, Any]:
         "evidence": evidence_items,
         "criticalities": list(payload.get("criticalities") or []),
         "recommendations": recommendation_items,
-        "recommendation": payload.get("recommendation") or (recommendation_items[0] if recommendation_items else None),
+        "recommendation": payload.get("recommendation")
+        or (recommendation_items[0] if recommendation_items else None),
         "formula_version": payload.get("formula_version"),
         "model_version": payload.get("model_version"),
         "prompt_version": payload.get("prompt_version"),
@@ -372,7 +397,9 @@ def _normalize_kpi_score(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
-    normalized["kpis"] = [_normalize_kpi_score(item) for item in payload.get("kpis") or [] if isinstance(item, dict)]
+    normalized["kpis"] = [
+        _normalize_kpi_score(item) for item in payload.get("kpis") or [] if isinstance(item, dict)
+    ]
     normalized["analysis_metadata"] = _normalize_analysis_metadata(payload.get("analysis_metadata"))
     normalized.setdefault("notes", [])
     return normalized
@@ -401,7 +428,9 @@ def _normalize_transitions_payload(payload: dict[str, Any]) -> dict[str, Any]:
         for item in payload.get("items") or []
         if isinstance(item, dict)
     ]
-    normalized["requirement_items"] = [item for item in payload.get("requirement_items") or [] if isinstance(item, dict)]
+    normalized["requirement_items"] = [
+        item for item in payload.get("requirement_items") or [] if isinstance(item, dict)
+    ]
     normalized["history_items"] = [
         {
             "snapshot_id": item.get("snapshot_id"),
@@ -606,13 +635,15 @@ def _analysis_job_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "created_at": None,
         "started_at": None,
         "completed_at": None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "latest_snapshot_generated_at": None,
         "error_message": detail,
     }
 
 
-def _query_or_fallback(result: KpiClientResult, *, action: str, fallback: dict[str, Any]) -> dict[str, Any]:
+def _query_or_fallback(
+    result: KpiClientResult, *, action: str, fallback: dict[str, Any]
+) -> dict[str, Any]:
     if result.delivered:
         payload = dict(result.response_json)
         payload.setdefault("degraded", False)
@@ -689,7 +720,9 @@ async def get_kpi_portfolio_bottlenecks(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_portfolio_bottlenecks()
-    _audit_admin_event(action="portfolio_bottlenecks_query", current_user=current_user, result=result)
+    _audit_admin_event(
+        action="portfolio_bottlenecks_query", current_user=current_user, result=result
+    )
     return _query_or_fallback(
         result,
         action="portfolio bottlenecks query",
@@ -704,12 +737,16 @@ async def get_kpi_portfolio_intelligence(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_portfolio_intelligence()
-    _audit_admin_event(action="portfolio_intelligence_query", current_user=current_user, result=result)
+    _audit_admin_event(
+        action="portfolio_intelligence_query", current_user=current_user, result=result
+    )
     return _normalize_portfolio_intelligence_payload(
         _query_or_fallback(
             result,
             action="portfolio intelligence query",
-            fallback=_portfolio_intelligence_fallback(_error_detail(result, "portfolio intelligence query")),
+            fallback=_portfolio_intelligence_fallback(
+                _error_detail(result, "portfolio intelligence query")
+            ),
         )
     )
 
@@ -723,8 +760,16 @@ async def get_kpi_service_status(
     health_result = await client.get_service_health()
     readiness_result = await client.get_service_readiness()
     manifest_result = await client.get_version_manifest()
-    primary_result = health_result if health_result.delivered else readiness_result if readiness_result.delivered else manifest_result
-    _audit_admin_event(action="service_status_query", current_user=current_user, result=primary_result)
+    primary_result = (
+        health_result
+        if health_result.delivered
+        else readiness_result
+        if readiness_result.delivered
+        else manifest_result
+    )
+    _audit_admin_event(
+        action="service_status_query", current_user=current_user, result=primary_result
+    )
 
     health_payload = _service_status_component(
         health_result,
@@ -758,11 +803,13 @@ async def get_kpi_service_status(
             "entries": [],
         },
     )
-    degraded = not (health_result.delivered and readiness_result.delivered and manifest_result.delivered)
+    degraded = not (
+        health_result.delivered and readiness_result.delivered and manifest_result.delivered
+    )
     return {
         "status": "degraded" if degraded else "ready",
         "degraded": degraded,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "health": health_payload,
         "readiness": readiness_payload,
         "version_manifest": manifest_payload,
@@ -809,7 +856,12 @@ async def resync_kpi_portfolio(
                 error_message=str(exc),
             )
 
-        _audit_admin_event(action="portfolio_tender_resync", current_user=current_user, tender_id=tender_id, result=sync_result)
+        _audit_admin_event(
+            action="portfolio_tender_resync",
+            current_user=current_user,
+            tender_id=tender_id,
+            result=sync_result,
+        )
         items.append({"tender_id": tender_id, **_sync_result_metadata(sync_result)})
         if sync_result.delivered:
             synced_tenders += 1
@@ -818,13 +870,15 @@ async def resync_kpi_portfolio(
 
     response_payload = {
         "status": "completed",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "total_tenders": len(tender_ids),
         "synced_tenders": synced_tenders,
         "failed_tenders": failed_tenders,
         "items": items,
         "notes": [
-            "Portfolio resync completed successfully." if failed_tenders == 0 else "Portfolio resync completed with partial failures.",
+            "Portfolio resync completed successfully."
+            if failed_tenders == 0
+            else "Portfolio resync completed with partial failures.",
         ],
     }
     await _persist_sensitive_admin_audit(
@@ -835,7 +889,9 @@ async def resync_kpi_portfolio(
             delivered=(failed_tenders == 0),
             status_code=200,
             response_json={},
-            error_message=(None if failed_tenders == 0 else "Portfolio resync completed with partial failures."),
+            error_message=(
+                None if failed_tenders == 0 else "Portfolio resync completed with partial failures."
+            ),
         ),
         payload=response_payload,
     )
@@ -850,7 +906,12 @@ async def get_kpi_tender_snapshot(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_snapshot(str(tender_id))
-    _audit_admin_event(action="tender_snapshot_query", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="tender_snapshot_query",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     return _normalize_snapshot_payload(
         _query_or_fallback(
             result,
@@ -868,12 +929,19 @@ async def get_kpi_tender_diagnostics(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_diagnostics(str(tender_id))
-    _audit_admin_event(action="tender_diagnostics_query", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="tender_diagnostics_query",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     return _normalize_diagnostics_payload(
         _query_or_fallback(
             result,
             action="tender diagnostics query",
-            fallback=_diagnostics_fallback(tender_id, _error_detail(result, "tender diagnostics query")),
+            fallback=_diagnostics_fallback(
+                tender_id, _error_detail(result, "tender diagnostics query")
+            ),
         )
     )
 
@@ -886,12 +954,19 @@ async def get_kpi_tender_transitions(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_transitions(str(tender_id))
-    _audit_admin_event(action="tender_transitions_query", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="tender_transitions_query",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     return _normalize_transitions_payload(
         _query_or_fallback(
             result,
             action="tender transitions query",
-            fallback=_transitions_fallback(tender_id, _error_detail(result, "tender transitions query")),
+            fallback=_transitions_fallback(
+                tender_id, _error_detail(result, "tender transitions query")
+            ),
         )
     )
 
@@ -900,12 +975,18 @@ async def get_kpi_tender_transitions(
 async def get_kpi_tender_forecast(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_tender_forecast(str(tender_id))
-    _audit_admin_event(action="tender_forecast_query", current_user=current_user, tender_id=tender_id, result=result)
-    return _normalize_forecast_payload(
+    _audit_admin_event(
+        action="tender_forecast_query",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
+    normalized = _normalize_forecast_payload(
         _query_or_fallback(
             result,
             action="tender forecast query",
@@ -913,8 +994,30 @@ async def get_kpi_tender_forecast(
         )
     )
 
+    if settings.rehearsal_summary_enabled:
+        engine_summary = normalized.get("rehearsal_summary")
+        summary: dict[str, Any] | None = (
+            engine_summary if isinstance(engine_summary, dict) and engine_summary else None
+        )
+        if summary is None:
+            try:
+                summary = await build_rehearsal_summary(db, tender_id=tender_id)
+            except Exception:
+                logger.exception("rehearsal_summary_enrichment_failed", tender_id=tender_id)
+                summary = None
 
-@router.post("/tenders/{tender_id}/recompute", response_model=dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
+        if summary is None:
+            summary = empty_rehearsal_summary()
+            summary["tender_id"] = tender_id
+        normalized["rehearsal_summary"] = summary
+    return normalized
+
+
+@router.post(
+    "/tenders/{tender_id}/recompute",
+    response_model=dict[str, Any],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def recompute_kpi_tender(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
@@ -928,7 +1031,12 @@ async def recompute_kpi_tender(
         db=db,
         client=client,
     )
-    _audit_admin_event(action="tender_resync_before_recompute", current_user=current_user, tender_id=tender_id, result=sync_result)
+    _audit_admin_event(
+        action="tender_resync_before_recompute",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=sync_result,
+    )
     if not sync_result.delivered:
         await _persist_sensitive_admin_audit(
             db=db,
@@ -957,7 +1065,12 @@ async def recompute_kpi_tender(
             },
         },
     )
-    _audit_admin_event(action="tender_recompute_request", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="tender_recompute_request",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     payload = _unwrap_action_result(result, action="tender recompute request")
     payload.setdefault("tender_sync", _sync_result_metadata(sync_result))
     await _persist_sensitive_admin_audit(
@@ -971,7 +1084,11 @@ async def recompute_kpi_tender(
     return payload
 
 
-@router.post("/tenders/{tender_id}/history/backfill", response_model=dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/tenders/{tender_id}/history/backfill",
+    response_model=dict[str, Any],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def backfill_kpi_tender_history(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
@@ -985,7 +1102,12 @@ async def backfill_kpi_tender_history(
         db=db,
         client=client,
     )
-    _audit_admin_event(action="tender_resync_before_history_backfill", current_user=current_user, tender_id=tender_id, result=sync_result)
+    _audit_admin_event(
+        action="tender_resync_before_history_backfill",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=sync_result,
+    )
     if not sync_result.delivered:
         await _persist_sensitive_admin_audit(
             db=db,
@@ -1014,7 +1136,12 @@ async def backfill_kpi_tender_history(
             },
         },
     )
-    _audit_admin_event(action="tender_history_backfill_request", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="tender_history_backfill_request",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     payload = _unwrap_action_result(result, action="tender history backfill request")
     payload.setdefault("tender_sync", _sync_result_metadata(sync_result))
     await _persist_sensitive_admin_audit(
@@ -1036,9 +1163,16 @@ async def get_kpi_latest_analysis_job(
     _require_admin(current_user)
     client = KpiReasonEngineClient()
     result = await client.get_latest_analysis_job(str(tender_id))
-    _audit_admin_event(action="latest_analysis_job_query", current_user=current_user, tender_id=tender_id, result=result)
+    _audit_admin_event(
+        action="latest_analysis_job_query",
+        current_user=current_user,
+        tender_id=tender_id,
+        result=result,
+    )
     return _query_or_fallback(
         result,
         action="latest analysis job query",
-        fallback=_analysis_job_fallback(tender_id, _error_detail(result, "latest analysis job query")),
+        fallback=_analysis_job_fallback(
+            tender_id, _error_detail(result, "latest analysis job query")
+        ),
     )

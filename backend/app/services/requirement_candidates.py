@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,7 +73,11 @@ async def stage_extracted_requirement_candidates(
             continue
 
         seen_normalized.add(normalized)
-        reference = candidate.get("reference") or candidate.get("section") or candidate.get("source_section")
+        reference = (
+            candidate.get("reference")
+            or candidate.get("section")
+            or candidate.get("source_section")
+        )
         category = candidate.get("category") or reference
         staged_candidate = RequirementCandidate(
             tender_id=tender_id,

@@ -23,6 +23,7 @@ logger = structlog.get_logger()
 @dataclass
 class DenseSearchResult:
     """A single result from dense vector search."""
+
     text: str
     score: float
     metadata: dict
@@ -131,7 +132,7 @@ class DenseRetriever:
                 payload={"text": text, **metadata},
             )
             for point_id, embedding, text, metadata in zip(
-                point_ids, embeddings, texts, metadatas
+                point_ids, embeddings, texts, metadatas, strict=False
             )
         ]
 

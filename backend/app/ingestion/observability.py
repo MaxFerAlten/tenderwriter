@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Mapping
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any
 
 INGESTION_STAGE_ORDER = (
     "download",
@@ -61,10 +62,10 @@ INGESTION_STAGE_CONFIG: dict[str, dict[str, float | str]] = {
 
 
 def _timestamp(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
+    current = value or datetime.now(UTC)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    return current.astimezone(timezone.utc).isoformat()
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone(UTC).isoformat()
 
 
 def _json_safe(value: Any) -> Any:
@@ -135,7 +136,11 @@ def update_ingestion_observability(
     stage_state = dict(stages.get(stage) or {})
 
     stage_state["label"] = str(config.get("label") or stage.replace("_", " ").title())
-    stage_state["order"] = INGESTION_STAGE_ORDER.index(stage) if stage in INGESTION_STAGE_ORDER else len(INGESTION_STAGE_ORDER)
+    stage_state["order"] = (
+        INGESTION_STAGE_ORDER.index(stage)
+        if stage in INGESTION_STAGE_ORDER
+        else len(INGESTION_STAGE_ORDER)
+    )
     stage_state["status"] = status
     stage_state["updated_at"] = timestamp
 

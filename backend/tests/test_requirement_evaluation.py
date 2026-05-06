@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from test_module_loaders import load_service_test_module
 
@@ -125,9 +125,11 @@ class RequirementEvaluationTests(unittest.TestCase):
                         }
                     ],
                 }
-            ]
+            ],
         }
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as handle:
             json.dump(payload, handle)
             path = handle.name
 
@@ -141,7 +143,9 @@ class RequirementEvaluationTests(unittest.TestCase):
         self.assertEqual(report.case_count, 1)
 
     def test_load_requirement_evaluation_payload_rejects_malformed_gold_set(self) -> None:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".json", delete=False
+        ) as handle:
             json.dump({"schema_version": "requirement_evaluation.gold.v1", "cases": []}, handle)
             path = handle.name
 
@@ -151,7 +155,9 @@ class RequirementEvaluationTests(unittest.TestCase):
         finally:
             os.remove(path)
 
-    def test_negative_case_without_expected_items_is_valid_and_penalizes_false_positives(self) -> None:
+    def test_negative_case_without_expected_items_is_valid_and_penalizes_false_positives(
+        self,
+    ) -> None:
         payload = {
             "schema_version": "requirement_evaluation.gold.v1",
             "cases": [
@@ -181,7 +187,9 @@ class RequirementEvaluationTests(unittest.TestCase):
         self.assertNotIn("requirement_recall", report.failures)
 
     def test_synthetic_smoke_fixture_passes_quality_gate(self) -> None:
-        fixture_path = Path(__file__).parent / "fixtures" / "requirement_evaluation" / "gold_smoke.json"
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "requirement_evaluation" / "gold_smoke.json"
+        )
 
         report = _SERVICE_MODULE.evaluate_requirement_pipeline_payload(
             _SERVICE_MODULE.load_requirement_evaluation_payload(fixture_path)
@@ -219,7 +227,9 @@ class RequirementEvaluationTests(unittest.TestCase):
         self.assertTrue(args.json)
 
     def test_evaluation_cli_writes_report_file(self) -> None:
-        fixture_path = Path(__file__).parent / "fixtures" / "requirement_evaluation" / "gold_smoke.json"
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "requirement_evaluation" / "gold_smoke.json"
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             report_path = Path(tmpdir) / "reports" / "requirement-evaluation.json"
 

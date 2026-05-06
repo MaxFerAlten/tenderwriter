@@ -4,10 +4,18 @@ TenderWriter — Authentication API
 Simple JWT-based authentication with user registration and login.
 """
 
-from datetime import datetime, timedelta, timezone
+import asyncio
 import hashlib
+import hmac
+import secrets
+import smtplib
+import string
+from datetime import UTC, datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -16,18 +24,10 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-import hmac
-import secrets
-import string
-import structlog
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import asyncio
 
 from app.config import settings
 from app.db.database import get_db
-from app.models import User, OTPToken
+from app.models import OTPToken, User
 from app.services.mattermost import provision_mm_user_for_tw_user
 
 # Auth mode detection
@@ -44,7 +44,7 @@ pwd_context = CryptContext(
     default="argon2",
     deprecated=["pbkdf2_sha256"],
     argon2__time_cost=3,
-    argon2__memory_cost=65536,       # 64 MB
+    argon2__memory_cost=65536,  # 64 MB
     argon2__parallelism=2,
     argon2__hash_len=32,
     argon2__salt_len=16,
@@ -69,6 +69,7 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
+
 
 class OTPVerify(BaseModel):
     email: EmailStr
@@ -105,13 +106,15 @@ class TokenResponse(BaseModel):
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.app_secret_key, algorithm=ALGORITHM)
 
 
 def get_frontend_base_url() -> str:
-    origins = [origin.strip() for origin in (settings.cors_origins or "").split(",") if origin.strip()]
+    origins = [
+        origin.strip() for origin in (settings.cors_origins or "").split(",") if origin.strip()
+    ]
     return origins[0].rstrip("/") if origins else "http://localhost:3000"
 
 
@@ -129,7 +132,7 @@ def create_password_reset_token(user: User) -> str:
         "email": user.email,
         "purpose": "password_reset",
         "pwd_sig": password_reset_signature(user.hashed_password),
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        "exp": datetime.now(UTC) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
     }
     return jwt.encode(payload, settings.app_secret_key, algorithm=ALGORITHM)
 
@@ -150,25 +153,31 @@ def hash_password(password: str) -> str:
     """Hash a password for storage (uses Argon2id as default)."""
     return pwd_context.hash(password)
 
+
 def generate_otp() -> str:
     return "".join(secrets.choice(string.digits) for _ in range(6))
 
+
 def mask_email(email: str) -> str:
     """Mask email for safe logging."""
-    if '@' in email:
-        local, domain = email.split('@', 1)
+    if "@" in email:
+        local, domain = email.split("@", 1)
         if len(local) <= 2:
-            masked_local = '*' * len(local)
+            masked_local = "*" * len(local)
         else:
-            masked_local = local[0] + '*' * (len(local) - 2) + local[-1]
+            masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
         return f"{masked_local}@{domain}"
-    return '***@***'
+    return "***@***"
 
 
 async def send_otp_email(email: str, otp: str):
     """Send an OTP email using SMTP if configured, otherwise fallback to logging."""
     if not settings.smtp_host:
-        logger.info("SMTP host not configured. Fallback to mock log.", action="send_otp", email=mask_email(email))
+        logger.info(
+            "SMTP host not configured. Fallback to mock log.",
+            action="send_otp",
+            email=mask_email(email),
+        )
         return
 
     subject = f"{otp} is your TenderWriter verification code"
@@ -204,7 +213,11 @@ async def send_otp_email(email: str, otp: str):
 async def send_password_reset_email(email: str, reset_url: str):
     """Send a password reset email."""
     if not settings.smtp_host:
-        logger.info("SMTP host not configured. Fallback to mock log.", action="send_password_reset", email=mask_email(email))
+        logger.info(
+            "SMTP host not configured. Fallback to mock log.",
+            action="send_password_reset",
+            email=mask_email(email),
+        )
         return
 
     subject = "TenderWriter password reset"
@@ -242,15 +255,16 @@ async def send_password_reset_email(email: str, reset_url: str):
         logger.error("Failed to send password reset email", error=str(e), email=mask_email(email))
         raise
 
+
 def _send_sync_email(to_email: str, subject: str, html_content: str):
     """Synchronous function to send email via smtplib."""
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from
     msg["To"] = to_email
-    
+
     msg.attach(MIMEText(html_content, "html"))
-    
+
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
         if settings.smtp_tls:
             server.starttls()
@@ -283,8 +297,8 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 
     # Generate OTP
     otp = generate_otp()
-    expires = datetime.now(timezone.utc) + timedelta(minutes=15)
-    
+    expires = datetime.now(UTC) + timedelta(minutes=15)
+
     otp_token = OTPToken(user_id=user.id, token=otp, expires_at=expires)
     db.add(otp_token)
 
@@ -299,20 +313,28 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 
     await db.commit()
 
-    return {"message": "Registration successful. Please check your email for the OTP to verify your account."}
+    return {
+        "message": "Registration successful. Please check your email for the OTP to verify your account."
+    }
+
 
 @router.post("/verify-otp", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def verify_otp(request: Request, data: OTPVerify, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def verify_otp(
+    request: Request,
+    data: OTPVerify,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     """Verify the 2FA OTP and return JWT token."""
     invalid_otp_error = HTTPException(status_code=400, detail="Invalid OTP")
 
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise invalid_otp_error
-        
+
     result = await db.execute(
         select(OTPToken)
         .where(OTPToken.user_id == user.id)
@@ -320,22 +342,24 @@ async def verify_otp(request: Request, data: OTPVerify, background_tasks: Backgr
         .limit(1)
     )
     otp_record = result.scalar_one_or_none()
-    
+
     if not otp_record:
         raise invalid_otp_error
-    
+
     # Check max attempts
     if otp_record.attempts >= otp_record.max_attempts:
         await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
         await db.commit()
-        raise HTTPException(status_code=400, detail="Too many failed attempts. Please request a new OTP.")
-    
+        raise HTTPException(
+            status_code=400, detail="Too many failed attempts. Please request a new OTP."
+        )
+
     # Check expiration
-    if otp_record.expires_at < datetime.now(timezone.utc):
+    if otp_record.expires_at < datetime.now(UTC):
         await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
         await db.commit()
         raise HTTPException(status_code=400, detail="Expired OTP")
-    
+
     # Timing-safe comparison
     if not hmac.compare_digest(otp_record.token.encode(), data.otp.encode()):
         # Increment failed attempts
@@ -343,7 +367,9 @@ async def verify_otp(request: Request, data: OTPVerify, background_tasks: Backgr
         if otp_record.attempts >= otp_record.max_attempts:
             await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
             await db.commit()
-            raise HTTPException(status_code=400, detail="Too many failed attempts. Please request a new OTP.")
+            raise HTTPException(
+                status_code=400, detail="Too many failed attempts. Please request a new OTP."
+            )
         await db.commit()
         remaining = otp_record.max_attempts - otp_record.attempts
         raise HTTPException(status_code=400, detail=f"Invalid OTP. {remaining} attempts remaining.")
@@ -351,9 +377,9 @@ async def verify_otp(request: Request, data: OTPVerify, background_tasks: Backgr
     user.is_verified = True
     await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
     await db.commit()
-    
+
     logger.info("User verified via OTP", user_id=user.id, email=mask_email(user.email))
-    
+
     token = create_access_token({"sub": str(user.id), "email": user.email})
 
     background_tasks.add_task(
@@ -371,7 +397,12 @@ async def verify_otp(request: Request, data: OTPVerify, background_tasks: Backgr
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("5/minute")
-async def login(request: Request, data: UserLogin, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    data: UserLogin,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     """Authenticate and get an access token."""
     if _AUTH_MODE == "keycloak":
         logger.warning(
@@ -390,11 +421,11 @@ async def login(request: Request, data: UserLogin, background_tasks: BackgroundT
     if not user:
         logger.warning(f"Login failed: User {mask_email(data.email)} not found")
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     if not user.is_active:
         logger.warning(f"Login failed: Account disabled for {mask_email(data.email)}")
         raise HTTPException(status_code=403, detail="Account disabled")
-        
+
     if not user.is_verified:
         logger.warning(f"Login failed: Account not verified for {mask_email(data.email)}")
         raise HTTPException(status_code=403, detail="Account not verified (2FA required)")
@@ -588,11 +619,13 @@ async def auth_config():
     """
     config = {"auth_mode": _AUTH_MODE}
     if _AUTH_MODE in {"keycloak", "hybrid"}:
-        config.update({
-            "keycloak_url": settings.keycloak_url,
-            "keycloak_realm": settings.keycloak_realm,
-            "keycloak_client_id": settings.keycloak_client_id,
-        })
+        config.update(
+            {
+                "keycloak_url": settings.keycloak_url,
+                "keycloak_realm": settings.keycloak_realm,
+                "keycloak_client_id": settings.keycloak_client_id,
+            }
+        )
     return config
 
 
@@ -640,7 +673,7 @@ async def password_hash_stats(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    from sqlalchemy import text, func as sqlfunc
+    from sqlalchemy import text
 
     query = text("""
         SELECT

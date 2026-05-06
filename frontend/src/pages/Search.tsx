@@ -17,7 +17,7 @@ import {
     RotateCcw,
     X,
 } from 'lucide-react';
-import { ragApi, type RAGResponse } from '../api/client';
+import { ragApi, tenderApi, type RAGResponse, type Tender } from '../api/client';
 import {
     createSearchResultRevealState,
     finalizeSearchResults,
@@ -34,12 +34,42 @@ import {
     DEFAULT_SEARCH_SETTINGS,
     getSearchPresetConfig,
     getSearchSettingsSummary,
+    GLOBAL_SEARCH_SCOPE,
     normalizeSearchSettings,
     toggleRetriever,
     type RetrieverKey,
     type SearchPreset,
+    type SearchScope,
     type SearchSettingsState,
 } from './searchSettings';
+
+const SCOPE_STORAGE_KEY = 'tw.search.scope';
+
+function loadStoredScope(): SearchScope {
+    if (typeof window === 'undefined') {
+        return GLOBAL_SEARCH_SCOPE;
+    }
+    try {
+        const raw = window.localStorage.getItem(SCOPE_STORAGE_KEY);
+        if (!raw) return GLOBAL_SEARCH_SCOPE;
+        const parsed = JSON.parse(raw) as Partial<SearchScope>;
+        if (parsed.route_key === 'tender' && typeof parsed.tender_id === 'number') {
+            return { route_key: 'tender', tender_id: parsed.tender_id };
+        }
+        return GLOBAL_SEARCH_SCOPE;
+    } catch {
+        return GLOBAL_SEARCH_SCOPE;
+    }
+}
+
+function persistScope(scope: SearchScope): void {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem(SCOPE_STORAGE_KEY, JSON.stringify(scope));
+    } catch {
+        // ignore quota errors
+    }
+}
 
 interface DisplayResult {
     text: string;
@@ -70,8 +100,18 @@ interface SearchEmptyStateInput {
     error: string | null;
 }
 
+const TRANSPORT_ERROR_PATTERNS: RegExp[] = [
+    /TypeError:\s*Failed to fetch/i,
+    /TypeError:\s*Load failed/i,
+    /NetworkError\b/i,
+    /ERR_CONNECTION_REFUSED/i,
+    /ERR_NETWORK/i,
+    /^Failed to fetch$/i,
+    /^Load failed$/i,
+];
+
 export function normalizeSearchErrorMessage(message: string): string {
-    if (message.includes('fetch') || message.includes('network') || message.includes('Failed')) {
+    if (TRANSPORT_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
         return 'Could not reach the backend. Make sure the API server is running on port 8000.';
     }
     return message;
@@ -160,6 +200,8 @@ export default function RAGSearch() {
     const [searchSettings, setSearchSettings] = useState<SearchSettingsState>(() => cloneSearchSettings(DEFAULT_SEARCH_SETTINGS));
     const [draftSearchSettings, setDraftSearchSettings] = useState<SearchSettingsState>(() => cloneSearchSettings(DEFAULT_SEARCH_SETTINGS));
     const [showSettingsModal, setShowSettingsModal] = useState(false);
+    const [scope, setScope] = useState<SearchScope>(() => loadStoredScope());
+    const [accessibleTenders, setAccessibleTenders] = useState<Tender[]>([]);
     const streamControllerRef = useRef<AbortController | null>(null);
     const rawAnswerRef = useRef('');
     const pendingTokensRef = useRef<string[]>([]);
@@ -171,6 +213,7 @@ export default function RAGSearch() {
 
     useEffect(() => {
         loadHistory();
+        loadAccessibleTenders();
         return () => {
             streamControllerRef.current?.abort();
             cancelAnswerFlush();
@@ -194,6 +237,30 @@ export default function RAGSearch() {
         } catch (e) {
             console.error('Failed to load history', e);
         }
+    };
+
+    const loadAccessibleTenders = async () => {
+        try {
+            const data = await tenderApi.list();
+            setAccessibleTenders(data.items);
+            setScope((current) => {
+                if (current.route_key !== 'tender') return current;
+                if (data.items.some((t) => t.id === current.tender_id)) return current;
+                const fallback = GLOBAL_SEARCH_SCOPE;
+                persistScope(fallback);
+                return fallback;
+            });
+        } catch (e) {
+            console.error('Failed to load tenders', e);
+        }
+    };
+
+    const handleScopeChange = (value: string) => {
+        const next: SearchScope = value === 'global'
+            ? GLOBAL_SEARCH_SCOPE
+            : { route_key: 'tender', tender_id: Number(value) };
+        setScope(next);
+        persistScope(next);
     };
 
     const loadHistoricalItem = (item: HistoryItem) => {
@@ -248,6 +315,7 @@ export default function RAGSearch() {
         setDraftSearchSettings((current) => ({
             ...getSearchPresetConfig(preset),
             saveHistory: current.saveHistory,
+            streamingEnabled: current.streamingEnabled,
         }));
     };
 
@@ -410,6 +478,7 @@ export default function RAGSearch() {
                 query,
                 'search',
                 effectiveSettings,
+                scope,
                 { save_history: false }
             );
             sourcePromise = ragApi.query({
@@ -432,23 +501,46 @@ export default function RAGSearch() {
             }).catch(() => undefined);
             void sourcePromise.catch(() => undefined);
 
-            const streamPromise = ragApi.streamQuery(
-                buildRagSearchPayload(query, 'qa', effectiveSettings),
-                {
-                signal: controller.signal,
-                onToken: (token) => {
-                    queueAnswerToken(token);
-                },
-            });
-
-            await streamPromise;
-            markAnswerStreamCompleted();
-            await waitForAnswerDrain();
-            const sourceData = await sourcePromise;
-            if (!controller.signal.aborted) {
-                applyResultRevealTransition(
-                    finalizeSearchResults(resultsRevealStateRef.current, sourceData)
+            if (effectiveSettings.streamingEnabled) {
+                const streamPromise = ragApi.streamQuery(
+                    buildRagSearchPayload(query, 'qa', effectiveSettings, scope),
+                    {
+                        signal: controller.signal,
+                        onToken: (token) => {
+                            queueAnswerToken(token);
+                        },
+                    }
                 );
+
+                await streamPromise;
+                markAnswerStreamCompleted();
+                await waitForAnswerDrain();
+                const sourceData = await sourcePromise;
+                if (!controller.signal.aborted) {
+                    applyResultRevealTransition(
+                        finalizeSearchResults(resultsRevealStateRef.current, sourceData)
+                    );
+                }
+            } else {
+                const response = await ragApi.query(
+                    buildRagSearchPayload(query, 'qa', effectiveSettings, scope),
+                    { signal: controller.signal }
+                );
+                const sourceData = response.sources.map((s) => ({
+                    text: s.text,
+                    score: normalizeMatchScore(s.score),
+                    sources: s.retriever_sources?.length ? s.retriever_sources : inferSources(s.metadata),
+                    source_scores: s.source_scores ?? {},
+                    metadata: s.metadata,
+                }));
+                rawAnswerRef.current = response.answer;
+                setAnswer(sanitizeSearchAnswer(response.answer));
+                if (!controller.signal.aborted) {
+                    stageRetrievedSources(sourceData);
+                    applyResultRevealTransition(
+                        finalizeSearchResults(resultsRevealStateRef.current, sourceData)
+                    );
+                }
             }
             await loadHistory();
         } catch (err) {
@@ -566,6 +658,33 @@ export default function RAGSearch() {
 
                 {/* Search Bar */}
                 <div style={{ marginBottom: '2rem' }}>
+                    <div style={{ marginBottom: '0.6rem' }}>
+                        <label
+                            htmlFor="search-scope"
+                            style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginRight: '0.5rem' }}
+                        >
+                            Scope
+                        </label>
+                        <select
+                            id="search-scope"
+                            data-testid="search-scope-select"
+                            value={scope.route_key === 'tender' && scope.tender_id != null ? String(scope.tender_id) : 'global'}
+                            onChange={(e) => handleScopeChange(e.target.value)}
+                            style={{
+                                padding: '0.4rem 0.7rem',
+                                borderRadius: 8,
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--bg-elevated, transparent)',
+                                color: 'var(--text-primary)',
+                                fontSize: '0.85rem',
+                            }}
+                        >
+                            <option value="global">Global library</option>
+                            {accessibleTenders.map((t) => (
+                                <option key={t.id} value={String(t.id)}>{t.title}</option>
+                            ))}
+                        </select>
+                    </div>
                     <div style={{ display: 'flex', gap: '0.9rem', alignItems: 'stretch', flexWrap: 'wrap' }}>
                         <div style={{ position: 'relative', flex: '1 1 560px', minWidth: '320px' }}>
                             <SearchIcon
@@ -664,7 +783,7 @@ export default function RAGSearch() {
                                     <div>
                                         <h3 style={{ margin: 0 }}>Customize LLM/RAG Search</h3>
                                         <p className="page-subtitle" style={{ margin: '0.45rem 0 0 0' }}>
-                                            Tune retrieval, ranking, and model behavior. Streaming stays active and these settings apply to the next search.
+                                            Tune retrieval, ranking, and model behavior for the next search.
                                         </p>
                                     </div>
                                     <button
@@ -908,19 +1027,23 @@ export default function RAGSearch() {
                                                 />
                                             </label>
 
-                                            <div style={{
-                                                border: '1px solid var(--border-color)',
-                                                borderRadius: '12px',
-                                                padding: '0.9rem',
-                                                background: 'color-mix(in srgb, var(--accent-blue) 8%, var(--bg-secondary))',
-                                            }}>
-                                                <div style={{ color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.35rem' }}>
-                                                    Streaming preserved
+                                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.9rem' }}>
+                                                <div>
+                                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Streaming</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                                                        Token-by-token answer output.
+                                                    </div>
                                                 </div>
-                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: 1.55 }}>
-                                                    Answers still arrive token by token exactly as before. This modal customizes retrieval and ranking without automatically shortening the output.
-                                                </div>
-                                            </div>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={draftSearchSettings.streamingEnabled}
+                                                    onChange={(event) => setDraftSearchSettings((current) => ({
+                                                        ...current,
+                                                        preset: 'custom',
+                                                        streamingEnabled: event.target.checked,
+                                                    }))}
+                                                />
+                                            </label>
                                         </div>
                                     </div>
                                 </div>
@@ -1013,12 +1136,11 @@ export default function RAGSearch() {
                                     )}
                                 </div>
                                 <div
+                                    data-testid="search-answer"
                                     style={{ fontSize: '0.9rem', lineHeight: 1.8, color: 'var(--text-secondary)', whiteSpace: 'pre-line' }}
-                                    dangerouslySetInnerHTML={{
-                                        __html: visibleAnswer
-                                            .replace(/\*\*(.*?)\*\*/g, '<strong style="color: var(--text-primary)">$1</strong>')
-                                    }}
-                                />
+                                >
+                                    {visibleAnswer}
+                                </div>
                                 {isSearching && (
                                     <div style={{ marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                                         Sto scrivendo la risposta in tempo reale...
@@ -1107,7 +1229,9 @@ export default function RAGSearch() {
                     <div className="loading-spinner" style={{ flexDirection: 'column', gap: '1rem' }}>
                         <div className="spinner" />
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                            Recupero le fonti e avvio la generazione streaming...
+                            {normalizeSearchSettings(searchSettings).streamingEnabled
+                                ? 'Recupero le fonti e avvio la generazione streaming...'
+                                : 'Recupero le fonti e genero la risposta...'}
                         </p>
                     </div>
                 )}

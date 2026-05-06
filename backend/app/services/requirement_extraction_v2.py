@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.services.tender_requirements import normalize_requirement_text
+from app.intelligence.ontology import attach_ontology_to_candidates
 from app.services.requirement_verification import verify_requirement_candidates
-
+from app.services.tender_requirements import normalize_requirement_text
 
 EXTRACTION_METHOD = "llm_v2"
 SCHEMA_VERSION = "requirement_extraction_v2.schema.v1"
@@ -217,7 +218,7 @@ def parse_requirement_extraction_v2_response(
                 "extraction_method": EXTRACTION_METHOD,
             }
         )
-    return candidates
+    return attach_ontology_to_candidates(candidates)
 
 
 def _iter_section_inputs(

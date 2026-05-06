@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from fastapi import (
@@ -44,11 +45,11 @@ from app.services.chat import (
     log_chat_message_sent,
     read_chat_attachment_blob,
     read_chat_message_text,
+    resolve_chat_bucket_name,
     sanitize_attachment_filename,
     store_chat_attachment_blob,
     store_chat_message_text,
     sync_chat_members_from_tender_permissions,
-    resolve_chat_bucket_name,
 )
 
 router = APIRouter()
@@ -293,7 +294,9 @@ async def get_official_chat_room(
         actor_id=current_user.id,
         open_now=False,
     )
-    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+    await sync_chat_members_from_tender_permissions(
+        db, tender_id=tender_id, actor_id=current_user.id
+    )
 
     count_result = await db.execute(
         select(func.count(ChatMember.id)).where(
@@ -377,9 +380,11 @@ async def send_chat_message(
         actor_id=current_user.id,
         open_now=True,
     )
-    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+    await sync_chat_members_from_tender_permissions(
+        db, tender_id=tender_id, actor_id=current_user.id
+    )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     preview = text[:280]
 
     message = ChatMessage(
@@ -454,9 +459,11 @@ async def upload_chat_attachment(
         actor_id=current_user.id,
         open_now=True,
     )
-    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+    await sync_chat_members_from_tender_permissions(
+        db, tender_id=tender_id, actor_id=current_user.id
+    )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     safe_filename = sanitize_attachment_filename(file.filename)
     caption = (text or "").strip()
     preview_text = caption if caption else f"[file] {safe_filename}"
@@ -570,8 +577,7 @@ async def download_chat_attachment(
     ascii_filename = (ascii_filename or f"attachment-{attachment.id}.bin").replace('"', "")
 
     content_disposition = (
-        f"attachment; filename=\"{ascii_filename}\"; "
-        f"filename*=UTF-8''{quote(safe_filename)}"
+        f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(safe_filename)}"
     )
 
     return Response(
@@ -599,7 +605,9 @@ async def get_chat_retrospective(
         actor_id=current_user.id,
         open_now=False,
     )
-    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+    await sync_chat_members_from_tender_permissions(
+        db, tender_id=tender_id, actor_id=current_user.id
+    )
 
     participants_result = await db.execute(
         select(ChatMember)
@@ -663,7 +671,7 @@ async def get_chat_retrospective(
     )
     events = list(reversed(events_result.scalars().all()))
 
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
     timeline: list[ChatRetrospectiveTimelineItem] = []
 
     for message in messages:
@@ -710,7 +718,7 @@ async def get_chat_retrospective(
         event_count=event_count,
         first_message_at=first_message_at,
         last_message_at=last_message_at,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         timeline=timeline,
     )
 
@@ -729,7 +737,9 @@ async def export_chat_retrospective(
         actor_id=current_user.id,
         open_now=False,
     )
-    await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=current_user.id)
+    await sync_chat_members_from_tender_permissions(
+        db, tender_id=tender_id, actor_id=current_user.id
+    )
 
     participants_result = await db.execute(
         select(ChatMember)
@@ -759,7 +769,7 @@ async def export_chat_retrospective(
     events = events_result.scalars().all()
 
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "tender_id": tender_id,
         "room": {
             "id": room.id,
@@ -806,7 +816,9 @@ async def export_chat_retrospective(
                         "mime_type": attachment.mime_type,
                         "size_bytes": attachment.size_bytes,
                         "sha256": attachment.sha256,
-                        "created_at": attachment.created_at.isoformat() if attachment.created_at else None,
+                        "created_at": attachment.created_at.isoformat()
+                        if attachment.created_at
+                        else None,
                         "storage": {
                             "bucket": attachment.bucket,
                             "object_key": attachment.object_key,
@@ -832,12 +844,9 @@ async def export_chat_retrospective(
 
     raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     filename = f"tender_{tender_id}_chat_retrospective_{now:%Y%m%d_%H%M%S}.json"
-    content_disposition = (
-        f"attachment; filename=\"{filename}\"; "
-        f"filename*=UTF-8''{quote(filename)}"
-    )
+    content_disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
 
     return Response(
         content=raw,
@@ -874,7 +883,9 @@ async def chat_websocket(
                 actor_id=user.id,
                 open_now=False,
             )
-            await sync_chat_members_from_tender_permissions(db, tender_id=tender_id, actor_id=user.id)
+            await sync_chat_members_from_tender_permissions(
+                db, tender_id=tender_id, actor_id=user.id
+            )
             await db.commit()
             room_id = room.id
 
@@ -900,10 +911,8 @@ async def chat_websocket(
     except WebSocketDisconnect:
         pass
     except Exception:
-        try:
+        with suppress(Exception):
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        except Exception:
-            pass
     finally:
         if room_id is not None:
             chat_connections.disconnect(room_id, websocket)

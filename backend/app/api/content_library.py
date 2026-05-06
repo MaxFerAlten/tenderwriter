@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
@@ -121,13 +121,14 @@ async def create_content_block(
 ):
     """Create a new reusable content block."""
     content = data.content or ""
-    
+
     if data.onlyoffice_key:
         from app.api.onlyoffice import _document_store, _extract_text_from_docx
+
         docx_bytes = await _document_store.get(data.onlyoffice_key)
         if docx_bytes:
             content = _extract_text_from_docx(docx_bytes)
-    
+
     block = ContentBlock(
         title=data.title,
         content=content,

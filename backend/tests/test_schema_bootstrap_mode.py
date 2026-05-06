@@ -8,8 +8,6 @@ from importlib import import_module
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
 
 class _FakeConnection:
     def __init__(self) -> None:
@@ -69,7 +67,7 @@ def test_init_db_supports_explicit_alembic_bootstrap_mode() -> None:
 
     fake_to_thread.assert_awaited_once_with(
         fake_migrations.run_migrations,
-        database_url="postgresql+asyncpg://tester:securepass@localhost:5432/tenderwriter"
+        database_url="postgresql+asyncpg://tester:securepass@localhost:5432/tenderwriter",
     )
     fake_migrations.run_migrations.assert_not_called()
     assert fake_engine.begin_calls == 0

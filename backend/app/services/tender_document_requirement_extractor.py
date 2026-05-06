@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.config import settings as app_settings
 from app.services.requirement_extraction_v2 import (
     extract_requirement_candidates_v2_from_sections,
 )
 from app.services.requirement_rollout import should_use_requirement_extraction_llm_v2
-
 
 _LLM_STATUS_RE = re.compile(r"status\s+(?P<status>\d{3})", re.IGNORECASE)
 PARTICIPATION_REQUIREMENT_SCOPE = "participation"

@@ -799,6 +799,34 @@ export const contentApi = {
 
 // ── RAG ──
 
+export type PlanningCoverageMode = 'disabled' | 'adaptive' | 'always_on';
+
+export interface PlanningCoverageConfigData {
+    enabled: boolean;
+    mode: PlanningCoverageMode;
+    slots: Record<string, boolean>;
+    retrievers: Record<string, boolean>;
+    topkPerSlot: number;
+    maxSourcesPerSlot: number;
+    globalMaxCoverageChunks: number;
+    minScore: number;
+    onlyTenderQueries: boolean;
+    alwaysRunPlanner: boolean;
+}
+
+export interface PlanningCoverageTestRequest {
+    query: string;
+    config?: Partial<PlanningCoverageConfigData>;
+}
+
+export interface PlanningCoverageTestResult {
+    queryClass: string;
+    activated: boolean;
+    slotsTriggered: string[];
+    generatedQueries: Record<string, string[]>;
+    notes: string[];
+}
+
 export const ragApi = {
     query: (data: RAGQueryRequest, options: Pick<RequestOptions, 'signal'> = {}) =>
         request<RAGResponse>('/rag/query', { method: 'POST', body: data, signal: options.signal }),
@@ -842,6 +870,14 @@ export const ragApi = {
     }) => request('/rag/llmsetting', { method: 'POST', body: data }),
 };
 
+export const planningCoverageApi = {
+    getConfig: () => request<PlanningCoverageConfigData>('/planningcoverage/config'),
+    updateConfig: (data: PlanningCoverageConfigData) =>
+        request<PlanningCoverageConfigData>('/planningcoverage/config', { method: 'POST', body: data }),
+    test: (data: PlanningCoverageTestRequest) =>
+        request<PlanningCoverageTestResult>('/planningcoverage/test', { method: 'POST', body: data }),
+};
+
 // ── System ──
 
 export const systemApi = {
@@ -852,20 +888,6 @@ export const systemApi = {
     updateNginx: (data: { read_timeout: number, connect_timeout: number, send_timeout: number }) => request<any>('/system/nginx-timeout', { method: 'POST', body: data }),
     getAppSettings: () => request<AppSettingsData>('/system/app-settings'),
     updateAppSettings: (data: Partial<AppSettingsData>) => request<AppSettingsData>('/system/app-settings', { method: 'PUT', body: data }),
-};
-
-export const hooksApi = {
-    list: <T = unknown>() => request<T[]>('/hooks/hooks'),
-    listEvents: <T = unknown>() => request<{ events: T[] }>('/hooks/hooks/events'),
-    register: <TBody extends Record<string, unknown>>(hook: TBody) =>
-        request('/hooks/hooks', { method: 'POST', body: hook }),
-    unregister: (hookId: string) =>
-        request(`/hooks/hooks/${hookId}`, { method: 'DELETE' }),
-    test: <T = unknown>(hookId: string, eventType: string, testData?: Record<string, unknown>) =>
-        request<T>(
-            `/hooks/hooks/${hookId}/test?event_type=${encodeURIComponent(eventType)}`,
-            { method: 'POST', body: testData }
-        ),
 };
 
 export interface SystemCapabilityStatus {
@@ -1606,6 +1628,8 @@ export interface ContentBlockCreate {
     tags?: string[];
 }
 
+export type RAGRouteKey = 'tender' | 'global';
+
 export interface RAGQueryRequest {
     query: string;
     mode?: string;
@@ -1625,6 +1649,8 @@ export interface RAGQueryRequest {
         sparse?: number;
         graph?: number;
     };
+    route_key?: RAGRouteKey;
+    tender_id?: number | null;
 }
 
 export interface GenerateSectionRequest {
@@ -1933,6 +1959,21 @@ export interface KpiForecastDecisionAction {
     drivers: string[];
 }
 
+export type RehearsalHealthProjection = 'green' | 'amber' | 'red';
+
+export interface RehearsalSummary {
+    run_id: number | null;
+    tender_id?: number | null;
+    proposal_id?: number | null;
+    last_rehearsal_at: string | null;
+    overall_score: number | null;
+    persona_divergence: number | null;
+    blocking_findings: number;
+    high_severity_rework_suggestions: number;
+    health_projection: RehearsalHealthProjection | null;
+    version: string;
+}
+
 export interface KpiForecast {
     status: string;
     external_tender_id: string;
@@ -1942,6 +1983,7 @@ export interface KpiForecast {
     scenarios: KpiForecastScenario[];
     next_best_actions: KpiForecastDecisionAction[];
     analysis_metadata: KpiAnalysisMetadata;
+    rehearsal_summary?: RehearsalSummary | null;
 }
 
 export interface KpiAnalysisJob {
@@ -2452,3 +2494,405 @@ export const ingestionApi = {
         return request<IngestionStats>('/ingestions/stats');
     },
 };
+
+// ── Intelligence (Wave 1 read-only tools) ──
+
+export interface IntelligenceToolDescriptor {
+    name: string;
+    description: string;
+    input_keys: string[];
+}
+
+export interface IntelligenceEnvelope<T = unknown> {
+    tool: string;
+    status: string;
+    result: T;
+}
+
+export interface CoverageAnalyzerResult {
+    tender_id: number;
+    summary: {
+        total_requirements: number;
+        fully_covered: number;
+        partially_covered: number;
+        uncovered: number;
+        high_priority_uncovered: number;
+    };
+    by_domain: Array<{
+        domain: string;
+        total: number;
+        covered: number;
+        partial: number;
+        uncovered: number;
+    }>;
+    gaps: Array<{
+        requirement_id: number;
+        summary: string;
+        priority: string;
+        ontology_domain: string;
+        ontology_subdomain: string;
+        mapped_section_id: number | null;
+        mapped_section_title: string | null;
+        coverage_status: string;
+        coverage_source: string;
+    }>;
+}
+
+export interface EvidenceAuditorFinding {
+    requirement_id: number;
+    summary: string;
+    priority: string;
+    evidence_status: 'strong' | 'weak' | 'missing';
+    expected_evidence_type: string;
+    owner_role: string;
+    ontology_domain: string;
+    ontology_subdomain: string;
+    mapped_section_id: number | null;
+    mapped_section_title: string | null;
+    has_citation_metadata: boolean;
+}
+
+export interface EvidenceAuditorResult {
+    tender_id: number;
+    only_high_priority: boolean;
+    summary: {
+        requirements_checked: number;
+        strong_evidence: number;
+        weak_evidence: number;
+        missing_evidence: number;
+    };
+    findings: EvidenceAuditorFinding[];
+}
+
+export interface CompliancePanoramaResult {
+    tender_id: number;
+    health: 'green' | 'amber' | 'red';
+    analytical_phase: string | null;
+    auto_gate_status: string | null;
+    summary: {
+        failed_gates: number;
+        open_gates: number;
+        blocking_reworks: number;
+        unresolved_requirements: number;
+        high_priority_unresolved: number;
+    };
+    top_risks: Array<{ code: string; severity: string; summary: string }>;
+    kpi_snapshot_delivered: boolean;
+}
+
+export type ContradictionKind =
+    | 'requirement_vs_proposal'
+    | 'proposal_vs_evidence'
+    | 'requirement_vs_requirement';
+
+export interface ContradictionFinding {
+    kind: ContradictionKind;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    requirement_id: number;
+    summary: string;
+    evidence: string[];
+    section_id?: number | null;
+    related_requirement_id?: number | null;
+    topic?: string | null;
+}
+
+export interface ContradictionFinderResult {
+    tender_id: number;
+    summary: {
+        total: number;
+        requirement_vs_proposal: number;
+        proposal_vs_evidence: number;
+        requirement_vs_requirement: number;
+    };
+    findings: ContradictionFinding[];
+}
+
+export type GraphPathStepKind =
+    | 'requirement'
+    | 'section'
+    | 'contribution'
+    | 'review'
+    | 'rework'
+    | 'gate';
+
+export interface GraphPathStep {
+    kind: GraphPathStepKind;
+    id: number;
+    label: string;
+    status?: string | null;
+    priority?: string | null;
+    compliance_status?: string | null;
+    department?: string | null;
+    outcome?: string | null;
+    is_blocking?: boolean;
+    severity?: string | null;
+}
+
+export interface GraphPathExplainerResult {
+    tender_id: number;
+    requirement_id: number;
+    found: boolean;
+    narrative: string;
+    path: GraphPathStep[];
+}
+
+export type RehearsalMode = 'full' | 'section' | 'pre_gate';
+export type RehearsalRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type RehearsalFindingCategory =
+    | 'coverage_gap'
+    | 'weak_evidence'
+    | 'contradiction'
+    | 'clarity_issue'
+    | 'compliance_risk'
+    | 'delivery_risk';
+export type RehearsalFindingSeverity = 'high' | 'medium' | 'low';
+export type RehearsalScopeType = 'proposal_section' | 'requirement' | 'evidence' | 'gate';
+export type RehearsalRecommendationState = 'proposed' | 'accepted' | 'dismissed';
+
+export interface RehearsalPersonaFinding {
+    category: RehearsalFindingCategory;
+    severity: RehearsalFindingSeverity;
+    summary: string;
+    scope_type: RehearsalScopeType;
+    scope_id: string;
+    supporting_refs: string[];
+}
+
+export interface RehearsalPersonaQuestion {
+    question: string;
+    rationale: string | null;
+}
+
+export interface RehearsalPersonaEvaluation {
+    persona_id: string;
+    display_name: string;
+    reviewer_type: string;
+    score: number;
+    findings: RehearsalPersonaFinding[];
+    questions: RehearsalPersonaQuestion[];
+    metrics: Record<string, unknown>;
+}
+
+export interface RehearsalRecommendation {
+    id: number | null;
+    scope_type: RehearsalScopeType;
+    scope_id: string;
+    severity: RehearsalFindingSeverity;
+    is_blocking: boolean;
+    rationale: string;
+    suggested_owner_role: string | null;
+    source_persona_id: string;
+    status: RehearsalRecommendationState;
+    linked_rework_action_id: number | null;
+}
+
+export interface RehearsalRun {
+    id: number;
+    tender_id: number;
+    proposal_id: number;
+    mode: RehearsalMode;
+    status: RehearsalRunStatus;
+    overall_score: number | null;
+    health_projection: RehearsalHealthProjection | null;
+    persona_divergence: number | null;
+    started_at: string | null;
+    completed_at: string | null;
+    persona_results: RehearsalPersonaEvaluation[];
+    recommendations: RehearsalRecommendation[];
+    error_message: string | null;
+    version: string;
+}
+
+export interface RehearsalCreateRequest {
+    tender_id: number;
+    proposal_id: number;
+    proposal_section_ids?: number[];
+    persona_ids?: string[];
+    mode?: RehearsalMode;
+    include_forecast_context?: boolean;
+}
+
+export interface RehearsalRecommendationAcceptRequest {
+    assigned_to_user_id?: number | null;
+    due_at?: string | null;
+    severity?: RehearsalFindingSeverity | null;
+    is_blocking?: boolean | null;
+    notes?: string | null;
+}
+
+export interface RehearsalRecommendationDismissRequest {
+    reason?: string | null;
+}
+
+export interface RehearsalRecommendationActionResponse {
+    recommendation: RehearsalRecommendation;
+    rework_action_id: number | null;
+}
+
+export type ProposalWriterMode =
+    | 'draft'
+    | 'rewrite'
+    | 'improve'
+    | 'address_rehearsal_findings';
+
+export interface ProposalWriterRequest {
+    tender_id: number;
+    proposal_id: number;
+    section_id: number;
+    mode?: ProposalWriterMode;
+    instruction?: string | null;
+    apply?: boolean;
+    use_rehearsal_summary?: boolean;
+    use_contradiction_check?: boolean;
+    use_evidence_audit?: boolean;
+    use_coverage_analyzer?: boolean;
+}
+
+export interface ProposalWriterResult {
+    tender_id: number;
+    proposal_id: number;
+    section_id: number;
+    mode: ProposalWriterMode;
+    draft_text: string;
+    coverage_summary: Record<string, unknown>;
+    evidence_summary: Record<string, unknown>;
+    contradictions: Array<Record<string, unknown>>;
+    rehearsal_context: Record<string, unknown> | null;
+    warnings: string[];
+    applied: boolean;
+    agent_version: string;
+}
+
+export const intelligenceApi = {
+    listTools: () =>
+        request<{ tools: IntelligenceToolDescriptor[] }>('/intelligence/tools'),
+    runCoverageAnalyzer: (tenderId: number) =>
+        request<IntelligenceEnvelope<CoverageAnalyzerResult>>(
+            '/intelligence/tools/coverage-analyzer',
+            { method: 'POST', body: { tender_id: tenderId } },
+        ),
+    runEvidenceAuditor: (tenderId: number, onlyHighPriority: boolean = false) =>
+        request<IntelligenceEnvelope<EvidenceAuditorResult>>(
+            '/intelligence/tools/evidence-auditor',
+            {
+                method: 'POST',
+                body: { tender_id: tenderId, only_high_priority: onlyHighPriority },
+            },
+        ),
+    runCompliancePanorama: (tenderId: number) =>
+        request<IntelligenceEnvelope<CompliancePanoramaResult>>(
+            '/intelligence/tools/compliance-panorama',
+            { method: 'POST', body: { tender_id: tenderId } },
+        ),
+    runContradictionFinder: (tenderId: number) =>
+        request<IntelligenceEnvelope<ContradictionFinderResult>>(
+            '/intelligence/tools/contradiction-finder',
+            { method: 'POST', body: { tender_id: tenderId } },
+        ),
+    runGraphPathExplainer: (tenderId: number, requirementId: number) =>
+        request<IntelligenceEnvelope<GraphPathExplainerResult>>(
+            '/intelligence/tools/graph-path-explainer',
+            {
+                method: 'POST',
+                body: { tender_id: tenderId, requirement_id: requirementId },
+            },
+        ),
+    query: (tenderId: number, question: string, onlyHighPriority: boolean = false) =>
+        request<IntelligenceAgentQueryResult>('/intelligence/query', {
+            method: 'POST',
+            body: {
+                tender_id: tenderId,
+                question,
+                only_high_priority: onlyHighPriority,
+            },
+        }),
+    createRehearsal: (payload: RehearsalCreateRequest) =>
+        request<RehearsalRun>('/intelligence/rehearsals', {
+            method: 'POST',
+            body: payload,
+        }),
+    listRehearsals: (
+        tenderId: number,
+        opts?: { proposalId?: number; limit?: number },
+    ) => {
+        const params = new URLSearchParams({ tender_id: String(tenderId) });
+        if (opts?.proposalId !== undefined) params.set('proposal_id', String(opts.proposalId));
+        if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+        return request<RehearsalRun[]>(`/intelligence/rehearsals?${params.toString()}`);
+    },
+    getRehearsal: (runId: number) =>
+        request<RehearsalRun>(`/intelligence/rehearsals/${runId}`),
+    acceptRecommendation: (
+        runId: number,
+        recommendationId: number,
+        body?: RehearsalRecommendationAcceptRequest,
+    ) =>
+        request<RehearsalRecommendationActionResponse>(
+            `/intelligence/rehearsals/${runId}/recommendations/${recommendationId}/accept`,
+            { method: 'POST', body: body ?? {} },
+        ),
+    dismissRecommendation: (
+        runId: number,
+        recommendationId: number,
+        body?: RehearsalRecommendationDismissRequest,
+    ) =>
+        request<RehearsalRecommendationActionResponse>(
+            `/intelligence/rehearsals/${runId}/recommendations/${recommendationId}/dismiss`,
+            { method: 'POST', body: body ?? {} },
+        ),
+    getRehearsalSummary: (tenderId: number) =>
+        request<RehearsalSummary>(
+            `/intelligence/tenders/${tenderId}/rehearsal-summary`,
+        ),
+    runProposalWriter: (payload: ProposalWriterRequest) =>
+        request<ProposalWriterResult>('/intelligence/proposal-writer/draft', {
+            method: 'POST',
+            body: payload,
+        }),
+};
+
+export type IntelligenceAgentIntent =
+    | 'coverage'
+    | 'evidence'
+    | 'panorama'
+    | 'diagnostic'
+    | 'contradiction'
+    | 'unknown';
+
+export type IntelligenceFindingSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export type IntelligenceRecommendedActionKind =
+    | 'review_uncovered_requirement'
+    | 'strengthen_evidence'
+    | 'address_failed_gate'
+    | 'resolve_blocking_rework'
+    | 'inspect_panorama'
+    | 'review_contradiction'
+    | 'follow_up_question';
+
+export interface IntelligenceAgentFinding {
+    summary: string;
+    severity: IntelligenceFindingSeverity;
+    source_tool: string;
+    requirement_id: number | null;
+    ontology_domain: string | null;
+    reference: Record<string, unknown>;
+}
+
+export interface IntelligenceAgentRecommendedAction {
+    kind: IntelligenceRecommendedActionKind;
+    summary: string;
+    requirement_id: number | null;
+    reference: Record<string, unknown>;
+}
+
+export interface IntelligenceAgentQueryResult {
+    tender_id: number;
+    intent: IntelligenceAgentIntent;
+    question: string;
+    tools_used: string[];
+    answer: string;
+    findings: IntelligenceAgentFinding[];
+    recommended_actions: IntelligenceAgentRecommendedAction[];
+    raw_tool_outputs: Record<string, unknown>;
+}

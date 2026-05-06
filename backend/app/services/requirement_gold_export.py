@@ -13,7 +13,6 @@ from sqlalchemy.orm import selectinload
 from app.models import ConsolidatedRequirement, RequirementRelation, Tender
 from app.services.requirement_evaluation import GOLD_SET_SCHEMA_VERSION
 
-
 _ACTIVE_GRAPH_STATE = "active"
 _APPROVED_REVIEW_STATES = {"approved", "accepted", "verified"}
 
@@ -84,7 +83,9 @@ def _source_citations(requirement: Any) -> list[dict[str, Any]]:
             "filename": source.get("filename"),
             "document_role": source.get("document_role"),
         }
-        citations.append({key: value for key, value in citation.items() if value not in (None, "", [], {})})
+        citations.append(
+            {key: value for key, value in citation.items() if value not in (None, "", [], {})}
+        )
     return citations
 
 
@@ -155,12 +156,12 @@ def build_requirement_gold_set_case(
     )
 
     active_requirement_ids = {
-        int(getattr(requirement, "id"))
+        int(requirement.id)
         for requirement in active_requirements
         if getattr(requirement, "id", None) is not None
     }
     approved_requirement_ids = {
-        int(getattr(requirement, "id"))
+        int(requirement.id)
         for requirement in expected_requirements
         if getattr(requirement, "id", None) is not None
     }
@@ -202,12 +203,10 @@ def build_requirement_gold_set_case(
             for requirement in predicted_requirements
         ],
         "expected_relations": [
-            _relation_payload(relation, expected=True)
-            for relation in expected_relations
+            _relation_payload(relation, expected=True) for relation in expected_relations
         ],
         "predicted_relations": [
-            _relation_payload(relation, expected=False)
-            for relation in predicted_relations
+            _relation_payload(relation, expected=False) for relation in predicted_relations
         ],
     }
 
@@ -311,7 +310,11 @@ async def export_requirement_gold_set_payload(
             or case["expected_relations"]
             or (
                 options.include_negative_cases
-                and (case["predicted_requirements"] or case["predicted_relations"] or tender_ids is not None)
+                and (
+                    case["predicted_requirements"]
+                    or case["predicted_relations"]
+                    or tender_ids is not None
+                )
             )
         ):
             cases.append(case)

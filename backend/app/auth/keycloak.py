@@ -9,12 +9,12 @@ database, creates a TenderWriter account automatically.
 from __future__ import annotations
 
 import jwt as pyjwt
+import structlog
+from fastapi import HTTPException, status
 from jwt import PyJWKClient
 from jwt.exceptions import InvalidAudienceError, InvalidTokenError, PyJWKClientError
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
 from app.auth.base import AuthenticatedUser
 from app.config import settings
@@ -48,10 +48,7 @@ def _token_matches_client(payload: dict) -> bool:
         return True
     if isinstance(audience, list) and settings.keycloak_client_id in audience:
         return True
-    if isinstance(authorized_party, str) and authorized_party == settings.keycloak_client_id:
-        return True
-
-    return False
+    return isinstance(authorized_party, str) and authorized_party == settings.keycloak_client_id
 
 
 class KeycloakOIDCProvider:
@@ -80,9 +77,7 @@ class KeycloakOIDCProvider:
             jwks_client = _get_jwks_client()
             signing_key = jwks_client.get_signing_key_from_jwt(token)
 
-            expected_issuer = (
-                f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
-            )
+            expected_issuer = f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
 
             payload = pyjwt.decode(
                 token,
@@ -97,15 +92,15 @@ class KeycloakOIDCProvider:
             )
             if not _token_matches_client(payload):
                 raise InvalidAudienceError("Invalid audience / authorized party")
-        except pyjwt.ExpiredSignatureError:
+        except pyjwt.ExpiredSignatureError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token expired",
                 headers={"WWW-Authenticate": "Bearer"},
-            )
+            ) from exc
         except (InvalidTokenError, PyJWKClientError) as e:
             logger.warning("keycloak.token_validation_failed", error=str(e))
-            raise credentials_exception
+            raise credentials_exception from e
 
         # ── Extract claims ──
         keycloak_sub: str | None = payload.get("sub")
@@ -198,10 +193,10 @@ class KeycloakOIDCProvider:
             email=email,
             keycloak_sub=keycloak_sub,
             role=role,
-            is_new_user=(user.hashed_password == "__keycloak_managed__"
-                         and not any(r in all_roles for r in ("tw_admin",))),
+            is_new_user=(
+                user.hashed_password == "__keycloak_managed__"
+                and not any(r in all_roles for r in ("tw_admin",))
+            ),
         )
 
-        return AuthenticatedUser.model_validate(user).model_copy(
-            update={"auth_source": "keycloak"}
-        )
+        return AuthenticatedUser.model_validate(user).model_copy(update={"auth_source": "keycloak"})

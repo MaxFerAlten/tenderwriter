@@ -11,22 +11,21 @@ Runtime modes:
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserResponse, get_current_user
 from app.config import settings
 from app.db.database import get_db
 from app.models import Tender
-from app.api.auth import get_current_user, UserResponse
 from app.services.mattermost import (
     create_fullchat_session,
     create_sso_chat_session,
     get_mm_sso_mode_for_auth_source,
 )
-
-import structlog
 
 logger = structlog.get_logger()
 
@@ -35,7 +34,7 @@ router = APIRouter()
 
 class FullChatResponse(BaseModel):
     mm_url: str
-    mm_token: str           # Empty string when SSO mode (no browser session needed)
+    mm_token: str  # Empty string when SSO mode (no browser session needed)
     channel_name: str
     mm_user_id: str
     mm_username: str
@@ -62,9 +61,7 @@ async def open_fullchat(
     if not tender:
         raise HTTPException(status_code=404, detail="Tender not found")
 
-    mm_sso_mode = await get_mm_sso_mode_for_auth_source(
-        getattr(current_user, "auth_source", None)
-    )
+    mm_sso_mode = await get_mm_sso_mode_for_auth_source(getattr(current_user, "auth_source", None))
     use_sso = mm_sso_mode in {"native_oidc", "plugin_oidc"}
 
     try:
@@ -99,7 +96,10 @@ async def open_fullchat(
             )
     except Exception as exc:
         logger.error("mattermost.fullchat_failed", error=str(exc), tender_id=tender_id)
-        raise HTTPException(status_code=502, detail=f"Mattermost integration error: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Mattermost integration error: {exc}",
+        ) from exc
 
     return FullChatResponse(
         mm_url=session.mm_url,

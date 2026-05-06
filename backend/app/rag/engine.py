@@ -8,35 +8,39 @@ fuses results, re-ranks them, and generates responses using a local LLM.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from difflib import SequenceMatcher
-from enum import Enum
 import math
 import re
 import time
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from difflib import SequenceMatcher
+from enum import Enum
+from typing import Any
 
 import httpx
 import structlog
 
 from app.config import settings
-from app.rag.chunker import SemanticChunker, ChunkMetadata, TextChunk
+from app.rag.chunker import ChunkMetadata, SemanticChunker, TextChunk
 from app.rag.context_quality import compress_context_block, deduplicate_context_items
 from app.rag.dense_retriever import DenseRetriever
 from app.rag.embedder import Embedder, get_embedder
 from app.rag.fusion import RankFusion
-from app.rag.generator import Generator, GenerationResult
+from app.rag.generator import GenerationResult, Generator
 from app.rag.graph_retriever import GraphRetriever
 from app.rag.internal_prompting import load_retrieval_query_variants
 from app.rag.planningcoverage import run_planning_coverage
 from app.rag.procedure_guardrails import (
     BLOCKED_OUTPUT_MESSAGE,
+    PROCEDURE_ANCHORS,
     FactSheet,
     build_fact_sheet,
     classify_chunk_procedure,
     fact_sheet_from_guarded_context,
+    guardrail_issue_snippets,
     normalize_guardrail_config,
+    repair_unsupported_protected_facts,
     source_procedure_labels_from_guarded_context,
     validate_guarded_answer,
 )
@@ -58,9 +62,7 @@ CONTINUATION_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
     re.IGNORECASE,
 )
-PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = (
-    r"(?:draft ending|(?:task|compito)(?=\s*:|$)|retrieved context|user question|response constraints|istruzioni importanti|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?)"
-)
+PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = r"(?:draft ending|(?:task|compito)(?=\s*:|$)|retrieved context|user question|response constraints|istruzioni importanti|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?)"
 PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN = r"(?:own answer|your answer)"
 PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = r"(?:answer(?:\s*\([^)]*\))?|own answer|your answer)"
 PROMPT_LEAKAGE_LOOP_RE = re.compile(
@@ -299,12 +301,8 @@ DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS = 1024
 DEANONYMIZED_STREAM_FLUSH_CHARS = 96
 DEANONYMIZED_STREAM_FORCE_FLUSH_CHARS = 220
 PROMPT_GARBAGE_PREFIX_TOKEN_RE = re.compile(r"\S+")
-INLINE_MARKDOWN_SECTION_HEADING_RE = re.compile(
-    r"(\S)(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)"
-)
-INLINE_MARKDOWN_SECTION_AFTER_PUNCT_RE = re.compile(
-    r"([.!?;])\s+(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)"
-)
+INLINE_MARKDOWN_SECTION_HEADING_RE = re.compile(r"(\S)(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)")
+INLINE_MARKDOWN_SECTION_AFTER_PUNCT_RE = re.compile(r"([.!?;])\s+(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)")
 BOLD_SECTION_HEADING_RE = re.compile(r"^\s*\*\*([^*\n]{2,90})\*\*")
 NON_LATIN_SCRIPT_NOISE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 GENERATED_FACT_SHEET_HEADING_RE = re.compile(
@@ -318,27 +316,29 @@ GENERATED_FACT_SHEET_FIELD_RE = re.compile(
 )
 GENERATED_FACT_SHEET_END_RE = re.compile(r"^\s*FACT_SHEET_END\s*$", re.IGNORECASE)
 PLURAL_DAY_RE = re.compile(r"\b([2-9][0-9]*)\s+giorno\b", re.IGNORECASE)
-PROMPT_GARBAGE_PREFIX_TOKENS = frozenset({
-    "a",
-    "answer",
-    "as",
-    "assistant",
-    "context",
-    "constraints",
-    "language",
-    "only",
-    "output",
-    "own",
-    "question",
-    "response",
-    "retrieved",
-    "s",
-    "same",
-    "system",
-    "the",
-    "user",
-    "users",
-})
+PROMPT_GARBAGE_PREFIX_TOKENS = frozenset(
+    {
+        "a",
+        "answer",
+        "as",
+        "assistant",
+        "context",
+        "constraints",
+        "language",
+        "only",
+        "output",
+        "own",
+        "question",
+        "response",
+        "retrieved",
+        "s",
+        "same",
+        "system",
+        "the",
+        "user",
+        "users",
+    }
+)
 PROMPT_GARBAGE_PREFIX_STRIP_CHARS = " \t\r\n:/\\\\|#[](){}<>,.;'\"`*-_!?="
 
 QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
@@ -390,16 +390,18 @@ Inizia direttamente con il testo mancante.
 
 class QueryMode(str, Enum):
     """Different query modes for the RAG pipeline."""
-    SEARCH = "search"                  # Retrieve only, no generation
-    QA = "qa"                          # General question answering
-    WRITE_SECTION = "write_section"    # Generate a proposal section
-    EXEC_SUMMARY = "exec_summary"     # Generate executive summary
-    ANALYZE_REQS = "analyze_reqs"     # Analyze tender requirements
-    COMPLIANCE = "compliance"          # Check compliance
+
+    SEARCH = "search"  # Retrieve only, no generation
+    QA = "qa"  # General question answering
+    WRITE_SECTION = "write_section"  # Generate a proposal section
+    EXEC_SUMMARY = "exec_summary"  # Generate executive summary
+    ANALYZE_REQS = "analyze_reqs"  # Analyze tender requirements
+    COMPLIANCE = "compliance"  # Check compliance
 
 
 class LLMRoute(str, Enum):
     """Effective generation route chosen for the query."""
+
     INTERNAL = "internal"
     EXTERNAL_ANONYMIZED = "external_anonymized"
     INTERNAL_FALLBACK = "internal_fallback"
@@ -412,6 +414,7 @@ class AnonymizerUnavailableError(RuntimeError):
 @dataclass
 class RAGQuery:
     """Input to the RAG pipeline."""
+
     text: str
     mode: QueryMode = QueryMode.QA
     filters: dict = field(default_factory=dict)
@@ -442,10 +445,10 @@ class RAGQuery:
     guardrail_config: dict | None = None
 
 
-
 @dataclass
 class RAGResponse:
     """Output from the RAG pipeline."""
+
     answer: str
     sources: list[dict]
     mode: QueryMode
@@ -457,6 +460,7 @@ class RAGResponse:
 @dataclass(frozen=True)
 class ResponseLengthTarget:
     """Normalized target length extracted from the user's query."""
+
     requested_value: int
     requested_unit: str
     target_words: int
@@ -466,6 +470,7 @@ class ResponseLengthTarget:
 @dataclass(frozen=True)
 class RetrievedContext:
     """Shared retrieval output reused by sync and streaming flows."""
+
     context: str
     sources: list[dict]
 
@@ -559,7 +564,9 @@ class HybridRAGEngine:
                 try:
                     await self.dense_retriever.initialize()
                 except Exception as e:
-                    logger.warning("Dense retriever init failed (Qdrant may be unavailable)", error=str(e))
+                    logger.warning(
+                        "Dense retriever init failed (Qdrant may be unavailable)", error=str(e)
+                    )
 
                 # Sparse retriever (BM25)
                 self.sparse_retriever = SparseRetriever()
@@ -573,7 +580,9 @@ class HybridRAGEngine:
                 try:
                     await self.graph_retriever.initialize()
                 except Exception as e:
-                    logger.warning("Graph retriever init failed (Neo4j may be unavailable)", error=str(e))
+                    logger.warning(
+                        "Graph retriever init failed (Neo4j may be unavailable)", error=str(e)
+                    )
 
                 # Fusion
                 self.fusion = RankFusion()
@@ -585,7 +594,7 @@ class HybridRAGEngine:
                 self.generator = Generator(
                     base_url=settings.llama_server_url,
                     model=settings.llama_model,
-                    timeout=settings.llama_timeout
+                    timeout=settings.llama_timeout,
                 )
 
                 self._initialized = True
@@ -606,7 +615,9 @@ class HybridRAGEngine:
             return
 
         if self.dense_retriever is None or getattr(self.dense_retriever, "client", None) is None:
-            logger.warning("Skipping sparse retriever bootstrap because dense storage is unavailable")
+            logger.warning(
+                "Skipping sparse retriever bootstrap because dense storage is unavailable"
+            )
             return
 
         texts, metadatas = self.dense_retriever.load_persisted_chunks(collection="documents")
@@ -641,8 +652,7 @@ class HybridRAGEngine:
                     filters=vector_filters,
                 )
                 dense_results = [
-                    {"text": r.text, "score": r.score, "metadata": r.metadata}
-                    for r in raw_dense
+                    {"text": r.text, "score": r.score, "metadata": r.metadata} for r in raw_dense
                 ]
             except Exception as e:
                 logger.warning("Dense retrieval failed", error=str(e))
@@ -655,8 +665,7 @@ class HybridRAGEngine:
                     filters=vector_filters,
                 )
                 sparse_results = [
-                    {"text": r.text, "score": r.score, "metadata": r.metadata}
-                    for r in raw_sparse
+                    {"text": r.text, "score": r.score, "metadata": r.metadata} for r in raw_sparse
                 ]
             except Exception as e:
                 logger.warning("Sparse retrieval failed", error=str(e))
@@ -729,8 +738,7 @@ class HybridRAGEngine:
                     filters=graph_filters,
                 )
                 graph_results = [
-                    {"text": r.text, "score": r.score, "metadata": r.metadata}
-                    for r in raw_graph
+                    {"text": r.text, "score": r.score, "metadata": r.metadata} for r in raw_graph
                 ]
             except Exception as e:
                 logger.warning("Graph retrieval failed", error=str(e))
@@ -741,21 +749,9 @@ class HybridRAGEngine:
                 config=rag_query.planning_coverage_config,
                 filters=vector_filters,
                 graph_filters=graph_filters,
-                sparse_retriever=(
-                    self.sparse_retriever
-                    if retriever_selection["sparse"]
-                    else None
-                ),
-                dense_retriever=(
-                    self.dense_retriever
-                    if retriever_selection["dense"]
-                    else None
-                ),
-                graph_retriever=(
-                    self.graph_retriever
-                    if retriever_selection["graph"]
-                    else None
-                ),
+                sparse_retriever=(self.sparse_retriever if retriever_selection["sparse"] else None),
+                dense_retriever=(self.dense_retriever if retriever_selection["dense"] else None),
+                graph_retriever=(self.graph_retriever if retriever_selection["graph"] else None),
             )
             if coverage.activated:
                 for item in coverage.results:
@@ -798,7 +794,13 @@ class HybridRAGEngine:
         if fused:
             try:
                 fused_dicts = [
-                    {"text": f.text, "score": f.score, "metadata": f.metadata, "sources": f.sources, "source_scores": f.source_scores}
+                    {
+                        "text": f.text,
+                        "score": f.score,
+                        "metadata": f.metadata,
+                        "sources": f.sources,
+                        "source_scores": f.source_scores,
+                    }
                     for f in fused
                 ]
                 reranked = self.reranker.rerank(
@@ -815,7 +817,9 @@ class HybridRAGEngine:
             text = r.text if hasattr(r, "text") else r.get("text", "")
             metadata = r.metadata if hasattr(r, "metadata") else r.get("metadata", {})
             retriever_sources = r.sources if hasattr(r, "sources") else r.get("sources", [])
-            source_scores = r.source_scores if hasattr(r, "source_scores") else r.get("source_scores", {})
+            source_scores = (
+                r.source_scores if hasattr(r, "source_scores") else r.get("source_scores", {})
+            )
             context_items.append(
                 {
                     "text": text,
@@ -901,7 +905,7 @@ class HybridRAGEngine:
     ) -> str:
         """Build context with XML-style doc tags to prevent header re-injection."""
         parts = []
-        for i, (text, source) in enumerate(zip(context_texts, sources)):
+        for i, (text, source) in enumerate(zip(context_texts, sources, strict=False)):
             doc_id = source.get("metadata", {}).get("chunk_index", i)
             page = source.get("metadata", {}).get("page_number", "?")
             text = text.strip()
@@ -911,13 +915,24 @@ class HybridRAGEngine:
         return "\n".join(parts)
 
     def _format_fact_sheet(self, fact_sheet: FactSheet) -> str:
+        procedure_ids = self._format_fact_sheet_values(
+            fact_sheet.procedure_ids,
+            conflict_key="procedure_id",
+            conflicts=fact_sheet.conflicts,
+        )
+        cigs = self._format_fact_sheet_values(
+            fact_sheet.cigs,
+            conflict_key="cig",
+            conflicts=fact_sheet.conflicts,
+            prefix="CIG ",
+        )
         return "\n".join(
             [
                 "FACT_SHEET_START",
                 f"procedura: {fact_sheet.procedure_label}",
                 f"stato_verifica: {fact_sheet.status.value}",
-                f"procedure_id: {', '.join(fact_sheet.procedure_ids) or 'non_rilevato'}",
-                f"cig: {', '.join(f'CIG {value}' for value in fact_sheet.cigs) or 'non_rilevato'}",
+                f"procedure_id: {procedure_ids}",
+                f"cig: {cigs}",
                 f"giorni_critici: {', '.join(fact_sheet.critical_days) or 'non_rilevato'}",
                 f"durata: {', '.join(fact_sheet.durations) or 'non_rilevato'}",
                 f"importi: {', '.join(fact_sheet.amounts) or 'non_rilevato'}",
@@ -947,9 +962,7 @@ class HybridRAGEngine:
             cleaned = re.sub(r"^#{1,4}\s+.+\n", "", cleaned, flags=re.MULTILINE)
             cleaned = re.sub(r"^#{1,4}\s+", "", cleaned)
             parts.append(
-                f"SOURCE_START id={doc_id} page={page} procedure={procedure}\n"
-                f"{cleaned}\n"
-                "SOURCE_END"
+                f"SOURCE_START id={doc_id} page={page} procedure={procedure}\n{cleaned}\nSOURCE_END"
             )
         return "\n\n".join(parts)
 
@@ -963,9 +976,7 @@ class HybridRAGEngine:
         if not filters:
             return None
         vector_filters = {
-            key: value
-            for key, value in filters.items()
-            if not str(key).startswith("graph_")
+            key: value for key, value in filters.items() if not str(key).startswith("graph_")
         }
         return vector_filters or None
 
@@ -1052,7 +1063,7 @@ class HybridRAGEngine:
 
     def _result_retriever_sources(self, result: Any) -> list[str]:
         if hasattr(result, "sources"):
-            return list(getattr(result, "sources") or [])
+            return list(result.sources or [])
         if isinstance(result, dict):
             return list(result.get("sources") or result.get("retriever_sources") or [])
         return []
@@ -1075,11 +1086,7 @@ class HybridRAGEngine:
             return selected
 
         graph_candidate = next(
-            (
-                result
-                for result in results
-                if "graph" in self._result_retriever_sources(result)
-            ),
+            (result for result in results if "graph" in self._result_retriever_sources(result)),
             None,
         )
         if graph_candidate is None:
@@ -1181,7 +1188,9 @@ class HybridRAGEngine:
                 error=str(e),
             )
             if rag_query.mode == QueryMode.QA:
-                fallback_answer = "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
+                fallback_answer = (
+                    "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
+                )
                 generation_result = GenerationResult(
                     text=fallback_answer,
                     model=self.generator.model if self.generator else "unknown",
@@ -1249,7 +1258,8 @@ class HybridRAGEngine:
                 completion_tokens=(
                     (generation_result.completion_tokens or 0)
                     + (trailing_completion.completion_tokens or 0)
-                ) or generation_result.completion_tokens,
+                )
+                or generation_result.completion_tokens,
             )
 
         raw_guarded_answer = self._apply_generation_guardrails(
@@ -1418,9 +1428,7 @@ class HybridRAGEngine:
                     continue
 
                 deanonymized_flush_candidate += token
-                if not self._should_flush_deanonymized_stream_chunk(
-                    deanonymized_flush_candidate
-                ):
+                if not self._should_flush_deanonymized_stream_chunk(deanonymized_flush_candidate):
                     continue
 
                 visible_pass_text = self._sanitize_continuation_text(
@@ -1580,10 +1588,7 @@ class HybridRAGEngine:
             failure_count=self._anonymizer_failure_count,
             reason=reason,
         )
-        if (
-            self._anonymizer_failure_count
-            >= settings.anonymizer_circuit_breaker_threshold
-        ):
+        if self._anonymizer_failure_count >= settings.anonymizer_circuit_breaker_threshold:
             if not self._anonymizer_circuit_is_open():
                 self._anonymizer_circuit_open_events += 1
             self._anonymizer_circuit_open_until = (
@@ -1634,7 +1639,7 @@ class HybridRAGEngine:
                 if isinstance(value, str) and value.strip()
             }
         self._last_privacy_debug_trace = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "mode": rag_query.mode.value,
             "route_key": rag_query.route_key,
             "tender_id": rag_query.tender_id,
@@ -1656,7 +1661,9 @@ class HybridRAGEngine:
 
     def _get_external_generator(self, rag_query: RAGQuery) -> Generator:
         base_url = (rag_query.external_target_url or settings.external_llm_url).strip()
-        model = rag_query.external_target_model or settings.external_llm_model or settings.llama_model
+        model = (
+            rag_query.external_target_model or settings.external_llm_model or settings.llama_model
+        )
         provider = (rag_query.external_target_provider or "llama").strip().lower()
         api_key = (rag_query.external_target_api_key or "").strip()
         timeout = (
@@ -1694,9 +1701,10 @@ class HybridRAGEngine:
 
         if anonymizer_enabled and self._has_external_llm(rag_query):
             try:
-                anonymized_variables, deanonymize_session_id = await self._anonymize_prompt_variables(
-                    variables
-                )
+                (
+                    anonymized_variables,
+                    deanonymize_session_id,
+                ) = await self._anonymize_prompt_variables(variables)
                 generator = self._get_external_generator(rag_query)
                 variables = anonymized_variables
                 llm_route = LLMRoute.EXTERNAL_ANONYMIZED
@@ -1769,7 +1777,7 @@ class HybridRAGEngine:
             [value for _, value in string_items]
         )
         anonymized_variables = dict(variables)
-        for (key, _), anonymized_value in zip(string_items, anonymized_chunks):
+        for (key, _), anonymized_value in zip(string_items, anonymized_chunks, strict=False):
             anonymized_variables[key] = anonymized_value
         return anonymized_variables, session_id
 
@@ -1967,7 +1975,9 @@ class HybridRAGEngine:
     def _count_words(self, text: str) -> int:
         return len(WORD_RE.findall(text or ""))
 
-    def _minimum_acceptable_word_count(self, target_words: int, *, approximate: bool = False) -> int:
+    def _minimum_acceptable_word_count(
+        self, target_words: int, *, approximate: bool = False
+    ) -> int:
         if approximate:
             if target_words >= 4000:
                 return max(1200, int(target_words * 0.2))
@@ -2112,10 +2122,10 @@ class HybridRAGEngine:
             brace_trimmed = False
             inline_match = PROMPT_LEAKAGE_INLINE_RE.search(candidate)
             if inline_match:
-                candidate = candidate[:inline_match.start()].rstrip()
+                candidate = candidate[: inline_match.start()].rstrip()
             suffix_match = PROMPT_LEAKAGE_SUFFIX_RE.search(candidate)
             if suffix_match:
-                candidate = candidate[:suffix_match.start()].rstrip()
+                candidate = candidate[: suffix_match.start()].rstrip()
                 suffix_trimmed = True
             own_prefix_match = PROMPT_OWN_TOKEN_PREFIX_RE.match(candidate)
             if own_prefix_match:
@@ -2410,9 +2420,8 @@ class HybridRAGEngine:
                 lines.pop()
                 continue
 
-            if (
-                stripped[-1] not in TERMINAL_SENTENCE_CHARS
-                and not stripped.startswith(("-", "*", "$"))
+            if stripped[-1] not in TERMINAL_SENTENCE_CHARS and not stripped.startswith(
+                ("-", "*", "$")
             ):
                 lines.pop()
                 continue
@@ -2508,7 +2517,9 @@ class HybridRAGEngine:
         completion_result = await generator.generate(
             template=QA_SENTENCE_CLOSURE_PROMPT,
             variables={
-                "query": variables.get("query", self._query_text_without_length_request(rag_query.text)),
+                "query": variables.get(
+                    "query", self._query_text_without_length_request(rag_query.text)
+                ),
                 "context": variables.get("context", context),
                 "current_answer_tail": self._continuation_tail(current_text, limit=1200),
             },
@@ -2528,15 +2539,17 @@ class HybridRAGEngine:
 
     def _query_requests_broad_summary(self, query_text: str) -> bool:
         normalized_query = self._query_text_without_length_request(query_text or "")
-        if (
-            GENERIC_TENDER_DEFINITION_QUERY_RE.search(normalized_query)
-            and GENERIC_TENDER_INDEFINITE_RE.search(normalized_query)
-        ):
+        if GENERIC_TENDER_DEFINITION_QUERY_RE.search(
+            normalized_query
+        ) and GENERIC_TENDER_INDEFINITE_RE.search(normalized_query):
             return False
         if GENERIC_TENDER_CONCEPT_RE.search(normalized_query):
             return False
         return bool(
-            (SUMMARY_INTENT_QUERY_RE.search(normalized_query) or STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query))
+            (
+                SUMMARY_INTENT_QUERY_RE.search(normalized_query)
+                or STRUCTURED_OVERVIEW_QUERY_RE.search(normalized_query)
+            )
             and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
         )
 
@@ -2587,6 +2600,38 @@ class HybridRAGEngine:
                 procedure_label=fact_sheet.procedure_label,
             )
         if result.status == "BLOCK":
+            repaired_answer = repair_unsupported_protected_facts(answer, fact_sheet)
+            if repaired_answer != answer:
+                repaired_result = validate_guarded_answer(
+                    answer=repaired_answer,
+                    fact_sheet=fact_sheet,
+                    guarded=True,
+                    query=rag_query.text,
+                    config=rag_query.guardrail_config,
+                    allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+                )
+                if repaired_result.status != "BLOCK":
+                    logger.warning(
+                        "RAG guarded answer repaired",
+                        original_failures=result.failures,
+                        repaired_status=repaired_result.status,
+                        procedure_label=fact_sheet.procedure_label,
+                    )
+                    return repaired_result.safe_answer
+                logger.warning(
+                    "RAG guarded answer repair still failed",
+                    original_failures=result.failures,
+                    repaired_failures=repaired_result.failures,
+                    repaired_issue_snippets=guardrail_issue_snippets(repaired_answer),
+                    procedure_label=fact_sheet.procedure_label,
+                )
+            else:
+                logger.warning(
+                    "RAG guarded answer repair made no changes",
+                    failures=result.failures,
+                    issue_snippets=guardrail_issue_snippets(answer),
+                    procedure_label=fact_sheet.procedure_label,
+                )
             return self._build_guardrail_blocked_answer(fact_sheet)
         return result.safe_answer
 
@@ -2624,15 +2669,31 @@ class HybridRAGEngine:
             ]
         )
 
+    def _format_fact_sheet_values(
+        self,
+        values: tuple[str, ...],
+        *,
+        conflict_key: str | None,
+        conflicts: tuple[str, ...],
+        prefix: str = "",
+    ) -> str:
+        if conflict_key and conflict_key in conflicts:
+            return "conflitto_rilevato"
+        if not values:
+            return "non_rilevato"
+        return ", ".join(f"{prefix}{value}" for value in values)
+
     def _effective_final_top_k(self, rag_query: RAGQuery) -> int:
         requested_top_k = rag_query.top_k or settings.rag_top_k_final
-        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_structured_tender_overview(
-            rag_query.text
-        ):
+        if rag_query.mode in {
+            QueryMode.QA,
+            QueryMode.SEARCH,
+        } and self._query_requests_structured_tender_overview(rag_query.text):
             return max(requested_top_k, DETAILED_OVERVIEW_TOP_K_FINAL)
-        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_broad_summary(
-            rag_query.text
-        ):
+        if rag_query.mode in {
+            QueryMode.QA,
+            QueryMode.SEARCH,
+        } and self._query_requests_broad_summary(rag_query.text):
             return max(requested_top_k, BROAD_SUMMARY_TOP_K_FINAL)
         return requested_top_k
 
@@ -2640,9 +2701,10 @@ class HybridRAGEngine:
         requested_retrieval_top_k = rag_query.retrieval_top_k
         if requested_retrieval_top_k is not None:
             return requested_retrieval_top_k
-        if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH} and self._query_requests_structured_tender_overview(
-            rag_query.text
-        ):
+        if rag_query.mode in {
+            QueryMode.QA,
+            QueryMode.SEARCH,
+        } and self._query_requests_structured_tender_overview(rag_query.text):
             return max(settings.rag_top_k_dense, DETAILED_OVERVIEW_RETRIEVAL_TOP_K)
         return None
 
@@ -2655,6 +2717,51 @@ class HybridRAGEngine:
         stripped = RETRIEVAL_STOPWORD_STRIP_RE.sub(" ", stripped)
         stripped = re.sub(r"\s+", " ", stripped).strip(" ,.;:-")
         return stripped or normalized_query
+
+    def _retrieval_variant_language_for(self, query_text: str) -> str:
+        normalized_query = self._query_text_without_length_request(query_text or "").casefold()
+        english_markers = (
+            "tender",
+            "overview",
+            "summary",
+            "summarise",
+            "summarize",
+            "explain",
+            "describe",
+            "complete",
+            "key point",
+            "rfp",
+        )
+        italian_markers = (
+            "gara",
+            "bando",
+            "capitolato",
+            "disciplinare",
+            "procedura",
+            "panoramica",
+            "riassum",
+            "sintetizz",
+            "spiega",
+            "descriv",
+            "analizz",
+            "punti chiave",
+        )
+        english_score = sum(1 for marker in english_markers if marker in normalized_query)
+        italian_score = sum(1 for marker in italian_markers if marker in normalized_query)
+        return "en" if english_score > italian_score else "it"
+
+    def _requested_procedure_labels_for_retrieval(self, query_text: str) -> set[str]:
+        normalized_query = self._query_text_without_length_request(query_text or "").casefold()
+        requested: set[str] = set()
+        for label, anchors in PROCEDURE_ANCHORS.items():
+            markers = (label, *anchors)
+            if any(str(marker or "").casefold() in normalized_query for marker in markers):
+                requested.add(label)
+        return requested
+
+    def _retrieval_variant_procedure_labels(self, variant: str) -> set[str]:
+        normalized_variant = str(variant or "").casefold()
+        return {label for label in PROCEDURE_ANCHORS if label.casefold() in normalized_variant}
 
     def _retrieval_queries_for(
         self,
@@ -2672,13 +2779,19 @@ class HybridRAGEngine:
         try:
             variants = load_retrieval_query_variants(
                 "retrieval-critical-coverage",
-                language="it",
+                language=self._retrieval_variant_language_for(query_text),
             )
         except Exception as e:
             logger.warning("Critical retrieval prompt asset unavailable", error=str(e))
             return tuple(queries)
 
+        requested_procedure_labels = self._requested_procedure_labels_for_retrieval(query_text)
         for variant in variants:
+            variant_procedure_labels = self._retrieval_variant_procedure_labels(variant)
+            if variant_procedure_labels and not (
+                variant_procedure_labels & requested_procedure_labels
+            ):
+                continue
             normalized = variant.casefold()
             if normalized in seen:
                 continue
@@ -2711,12 +2824,14 @@ class HybridRAGEngine:
                 if length_target.requested_unit == "lines"
                 else f"{length_target.requested_value} parole"
             )
-            constraints.extend([
-                f"L'utente ha richiesto circa {requested_label}.",
-                f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
-                f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
-                "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
-            ])
+            constraints.extend(
+                [
+                    f"L'utente ha richiesto circa {requested_label}.",
+                    f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
+                    f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
+                    "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
+                ]
+            )
             if length_target.requested_unit == "lines":
                 constraints.append(
                     "Interpreta la richiesta in righe come una risposta molto estesa e dettagliata, senza discutere la fattibilita del numero richiesto."
@@ -2732,33 +2847,37 @@ class HybridRAGEngine:
                     "Se il contesto recuperato copre solo una parte della gara, fornisci comunque la migliore sintesi possibile dei punti emersi e aggiungi solo alla fine una breve nota sugli aspetti non coperti, invece di fermarti a dire soltanto che il contesto e insufficiente."
                 )
             if self._query_requests_structured_tender_overview(rag_query.text):
-                constraints.extend([
-                    "Organizza la risposta in queste sezioni esatte:\n"
-                    "1. Oggetto e perimetro\n"
-                    "2. Architettura tecnologica\n"
-                    "3. Fasi operative critiche\n"
-                    "4. Punti di rischio contrattuale\n"
-                    "5. Governance multi-soggetto",
-                    "Scrivi ogni sezione in prosa narrativa coesa, con frasi complete "
-                    "e transizioni logiche tra i dettagli.",
-                    "Non ricominciare dall'introduzione quando passi a una nuova sezione.",
-                    "Non ripetere lo stesso paragrafo o lo stesso concetto in piu sezioni.",
-                    "Ogni valore numerico deve apparire esattamente come trovato nel contesto.",
-                    "Se un soggetto, organizzazione, piattaforma, penale o scadenza non e "
-                    "nel contesto, scrivi: non disponibile nei documenti forniti.",
-                    "Non introdurre nomi assenti dal contesto recuperato.",
-                    "Non copiare segnaposto, slash isolati, date incomplete o frammenti "
-                    "OCR palesemente rotti.",
-                    "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure "
-                    "segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
-                ])
+                constraints.extend(
+                    [
+                        "Organizza la risposta in queste sezioni esatte:\n"
+                        "1. Oggetto e perimetro\n"
+                        "2. Architettura tecnologica\n"
+                        "3. Fasi operative critiche\n"
+                        "4. Punti di rischio contrattuale\n"
+                        "5. Governance multi-soggetto",
+                        "Scrivi ogni sezione in prosa narrativa coesa, con frasi complete "
+                        "e transizioni logiche tra i dettagli.",
+                        "Non ricominciare dall'introduzione quando passi a una nuova sezione.",
+                        "Non ripetere lo stesso paragrafo o lo stesso concetto in piu sezioni.",
+                        "Ogni valore numerico deve apparire esattamente come trovato nel contesto.",
+                        "Se un soggetto, organizzazione, piattaforma, penale o scadenza non e "
+                        "nel contesto, scrivi: non disponibile nei documenti forniti.",
+                        "Non introdurre nomi assenti dal contesto recuperato.",
+                        "Non copiare segnaposto, slash isolati, date incomplete o frammenti "
+                        "OCR palesemente rotti.",
+                        "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure "
+                        "segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
+                    ]
+                )
 
         if self._query_requests_math_rendering(rag_query.text):
-            constraints.extend([
-                "Quando riporti formule o simboli matematici, riscrivili in notazione matematica leggibile e coerente.",
-                "Non copiare frammenti OCR corrotti, pseudo-LaTeX incompleto o formule palesemente spezzate dal contesto.",
-                "Se il contesto contiene una formula danneggiata, spiega il significato matematico corretto invece di inventare simboli.",
-            ])
+            constraints.extend(
+                [
+                    "Quando riporti formule o simboli matematici, riscrivili in notazione matematica leggibile e coerente.",
+                    "Non copiare frammenti OCR corrotti, pseudo-LaTeX incompleto o formule palesemente spezzate dal contesto.",
+                    "Se il contesto contiene una formula danneggiata, spiega il significato matematico corretto invece di inventare simboli.",
+                ]
+            )
 
         return "\n".join(f"- {constraint}" for constraint in constraints)
 
@@ -2849,7 +2968,8 @@ class HybridRAGEngine:
                 completion_tokens=(
                     (generation_result.completion_tokens or 0)
                     + (continuation_result.completion_tokens or 0)
-                ) or generation_result.completion_tokens,
+                )
+                or generation_result.completion_tokens,
             )
 
             if current_words >= goal_words:
@@ -2929,11 +3049,7 @@ class HybridRAGEngine:
         collection: str = "documents",
     ) -> list[str]:
         """Index chunks into the dense retriever (Qdrant)."""
-        if (
-            not self._initialized
-            or not self.dense_retriever
-            or not self.sparse_retriever
-        ):
+        if not self._initialized or not self.dense_retriever or not self.sparse_retriever:
             raise RuntimeError("HybridRAG Engine not initialized yet.")
         texts = [c.text for c in chunks]
         metadatas = [c.metadata.__dict__ for c in chunks]
@@ -2980,8 +3096,7 @@ class HybridRAGEngine:
         for chunk in chunks:
             text = chunk.get("text", "")
             is_critical = any(
-                re.search(p, text, re.IGNORECASE)
-                for p in self.CRITICAL_NUMERIC_PATTERNS
+                re.search(p, text, re.IGNORECASE) for p in self.CRITICAL_NUMERIC_PATTERNS
             )
             if is_critical:
                 pinned.append(chunk)

@@ -1,0 +1,819 @@
+[
+    {
+        "id": "Q001",
+        "query": "Quali certificazioni di qualità sono obbligatorie per il Fornitore?",
+        "expected_answer_keywords": [
+            "UNI EN ISO 9001",
+            "ISO/IEC 27001",
+            "organismo di certificazione accreditato",
+            "IAF 33"
+        ],
+        "ontology_domain": "CERTIFICAZIONI",
+        "source_pages": [
+            35,
+            36
+        ],
+        "source_chunk_hint": "8.7 Requisiti di qualità della fornitura",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q002",
+        "query": "Cosa succede se il Fornitore perde la certificazione ISO 27001 durante il contratto?",
+        "expected_answer_keywords": [
+            "penali",
+            "risoluzione",
+            "ripristino",
+            "Regione Toscana intimer"
+        ],
+        "ontology_domain": "PENALITA",
+        "source_pages": [
+            36
+        ],
+        "source_chunk_hint": "8.7 perdita certificazioni",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q003",
+        "query": "Qual è la durata del periodo di presa in carico e subentro?",
+        "expected_answer_keywords": [
+            "due mesi",
+            "presa in carico",
+            "subentro"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            37
+        ],
+        "source_chunk_hint": "8.9 Attività propedeutiche",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q004",
+        "query": "Entro quanto tempo il Fornitore deve rispondere alle richieste di informazioni durante il trasferimento?",
+        "expected_answer_keywords": [
+            "2 giorni lavorativi",
+            "Scheda Informazioni",
+            "trasferimento"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            44
+        ],
+        "source_chunk_hint": "8.10 Passaggio di consegne",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q005",
+        "query": "Qual è la durata massima delle attività di trasferimento a fine fornitura?",
+        "expected_answer_keywords": [
+            "120 giorni",
+            "solari continuativi",
+            "trasferimento",
+            "phase-out"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            39,
+            40
+        ],
+        "source_chunk_hint": "8.10 Passaggio di consegne a fine fornitura",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q006",
+        "query": "Quale livello di qualificazione ACN è richiesto per i servizi OSCAT in modalità SaaS?",
+        "expected_answer_keywords": [
+            "QC1",
+            "qualificazione ACN",
+            "SaaS",
+            "Decreto direttoriale ACN n. 21/07/2024"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            36,
+            37
+        ],
+        "source_chunk_hint": "8.8 Qualificazione ACN",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q007",
+        "query": "A quale livello di qualificazione è stata adeguata l'infrastruttura SCT di Regione Toscana?",
+        "expected_answer_keywords": [
+            "AI2",
+            "determina ACN 307/2022",
+            "AI1/QC1",
+            "AI2/QC2"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            36
+        ],
+        "source_chunk_hint": "8.8 Qualificazione ACN SCT",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q008",
+        "query": "Quali sono i due paradigmi GDPR che i servizi devono implementare?",
+        "expected_answer_keywords": [
+            "Privacy by Default",
+            "Privacy by Design",
+            "GDPR",
+            "Regolamento UE 2016/679"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.2 Trattamento protezione e sicurezza dei dati personali",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q009",
+        "query": "Chi è il Responsabile Unico del Progetto (RUP) per questa gara?",
+        "expected_answer_keywords": [
+            "Sergio Papiani",
+            "ing.",
+            "RUP"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            139
+        ],
+        "source_chunk_hint": "Disciplinare Premesse",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q010",
+        "query": "Qual è la piattaforma telematica utilizzata per la procedura di gara?",
+        "expected_answer_keywords": [
+            "start.toscana.it",
+            "piattaforma telematica di negoziazione"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            139,
+            140
+        ],
+        "source_chunk_hint": "1. Piattaforma telematica",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q011",
+        "query": "Con quale criterio viene aggiudicata la gara?",
+        "expected_answer_keywords": [
+            "offerta economicamente più vantaggiosa",
+            "miglior rapporto qualità prezzo",
+            "OEPV"
+        ],
+        "ontology_domain": "ECONOMICO_FINANZIARIO",
+        "source_pages": [
+            139
+        ],
+        "source_chunk_hint": "Disciplinare Premesse criterio aggiudicazione",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q012",
+        "query": "Quali sistemi regionali trasversali devono essere integrati dai servizi dell'Accordo Quadro?",
+        "expected_answer_keywords": [
+            "CART",
+            "ARPA",
+            "SCT",
+            "interoperabilità",
+            "cooperazione applicativa"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.3 Integrazione con altri sistemi",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q013",
+        "query": "Per quanto tempo il software collaudato è coperto da garanzia?",
+        "expected_answer_keywords": [
+            "dodici mesi",
+            "garanzia",
+            "software collaudato",
+            "48 mese",
+            "49 al 60 mese"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.4 Garanzia del software",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q014",
+        "query": "Chi è responsabile del corretto dimensionamento delle risorse cloud SCT?",
+        "expected_answer_keywords": [
+            "Fornitore",
+            "dimensionamento",
+            "risorse",
+            "RTI gestore",
+            "SCT"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.1 Obblighi del Fornitore dimensionamento SCT",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q015",
+        "query": "Cosa deve contenere il Piano Operativo presentato entro la presa in carico?",
+        "expected_answer_keywords": [
+            "Modello di gestione",
+            "Piano Operativo",
+            "modalità organizzative",
+            "governance del contratto",
+            "10 sezioni"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            38,
+            39
+        ],
+        "source_chunk_hint": "8.9 Piano Operativo contenuti minimi",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q016",
+        "query": "Il Piano Operativo deve essere approvato prima di cosa?",
+        "expected_answer_keywords": [
+            "stipula dei contratti attuativi",
+            "approvazione",
+            "Piano Operativo"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            39
+        ],
+        "source_chunk_hint": "8.9 approvazione Piano Operativo",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q017",
+        "query": "Qual è la percentuale di Programmatori nel mix professionale per il servizio MAA?",
+        "expected_answer_keywords": [
+            "55%",
+            "Programmatore",
+            "MAA"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            35
+        ],
+        "source_chunk_hint": "Profili professionali servizio MAA tabella",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q018",
+        "query": "Chi deve possedere la certificazione ISO 9001 nel caso di raggruppamento temporaneo di imprese?",
+        "expected_answer_keywords": [
+            "tutti i membri componenti",
+            "raggruppamento temporaneo",
+            "consorzio stabile",
+            "consorziate esecutrici"
+        ],
+        "ontology_domain": "CERTIFICAZIONI",
+        "source_pages": [
+            35,
+            36
+        ],
+        "source_chunk_hint": "8.7 certificazioni RTI",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q019",
+        "query": "Cosa deve garantire il Fornitore riguardo alla documentazione prodotta?",
+        "expected_answer_keywords": [
+            "lingua italiana",
+            "accuratezza",
+            "comprensibilità",
+            "usabilità",
+            "documentazione"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.4 documentazione software",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q020",
+        "query": "Entro quanti mesi prima della scadenza il Fornitore deve presentare il Piano di Trasferimento?",
+        "expected_answer_keywords": [
+            "tre mesi",
+            "Piano di trasferimento",
+            "PTF",
+            "scadenza Accordo Quadro"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            40
+        ],
+        "source_chunk_hint": "8.10 termine presentazione PTF",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q021",
+        "query": "Entro quanto tempo il Fornitore deve recepire le richieste di variazione al Piano Operativo?",
+        "expected_answer_keywords": [
+            "una settimana",
+            "variazione",
+            "Piano Operativo",
+            "Amministrazione"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            39
+        ],
+        "source_chunk_hint": "8.9 variazione Piano Operativo",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q022",
+        "query": "Chi copre i danni causati dalle imprese subappaltatrici?",
+        "expected_answer_keywords": [
+            "polizza assicurativa",
+            "Fornitore",
+            "garanzie",
+            "subappaltatrici",
+            "sub-fornitrici"
+        ],
+        "ontology_domain": "CLAUSOLE_CONTRATTUALI",
+        "source_pages": [
+            137
+        ],
+        "source_chunk_hint": "Capitolato Normativo polizza subappalto",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q023",
+        "query": "Cosa succede se la polizza assicurativa non è operativa?",
+        "expected_answer_keywords": [
+            "risoluzione di diritto",
+            "incameramento della cauzione definitiva",
+            "penale",
+            "polizza"
+        ],
+        "ontology_domain": "PENALITA",
+        "source_pages": [
+            137
+        ],
+        "source_chunk_hint": "Capitolato Normativo polizza operatività",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q024",
+        "query": "Qual è la durata prevista del procedimento di gara dalla pubblicazione del bando?",
+        "expected_answer_keywords": [
+            "9 mesi",
+            "pubblicazione del bando",
+            "durata procedimento"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            139
+        ],
+        "source_chunk_hint": "Disciplinare Premesse durata procedimento",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q025",
+        "query": "Qual è il luogo di svolgimento del servizio e qual è il codice NUTS?",
+        "expected_answer_keywords": [
+            "Regione Toscana",
+            "ITI1",
+            "NUTS",
+            "sedi delle Amministrazioni"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            139
+        ],
+        "source_chunk_hint": "Disciplinare luogo svolgimento servizio",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q026",
+        "query": "Che tipo di procedura è adottata per questa gara?",
+        "expected_answer_keywords": [
+            "procedura aperta",
+            "piattaforma telematica",
+            "start.toscana.it"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            139
+        ],
+        "source_chunk_hint": "Disciplinare tipo procedura",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q027",
+        "query": "Cosa prevede la norma ISO/IEC 27001 richiesta al Fornitore come campo di applicazione?",
+        "expected_answer_keywords": [
+            "progettazione",
+            "sviluppo",
+            "installazione",
+            "assistenza",
+            "commercializzazione",
+            "IAF 33",
+            "software"
+        ],
+        "ontology_domain": "CERTIFICAZIONI",
+        "source_pages": [
+            36
+        ],
+        "source_chunk_hint": "8.7 ISO 27001 campo applicazione",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q028",
+        "query": "Quale norma deve rispettare il software realizzato riguardo all'accessibilità?",
+        "expected_answer_keywords": [
+            "normative vigenti",
+            "accessibilità",
+            "requisiti funzionali",
+            "standard"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.4 garanzia software accessibilità",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q029",
+        "query": "L'affiancamento del Fornitore uscente è garantito durante la presa in carico?",
+        "expected_answer_keywords": [
+            "non garantito",
+            "affiancamento",
+            "Fornitore uscente"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            37,
+            38
+        ],
+        "source_chunk_hint": "8.9 affiancamento fornitore uscente",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q030",
+        "query": "Chi è responsabile delle spese per le attività propedeutiche alla presa in carico?",
+        "expected_answer_keywords": [
+            "Fornitore",
+            "a carico del Fornitore",
+            "senza oneri aggiuntivi",
+            "Regione Toscana"
+        ],
+        "ontology_domain": "ECONOMICO_FINANZIARIO",
+        "source_pages": [
+            37,
+            38
+        ],
+        "source_chunk_hint": "8.9 spese presa in carico",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q031",
+        "query": "Cosa deve contenere il Piano di Trasferimento (PTF)?",
+        "expected_answer_keywords": [
+            "oggetto del trasferimento",
+            "attività",
+            "modalità di accesso",
+            "documentazione",
+            "codice",
+            "architettura"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            40
+        ],
+        "source_chunk_hint": "8.10 PTF contenuti minimi",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q032",
+        "query": "Cosa deve comprendere il costo del canone offerto dal Fornitore?",
+        "expected_answer_keywords": [
+            "risorse contrattualizzate",
+            "RTI gestore",
+            "SCT",
+            "canone",
+            "as a Service"
+        ],
+        "ontology_domain": "ECONOMICO_FINANZIARIO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.1 costo canone SCT",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q033",
+        "query": "Cosa succede se il Fornitore non dimensiona correttamente le risorse SCT?",
+        "expected_answer_keywords": [
+            "totalmente a carico del Fornitore",
+            "risorse aggiuntive",
+            "piena funzionalità",
+            "dimensionamento"
+        ],
+        "ontology_domain": "PENALITA",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.1 conseguenze dimensionamento errato",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q034",
+        "query": "Il Responsabile del servizio comporta oneri aggiuntivi per l'Amministrazione?",
+        "expected_answer_keywords": [
+            "senza oneri aggiuntivi",
+            "Responsabile del servizio",
+            "gestione del personale"
+        ],
+        "ontology_domain": "ECONOMICO_FINANZIARIO",
+        "source_pages": [
+            35
+        ],
+        "source_chunk_hint": "8.5 Responsabile del servizio oneri",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q035",
+        "query": "Quali servizi sono inclusi nell'Accordo Quadro come oggetto principale?",
+        "expected_answer_keywords": [
+            "Gestione OSCAT-GitLab",
+            "Gestione OSCAT VA",
+            "Sviluppo e Manutenzione Evolutiva",
+            "Manutenzione Adeguativa",
+            "Assistenza tecnica",
+            "Help desk",
+            "Supporto Tecnico Specialistico"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            38
+        ],
+        "source_chunk_hint": "8.9 Piano Operativo sezioni servizi",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q036",
+        "query": "Che tipo di approccio deve adottare il sistema informativo per la conformità al GDPR fin dalla progettazione?",
+        "expected_answer_keywords": [
+            "Privacy by Design",
+            "fase di progettazione",
+            "valutazione del rischio"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.2 Privacy by Design GDPR",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q037",
+        "query": "Cosa deve fare il Fornitore riguardo alle anomalie del software non intercettate durante i test?",
+        "expected_answer_keywords": [
+            "rimozione dei difetti",
+            "a totale carico del Fornitore",
+            "tempestiva rimozione",
+            "basi dati deteriorate"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.4 anomalie difetti software",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q038",
+        "query": "Come vengono erogati i servizi previsti nell'Accordo Quadro in termini di modalità?",
+        "expected_answer_keywords": [
+            "progettuale a corpo",
+            "a giorni/persona",
+            "continuativa a canone"
+        ],
+        "ontology_domain": "ECONOMICO_FINANZIARIO",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.6 Modalità di esecuzione",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q039",
+        "query": "Qual è la relazione tra OSCAT e SCT secondo il capitolato?",
+        "expected_answer_keywords": [
+            "integrazione inevitabile e necessaria",
+            "DevSecOps",
+            "ciclo di vita del software",
+            "CMDBuild",
+            "Service Management"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            33
+        ],
+        "source_chunk_hint": "8.3 integrazione OSCAT SCT",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q040",
+        "query": "Quali responsabilità ha il Fornitore verso le risorse umane impiegate?",
+        "expected_answer_keywords": [
+            "gestione del personale",
+            "ferie",
+            "malattie",
+            "turnazione",
+            "presidio",
+            "reperibilità"
+        ],
+        "ontology_domain": "ORGANIZZATIVO",
+        "source_pages": [
+            35
+        ],
+        "source_chunk_hint": "8.5 Responsabile del servizio gestione personale",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q041",
+        "query": "Cosa deve fare il Fornitore per comprovare il possesso della certificazione ISO 9001?",
+        "expected_answer_keywords": [
+            "certificato di conformità",
+            "organismo di certificazione accreditato",
+            "ISO/IEC 17021-1",
+            "EA MLA",
+            "IAF MLA"
+        ],
+        "ontology_domain": "CERTIFICAZIONI",
+        "source_pages": [
+            35,
+            36
+        ],
+        "source_chunk_hint": "8.7 comprova certificazione ISO 9001",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q042",
+        "query": "L'ottenimento della qualificazione ACN è un obbligo contrattuale per l'erogazione dei servizi SaaS?",
+        "expected_answer_keywords": [
+            "vincolo per l'erogazione",
+            "qualificazione ACN",
+            "QC1",
+            "mantenere",
+            "vigenza contrattuale"
+        ],
+        "ontology_domain": "CERTIFICAZIONI",
+        "source_pages": [
+            37
+        ],
+        "source_chunk_hint": "8.8 ACN vincolo erogazione",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q043",
+        "query": "Quando inizia e quando termina il periodo di garanzia del software rilasciato tra il 37° e il 48° mese?",
+        "expected_answer_keywords": [
+            "49 al 60 mese",
+            "12 mesi",
+            "48 mese",
+            "garanzia"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            34
+        ],
+        "source_chunk_hint": "8.4 garanzia software periodi",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q044",
+        "query": "Chi nel caso di RTI deve ottenere la qualificazione ACN?",
+        "expected_answer_keywords": [
+            "Mandataria",
+            "raggruppamento temporaneo",
+            "qualificazione ACN",
+            "capogruppo"
+        ],
+        "ontology_domain": "SUBAPPALTO_RTI",
+        "source_pages": [
+            37
+        ],
+        "source_chunk_hint": "8.8 ACN RTI Mandataria",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q045",
+        "query": "Cosa è previsto nel caso di consorzio stabile riguardo alle certificazioni obbligatorie?",
+        "expected_answer_keywords": [
+            "consorziate esecutrici",
+            "consorzio stabile",
+            "certificazione",
+            "ISO 9001",
+            "ISO 27001"
+        ],
+        "ontology_domain": "SUBAPPALTO_RTI",
+        "source_pages": [
+            35,
+            36
+        ],
+        "source_chunk_hint": "8.7 certificazioni consorzio stabile",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q046",
+        "query": "Cosa deve includere il Piano di Qualità del Fornitore?",
+        "expected_answer_keywords": [
+            "requisiti specifici dei servizi",
+            "procedure generali di gestione della qualità",
+            "disposizioni organizzative",
+            "approvato da Regione Toscana"
+        ],
+        "ontology_domain": "AMMINISTRATIVO",
+        "source_pages": [
+            35,
+            39
+        ],
+        "source_chunk_hint": "8.7.1 Piano di Qualità contenuti",
+        "difficulty": "medium"
+    },
+    {
+        "id": "Q047",
+        "query": "Entro quanto tempo il Fornitore deve recepire le variazioni al Piano di Qualità?",
+        "expected_answer_keywords": [
+            "una settimana",
+            "variazione",
+            "Piano di Qualità"
+        ],
+        "ontology_domain": "SLA_PENALITA",
+        "source_pages": [
+            39
+        ],
+        "source_chunk_hint": "8.9 variazione Piano di Qualità",
+        "difficulty": "easy"
+    },
+    {
+        "id": "Q048",
+        "query": "Qual è la composizione percentuale dei profili professionali per il servizio MAA con focus sicurezza (OSCAT VA)?",
+        "expected_answer_keywords": [
+            "Coordinatore/Capo Progetto 10%",
+            "Architetto applicativo 20%",
+            "Specialista sicurezza 20%",
+            "Programmatore 5%"
+        ],
+        "ontology_domain": "TECNICO",
+        "source_pages": [
+            35
+        ],
+        "source_chunk_hint": "profili professionali MAA OSCAT VA tabella",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q049",
+        "query": "Cosa avviene se il Fornitore non fornisce la prova della piena operatività delle garanzie assicurative?",
+        "expected_answer_keywords": [
+            "risoluzione di diritto",
+            "incameramento della cauzione definitiva",
+            "penale",
+            "risarcimento del maggior danno"
+        ],
+        "ontology_domain": "PENALITA",
+        "source_pages": [
+            137
+        ],
+        "source_chunk_hint": "Capitolato Normativo garanzia assicurativa risoluzione",
+        "difficulty": "hard"
+    },
+    {
+        "id": "Q050",
+        "query": "Dove deve essere mantenuta operativa la responsabilità del servizio durante il trasferimento?",
+        "expected_answer_keywords": [
+            "Fornitore",
+            "fino al termine delle attività di trasferimento",
+            "responsabilità",
+            "PTF"
+        ],
+        "ontology_domain": "CLAUSOLE_CONTRATTUALI",
+        "source_pages": [
+            40
+        ],
+        "source_chunk_hint": "8.10 responsabilità durante trasferimento",
+        "difficulty": "medium"
+    }
+]

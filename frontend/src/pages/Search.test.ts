@@ -32,11 +32,19 @@ describe('Search page helpers', () => {
     });
 
     it('normalizes backend reachability errors into the friendly message', () => {
-        expect(normalizeSearchErrorMessage('Failed to fetch')).toBe(
-            'Could not reach the backend. Make sure the API server is running on port 8000.'
-        );
+        const reachabilityMessage = 'Could not reach the backend. Make sure the API server is running on port 8000.';
+        expect(normalizeSearchErrorMessage('Failed to fetch')).toBe(reachabilityMessage);
+        expect(normalizeSearchErrorMessage('TypeError: Failed to fetch')).toBe(reachabilityMessage);
+        expect(normalizeSearchErrorMessage('NetworkError when attempting to fetch resource')).toBe(reachabilityMessage);
+        expect(normalizeSearchErrorMessage('ERR_CONNECTION_REFUSED')).toBe(reachabilityMessage);
+    });
+
+    it('preserves application-level errors that contain transport keywords', () => {
+        expect(normalizeSearchErrorMessage('Generation failed')).toBe('Generation failed');
+        expect(normalizeSearchErrorMessage('RAG engine not initialized')).toBe('RAG engine not initialized');
         expect(normalizeSearchErrorMessage('NoValidHarFileError: No .har file found')).toBe(
             'NoValidHarFileError: No .har file found'
         );
+        expect(normalizeSearchErrorMessage('Unable to fetch tender summary')).toBe('Unable to fetch tender summary');
     });
 });

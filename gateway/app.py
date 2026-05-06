@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import Field, ConfigDict
+from pydantic import AliasChoices, Field, ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -62,7 +62,9 @@ class Settings(BaseSettings):
         default=None, description="API key used when tender_cloud_provider=anthropic."
     )
     gateway_timeout: float = Field(
-        default=30.0, description="HTTP client timeout in seconds for upstream calls."
+        default=1200.0,
+        validation_alias=AliasChoices("GATEWAY_TIMEOUT", "GATEWAY_GATEWAY_TIMEOUT"),
+        description="HTTP client timeout in seconds for upstream calls.",
     )
 
 

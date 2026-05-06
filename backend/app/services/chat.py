@@ -6,7 +6,7 @@ import hashlib
 import io
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from minio import Minio
 from minio.error import S3Error
@@ -62,6 +62,7 @@ def ensure_chat_bucket(minio_client: Minio | None = None) -> str:
         client.make_bucket(bucket)
     return bucket
 
+
 def sanitize_attachment_filename(filename: str | None) -> str:
     if not filename:
         return "attachment.bin"
@@ -80,7 +81,7 @@ def build_chat_text_object_name(
     message_id: int,
     created_at: datetime,
 ) -> str:
-    dt = created_at.astimezone(timezone.utc)
+    dt = created_at.astimezone(UTC)
     return (
         f"tenders/tender_{tender_id}/chat/room_{chat_room_id}/"
         f"messages/{dt:%Y/%m/%d}/{message_id}.json"
@@ -129,7 +130,7 @@ def build_chat_attachment_object_name(
     created_at: datetime,
     filename: str,
 ) -> str:
-    dt = created_at.astimezone(timezone.utc)
+    dt = created_at.astimezone(UTC)
     safe_filename = sanitize_attachment_filename(filename)
     return (
         f"tenders/tender_{tender_id}/chat/room_{chat_room_id}/"
@@ -241,7 +242,7 @@ async def ensure_official_chat_room(
     )
     room = result.scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if not room:
         room = ChatRoom(
@@ -295,7 +296,9 @@ async def upsert_chat_member_for_tender(
     source: str,
     actor_id: int | None = None,
 ) -> ChatMember:
-    room = await ensure_official_chat_room(db, tender_id=tender_id, actor_id=actor_id, open_now=False)
+    room = await ensure_official_chat_room(
+        db, tender_id=tender_id, actor_id=actor_id, open_now=False
+    )
 
     result = await db.execute(
         select(ChatMember).where(
@@ -373,7 +376,7 @@ async def deactivate_chat_member_for_tender(
         return None
 
     member.is_active = False
-    member.left_at = datetime.now(timezone.utc)
+    member.left_at = datetime.now(UTC)
     await db.flush()
 
     await create_chat_event(
@@ -393,15 +396,15 @@ async def sync_chat_members_from_tender_permissions(
     actor_id: int | None = None,
 ) -> ChatRoom | None:
     tender_result = await db.execute(
-        select(Tender)
-        .where(Tender.id == tender_id)
-        .options(selectinload(Tender.permissions))
+        select(Tender).where(Tender.id == tender_id).options(selectinload(Tender.permissions))
     )
     tender = tender_result.scalar_one_or_none()
     if not tender:
         return None
 
-    room = await ensure_official_chat_room(db, tender_id=tender_id, actor_id=actor_id, open_now=False)
+    room = await ensure_official_chat_room(
+        db, tender_id=tender_id, actor_id=actor_id, open_now=False
+    )
 
     desired_roles: dict[int, tuple[str, str]] = {}
 

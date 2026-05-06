@@ -19,6 +19,8 @@ import {
     Sparkles,
     Sliders,
     PawPrint,
+    Brain,
+    ListChecks,
 } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import { BuddyPanel } from './components/buddy';
@@ -46,6 +48,8 @@ import {
     DataExplorerPage,
     IngestionMonitorPage,
     LlmSettingPage,
+    PlanningCoveragePage,
+    TenderIntelligencePage,
 } from './router/lazyRoutes';
 
 const navItems = [
@@ -53,7 +57,9 @@ const navItems = [
     { path: '/proposals', label: 'Proposals', icon: FileText },
     { path: '/library', label: 'Content Library', icon: Library },
     { path: '/search', label: 'AI Search', icon: Search },
+    { path: '/intelligence', label: 'Tender Intelligence', icon: Brain },
     { path: '/llmsetting', label: 'LLM Tuner', icon: Sliders, adminOnly: true },
+    { path: '/planningcoverage', label: 'Planning Coverage', icon: ListChecks, adminOnly: true },
     { path: '/ingestion', label: 'Ingestion Monitor', icon: Activity },
     { path: '/tasks', label: 'Task Manager', icon: Play },
     { path: '/tender-access', label: 'Tender Access', icon: Shield, adminOnly: true },
@@ -222,6 +228,7 @@ function App() {
                                 <Route path="/proposals/:id" element={<ProposalEditorPage />} />
                                 <Route path="/library" element={<ContentLibraryPage />} />
                                 <Route path="/search" element={<SearchPage />} />
+                                <Route path="/intelligence" element={<TenderIntelligencePage />} />
                                 <Route path="/ingestion" element={<IngestionMonitorPage />} />
                                 <Route path="/tasks" element={<TaskManagerPage />} />
                                 <Route path="/observability-kpi" element={user.role === 'admin' ? <ObservabilityKpiPage /> : <Navigate to="/" />} />
@@ -232,6 +239,7 @@ function App() {
                                 <Route path="/markov-state-process/:tenderId" element={user.role === 'admin' ? <Navigate to="/markov-state-process" replace /> : <Navigate to="/" />} />
                                 <Route path="/data-explorer" element={user.role === 'admin' ? <DataExplorerPage /> : <Navigate to="/" />} />
                                 <Route path="/llmsetting" element={user.role === 'admin' ? <LlmSettingPage /> : <Navigate to="/" />} />
+                                <Route path="/planningcoverage" element={user.role === 'admin' ? <PlanningCoveragePage /> : <Navigate to="/" />} />
                                 <Route path="/components" element={user.role === 'admin' ? <ComponentsPage /> : <Navigate to="/" />} />
                                 <Route path="/settings" element={user.role === 'admin' ? <SettingsPage /> : <Navigate to="/" />} />
                                 <Route path="/monitor" element={user.role === 'admin' ? <SystemMonitorPage /> : <Navigate to="/" />} />

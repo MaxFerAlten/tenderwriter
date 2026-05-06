@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 
 import httpx
+
 from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
@@ -51,11 +52,19 @@ TenderStatus = _MODELS_MODULE.TenderStatus
 build_bid_plan_event_payload = _KPI_MODULE.build_bid_plan_event_payload
 build_bid_team_assigned_event_payload = _KPI_MODULE.build_bid_team_assigned_event_payload
 build_clarification_event_payload = _KPI_MODULE.build_clarification_event_payload
-build_compliance_gate_rework_requested_event_payload = _KPI_MODULE.build_compliance_gate_rework_requested_event_payload
-build_contribution_assignment_confirmed_event_payload = _KPI_MODULE.build_contribution_assignment_confirmed_event_payload
-build_coordination_risk_raised_event_payload = _KPI_MODULE.build_coordination_risk_raised_event_payload
+build_compliance_gate_rework_requested_event_payload = (
+    _KPI_MODULE.build_compliance_gate_rework_requested_event_payload
+)
+build_contribution_assignment_confirmed_event_payload = (
+    _KPI_MODULE.build_contribution_assignment_confirmed_event_payload
+)
+build_coordination_risk_raised_event_payload = (
+    _KPI_MODULE.build_coordination_risk_raised_event_payload
+)
 build_draft_integrated_ready_event_payload = _KPI_MODULE.build_draft_integrated_ready_event_payload
-build_rework_reescalated_to_coordination_event_payload = _KPI_MODULE.build_rework_reescalated_to_coordination_event_payload
+build_rework_reescalated_to_coordination_event_payload = (
+    _KPI_MODULE.build_rework_reescalated_to_coordination_event_payload
+)
 build_submission_status_event_payload = _KPI_MODULE.build_submission_status_event_payload
 build_tender_decision_event_payload = _KPI_MODULE.build_tender_decision_event_payload
 build_terminal_lifecycle_event_payload = _KPI_MODULE.build_terminal_lifecycle_event_payload
@@ -63,22 +72,36 @@ build_tender_stopped_at_gate_event_payload = _KPI_MODULE.build_tender_stopped_at
 KpiClientResult = _KPI_MODULE.KpiClientResult
 KpiReasonEngineClient = _KPI_MODULE.KpiReasonEngineClient
 apply_delivery_result = _KPI_MODULE.apply_delivery_result
-build_call_attendance_recorded_event_payload = _KPI_MODULE.build_call_attendance_recorded_event_payload
+build_call_attendance_recorded_event_payload = (
+    _KPI_MODULE.build_call_attendance_recorded_event_payload
+)
 build_call_scheduled_event_payload = _KPI_MODULE.build_call_scheduled_event_payload
-build_compliance_gate_decision_event_payload = _KPI_MODULE.build_compliance_gate_decision_event_payload
+build_compliance_gate_decision_event_payload = (
+    _KPI_MODULE.build_compliance_gate_decision_event_payload
+)
 build_compliance_gate_opened_event_payload = _KPI_MODULE.build_compliance_gate_opened_event_payload
-build_contribution_due_date_set_event_payload = _KPI_MODULE.build_contribution_due_date_set_event_payload
+build_contribution_due_date_set_event_payload = (
+    _KPI_MODULE.build_contribution_due_date_set_event_payload
+)
 build_contribution_received_event_payload = _KPI_MODULE.build_contribution_received_event_payload
-build_contribution_request_created_event_payload = _KPI_MODULE.build_contribution_request_created_event_payload
-build_contribution_review_completed_event_payload = _KPI_MODULE.build_contribution_review_completed_event_payload
+build_contribution_request_created_event_payload = (
+    _KPI_MODULE.build_contribution_request_created_event_payload
+)
+build_contribution_review_completed_event_payload = (
+    _KPI_MODULE.build_contribution_review_completed_event_payload
+)
 build_domain_event_payload = _KPI_MODULE.build_domain_event_payload
-build_proposal_section_updated_event_payload = _KPI_MODULE.build_proposal_section_updated_event_payload
+build_proposal_section_updated_event_payload = (
+    _KPI_MODULE.build_proposal_section_updated_event_payload
+)
 build_requirements_extracted_event_payload = _KPI_MODULE.build_requirements_extracted_event_payload
 build_review_cycle_started_event_payload = _KPI_MODULE.build_review_cycle_started_event_payload
 build_rework_requested_event_payload = _KPI_MODULE.build_rework_requested_event_payload
 build_rework_resolved_event_payload = _KPI_MODULE.build_rework_resolved_event_payload
 build_tender_created_event_payload = _KPI_MODULE.build_tender_created_event_payload
-build_tender_document_ingested_event_payload = _KPI_MODULE.build_tender_document_ingested_event_payload
+build_tender_document_ingested_event_payload = (
+    _KPI_MODULE.build_tender_document_ingested_event_payload
+)
 build_tender_sync_payload = _KPI_MODULE.build_tender_sync_payload
 select_primary_proposal = _KPI_MODULE.select_primary_proposal
 
@@ -200,7 +223,11 @@ class TenderSyncPayloadTests(unittest.TestCase):
             document_id="tenders/tender_3/source.pdf",
             filename="source.pdf",
             extracted_candidates=[
-                {"summary": "Must provide ISO 27001 evidence", "reference": "1.2", "priority": "high"},
+                {
+                    "summary": "Must provide ISO 27001 evidence",
+                    "reference": "1.2",
+                    "priority": "high",
+                },
                 {"summary": "Include continuity plan", "reference": "1.3", "priority": "medium"},
             ],
             created_requirements=[
@@ -257,7 +284,9 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["path"], "/v1/tenders")
         self.assertEqual(observed["auth"], "Bearer service-token-123")
         self.assertEqual(observed["service_token"], "service-token-123")
-        self.assertEqual(observed["payload"], {"external_tender_id": "7", "title": "Framework Tender"})
+        self.assertEqual(
+            observed["payload"], {"external_tender_id": "7", "title": "Framework Tender"}
+        )
 
     async def test_publish_event_posts_to_expected_tender_endpoint(self) -> None:
         observed: dict[str, object] = {}
@@ -266,7 +295,9 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
             observed["method"] = request.method
             observed["path"] = request.url.path
             observed["payload"] = json.loads(request.content.decode("utf-8"))
-            return httpx.Response(202, json={"status": "accepted", "event_type": "proposal_created"})
+            return httpx.Response(
+                202, json={"status": "accepted", "event_type": "proposal_created"}
+            )
 
         client = KpiReasonEngineClient(
             base_url="http://kpi-service.test",
@@ -350,7 +381,9 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             observed["method"] = request.method
             observed["path"] = request.url.path
-            return httpx.Response(200, json={"external_tender_id": "7", "items": [], "requirement_items": []})
+            return httpx.Response(
+                200, json={"external_tender_id": "7", "items": [], "requirement_items": []}
+            )
 
         client = KpiReasonEngineClient(
             base_url="http://kpi-service.test",
@@ -371,7 +404,9 @@ class KpiReasonEngineClientTests(unittest.IsolatedAsyncioTestCase):
             observed["method"] = request.method
             observed["path"] = request.url.path
             observed["payload"] = json.loads(request.content.decode("utf-8"))
-            return httpx.Response(202, json={"external_tender_id": "7", "job_id": 99, "job_status": "queued"})
+            return httpx.Response(
+                202, json={"external_tender_id": "7", "job_id": 99, "job_status": "queued"}
+            )
 
         client = KpiReasonEngineClient(
             base_url="http://kpi-service.test",
@@ -546,17 +581,33 @@ class OperationalPayloadBuilderTests(unittest.TestCase):
             notes="Joined on time",
         )
 
-        request_payload = build_contribution_request_created_event_payload(request=request_row, contribution=contribution)
-        due_payload = build_contribution_due_date_set_event_payload(request=request_row, contribution=contribution)
-        received_payload = build_contribution_received_event_payload(request=request_row, contribution=contribution)
-        review_started_payload = build_review_cycle_started_event_payload(review=review, contribution=contribution)
-        review_completed_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
-        rework_requested_payload = build_rework_requested_event_payload(rework=rework, contribution=contribution)
-        rework_resolved_payload = build_rework_resolved_event_payload(rework=rework, contribution=contribution)
+        request_payload = build_contribution_request_created_event_payload(
+            request=request_row, contribution=contribution
+        )
+        due_payload = build_contribution_due_date_set_event_payload(
+            request=request_row, contribution=contribution
+        )
+        received_payload = build_contribution_received_event_payload(
+            request=request_row, contribution=contribution
+        )
+        review_started_payload = build_review_cycle_started_event_payload(
+            review=review, contribution=contribution
+        )
+        review_completed_payload = build_contribution_review_completed_event_payload(
+            review=review, contribution=contribution
+        )
+        rework_requested_payload = build_rework_requested_event_payload(
+            rework=rework, contribution=contribution
+        )
+        rework_resolved_payload = build_rework_resolved_event_payload(
+            rework=rework, contribution=contribution
+        )
         gate_opened_payload = build_compliance_gate_opened_event_payload(gate=gate)
         gate_decision_payload = build_compliance_gate_decision_event_payload(gate=gate)
         call_payload = build_call_scheduled_event_payload(call=call)
-        attendance_payload = build_call_attendance_recorded_event_payload(record=attendance, call=call)
+        attendance_payload = build_call_attendance_recorded_event_payload(
+            record=attendance, call=call
+        )
 
         self.assertEqual(request_payload["external_request_id"], "301")
         self.assertEqual(request_payload["external_contribution_id"], "201")
@@ -594,7 +645,10 @@ class LifecyclePayloadBuilderTests(unittest.TestCase):
         payload = build_tender_sync_payload(tender)
 
         self.assertEqual(payload["metadata"]["lifecycle"]["decision"]["decision"], "go")
-        self.assertEqual(payload["metadata"]["lifecycle"]["submission_status"]["submission_status"], "acknowledged")
+        self.assertEqual(
+            payload["metadata"]["lifecycle"]["submission_status"]["submission_status"],
+            "acknowledged",
+        )
 
     def test_lifecycle_event_payload_builders_keep_expected_shape(self) -> None:
         decided_at = datetime(2026, 3, 19, 9, 0, tzinfo=timezone.utc)

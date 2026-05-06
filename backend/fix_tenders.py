@@ -1,7 +1,7 @@
 import sys
 
-file_path = r'D:\tender\tenderwriter\backend\app\api\tenders.py'
-with open(file_path, 'r', encoding='utf-8') as f:
+file_path = r"D:\tender\tenderwriter\backend\app\api\tenders.py"
+with open(file_path, encoding="utf-8") as f:
     lines = f.readlines()
 
 new_func = '''@router.post("/{tender_id}/import", status_code=202)
@@ -107,13 +107,13 @@ end_idx = -1
 for i, line in enumerate(lines):
     if '@router.post("/{tender_id}/import", status_code=202)' in line:
         start_idx = i
-    if start_idx != -1 and i > start_idx and 'class TenderDecisionRequest(' in line:
+    if start_idx != -1 and i > start_idx and "class TenderDecisionRequest(" in line:
         end_idx = i - 3
         break
 
 if start_idx != -1 and end_idx != -1:
-    new_lines = lines[:start_idx] + [new_func + '\n\n'] + lines[end_idx+1:]
-    with open(file_path, 'w', encoding='utf-8') as f:
+    new_lines = lines[:start_idx] + [new_func + "\n\n"] + lines[end_idx + 1 :]
+    with open(file_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
     print(f"Successfully replaced from line {start_idx} to {end_idx}")
 else:

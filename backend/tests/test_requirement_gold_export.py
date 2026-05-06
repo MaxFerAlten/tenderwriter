@@ -25,7 +25,9 @@ _CLI_MODULE = load_service_test_module("app.export_requirement_gold_set")
 
 
 class RequirementGoldExportTests(unittest.TestCase):
-    def test_build_requirement_gold_set_case_uses_approved_as_expected_and_active_as_predicted(self) -> None:
+    def test_build_requirement_gold_set_case_uses_approved_as_expected_and_active_as_predicted(
+        self,
+    ) -> None:
         approved_requirement = SimpleNamespace(
             id=11,
             canonical_text="The bidder must provide ISO 27001 certification.",
@@ -103,7 +105,12 @@ class RequirementGoldExportTests(unittest.TestCase):
 
         case = _EXPORT_MODULE.build_requirement_gold_set_case(
             SimpleNamespace(id=7, title="Security tender"),
-            [approved_dependency_requirement, approved_requirement, pending_requirement, obsolete_requirement],
+            [
+                approved_dependency_requirement,
+                approved_requirement,
+                pending_requirement,
+                obsolete_requirement,
+            ],
             [approved_relation, pending_endpoint_relation],
         )
 
@@ -113,10 +120,15 @@ class RequirementGoldExportTests(unittest.TestCase):
             [item["text"] for item in case["expected_requirements"]],
         )
         self.assertEqual(len(case["predicted_requirements"]), 3)
-        self.assertEqual(case["predicted_requirements"][1]["citations"][0]["source_reference"], "Section 2.1")
+        self.assertEqual(
+            case["predicted_requirements"][1]["citations"][0]["source_reference"], "Section 2.1"
+        )
         self.assertEqual(case["expected_relations"][0]["relation_type"], "depends_on")
         self.assertEqual(len(case["predicted_relations"]), 2)
-        self.assertEqual(case["predicted_relations"][1]["source_requirement_text"], pending_requirement.canonical_text)
+        self.assertEqual(
+            case["predicted_relations"][1]["source_requirement_text"],
+            pending_requirement.canonical_text,
+        )
 
     def test_build_requirement_gold_set_payload_is_evaluator_compatible(self) -> None:
         approved_requirement = SimpleNamespace(
@@ -150,7 +162,9 @@ class RequirementGoldExportTests(unittest.TestCase):
         self.assertTrue(report.passed)
         self.assertTrue(payload["metadata"]["draft_review_required"])
 
-    def test_build_requirement_gold_set_payload_supports_negative_case_false_positive_benchmark(self) -> None:
+    def test_build_requirement_gold_set_payload_supports_negative_case_false_positive_benchmark(
+        self,
+    ) -> None:
         pending_false_positive = SimpleNamespace(
             id=51,
             canonical_text="The theorem must hold for each alternating path.",
@@ -160,7 +174,9 @@ class RequirementGoldExportTests(unittest.TestCase):
             source_count=1,
             review_state="pending",
             graph_state="active",
-            metadata_json={"sources": [{"summary_text": "The theorem must hold for each alternating path."}]},
+            metadata_json={
+                "sources": [{"summary_text": "The theorem must hold for each alternating path."}]
+            },
         )
         case = _EXPORT_MODULE.build_requirement_gold_set_case(
             SimpleNamespace(id=5, title="Negative thesis fixture"),
@@ -177,7 +193,9 @@ class RequirementGoldExportTests(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertEqual(report.requirement_precision, 0.0)
 
-    def test_build_requirement_gold_set_case_can_restrict_predictions_to_approved_only(self) -> None:
+    def test_build_requirement_gold_set_case_can_restrict_predictions_to_approved_only(
+        self,
+    ) -> None:
         approved_requirement = SimpleNamespace(
             id=41,
             canonical_text="Submit the QA plan.",

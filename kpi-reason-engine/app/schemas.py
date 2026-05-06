@@ -152,6 +152,12 @@ class DomainEventRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class TenderRehearsalSummaryRequest(BaseModel):
+    """Rehearsal summary payload pushed by tw-backend after a rehearsal run."""
+
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class DocumentContextRequest(BaseModel):
     """Document-level context made available to future reasoning jobs."""
 
@@ -540,6 +546,7 @@ class ForecastResponse(BaseModel):
     scenarios: list[ForecastScenario] = Field(default_factory=list)
     next_best_actions: list[ForecastDecisionAction] = Field(default_factory=list)
     analysis_metadata: AnalysisMetadata = Field(default_factory=AnalysisMetadata)
+    rehearsal_summary: dict[str, Any] | None = None
 
 
 class PortfolioOverviewBucket(BaseModel):

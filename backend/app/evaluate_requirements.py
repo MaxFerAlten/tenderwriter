@@ -18,7 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("gold_file", help="Path to a JSON file with requirement evaluation cases.")
     parser.add_argument("--min-recall", type=float, default=0.8, help="Minimum requirement recall.")
-    parser.add_argument("--min-precision", type=float, default=0.75, help="Minimum requirement precision.")
+    parser.add_argument(
+        "--min-precision", type=float, default=0.75, help="Minimum requirement precision."
+    )
     parser.add_argument(
         "--min-citation-coverage",
         type=float,
@@ -31,9 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.7,
         help="Minimum recall for expected conflicts_with relations.",
     )
-    parser.add_argument("--match-threshold", type=float, default=0.72, help="Token overlap matching threshold.")
+    parser.add_argument(
+        "--match-threshold", type=float, default=0.72, help="Token overlap matching threshold."
+    )
     parser.add_argument("--json", action="store_true", help="Emit the full report as JSON.")
-    parser.add_argument("--report-file", help="Optional path where the full JSON report should be written.")
+    parser.add_argument(
+        "--report-file", help="Optional path where the full JSON report should be written."
+    )
     return parser
 
 

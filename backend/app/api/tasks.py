@@ -6,12 +6,12 @@ Endpoints for managing background tasks.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from celery.result import AsyncResult
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
+from app.api.auth import UserResponse, get_current_user
 from app.celery import celery_app
-from app.api.auth import get_current_user, UserResponse
 
 router = APIRouter()
 
@@ -44,9 +44,9 @@ async def start_index_document(
 ):
     """Start indexing a document in background."""
     from app.tasks import index_document_task
-    
+
     task = index_document_task.delay(request.document_id)
-    
+
     return TaskResponse(
         task_id=task.id,
         status=task.status,
@@ -60,13 +60,13 @@ async def start_generate_section(
 ):
     """Start generating a proposal section in background."""
     from app.tasks import generate_proposal_section_task
-    
+
     task = generate_proposal_section_task.delay(
         request.proposal_id,
         request.section_id,
         request.prompt,
     )
-    
+
     return TaskResponse(
         task_id=task.id,
         status=task.status,
@@ -80,9 +80,9 @@ async def start_export_pdf(
 ):
     """Start PDF export in background."""
     from app.tasks import export_proposal_pdf_task
-    
+
     task = export_proposal_pdf_task.delay(request.proposal_id)
-    
+
     return TaskResponse(
         task_id=task.id,
         status=task.status,
@@ -96,7 +96,7 @@ async def get_task_status(
 ):
     """Get the status of a background task."""
     task_result = AsyncResult(task_id, app=celery_app)
-    
+
     return TaskResponse(
         task_id=task_id,
         status=task_result.status,
@@ -112,7 +112,7 @@ async def cancel_task(
 ):
     """Cancel a running task."""
     celery_app.control.revoke(task_id, terminate=True)
-    
+
     return {"message": "Task cancellation requested", "task_id": task_id}
 
 
@@ -120,10 +120,10 @@ async def cancel_task(
 async def celery_health():
     """Check Celery worker health."""
     from app.tasks import health_check
-    
+
     task = health_check.delay()
     result = AsyncResult(task.id, app=celery_app)
-    
+
     return {
         "workers": "healthy" if result.get(timeout=5) else "unhealthy",
         "redis": "connected",

@@ -1,5 +1,6 @@
 import os
 import unittest
+
 from test_module_loaders import load_models_test_module, load_service_test_module
 
 _TEST_ENV = {
@@ -151,6 +152,3 @@ class ContributionStatusDerivationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

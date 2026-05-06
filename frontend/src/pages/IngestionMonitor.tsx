@@ -1,16 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-    Activity, 
-    FileText, 
-    Clock, 
-    CheckCircle, 
-    AlertCircle, 
+import {
+    Activity,
+    FileText,
+    CheckCircle,
+    AlertCircle,
     Search,
-    Filter,
-    ArrowRight,
     Loader2,
     RefreshCw,
-    ExternalLink,
     ChevronDown,
     ChevronUp
 } from 'lucide-react';

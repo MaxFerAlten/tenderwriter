@@ -1,5 +1,5 @@
-import os
 import inspect
+import os
 import sys
 import unittest
 from contextlib import contextmanager
@@ -28,6 +28,7 @@ def _router_module(*paths: str, extras: dict | None = None) -> ModuleType:
     router = APIRouter()
 
     for index, path in enumerate(paths):
+
         async def _handler(_path=path):
             return {"path": _path}
 
@@ -56,10 +57,10 @@ def _build_main_test_modules() -> tuple[dict[str, object], type]:
 
     fake_slowapi_errors = ModuleType("slowapi.errors")
 
-    class _FakeRateLimitExceeded(Exception):
+    class _FakeRateLimitExceededError(Exception):
         pass
 
-    fake_slowapi_errors.RateLimitExceeded = _FakeRateLimitExceeded
+    fake_slowapi_errors.RateLimitExceeded = _FakeRateLimitExceededError
 
     fake_sqlalchemy = ModuleType("sqlalchemy")
 
@@ -119,10 +120,14 @@ def _build_main_test_modules() -> tuple[dict[str, object], type]:
     fake_mattermost = _router_module()
     fake_onlyoffice = _router_module()
     fake_rag = _router_module()
+    fake_planningcoverage = _router_module("/config", "/test")
 
     fake_anonymizer_admin = _router_module("/config", "/stats", "/test")
     fake_system = _router_module("/capabilities")
-    fake_proposals = _router_module("/{proposal_id}/draft-ready", "/{proposal_id}/submission-status")
+    fake_proposals = _router_module(
+        "/{proposal_id}/draft-ready",
+        "/{proposal_id}/submission-status",
+    )
     fake_observability = _router_module(
         "/{tender_id}/observability/workspace",
         "/{tender_id}/observability/summary",
@@ -141,6 +146,18 @@ def _build_main_test_modules() -> tuple[dict[str, object], type]:
         "/{tender_id}/clarifications/{clarification_id}/submit",
     )
     fake_tasks = _router_module()
+    fake_ingestions = _router_module()
+    fake_intelligence = _router_module(
+        "/tools",
+        "/tools/coverage-analyzer",
+        "/tools/evidence-auditor",
+        "/tools/compliance-panorama",
+        "/tools/graph-path-explainer",
+        "/tools/contradiction-finder",
+        "/query",
+    )
+    fake_lifecycle_projector = ModuleType("app.intelligence.lifecycle_projector")
+    fake_lifecycle_projector.set_active_rag_engine = lambda rag_engine: None
 
     fake_rag_engine = ModuleType("app.rag.engine")
 
@@ -179,11 +196,15 @@ def _build_main_test_modules() -> tuple[dict[str, object], type]:
         "app.api.mattermost": fake_mattermost,
         "app.api.observability": fake_observability,
         "app.api.onlyoffice": fake_onlyoffice,
+        "app.api.planningcoverage": fake_planningcoverage,
         "app.api.proposals": fake_proposals,
         "app.api.rag": fake_rag,
         "app.api.system": fake_system,
         "app.api.tenders": fake_tenders,
         "app.api.tasks": fake_tasks,
+        "app.api.ingestions": fake_ingestions,
+        "app.api.intelligence": fake_intelligence,
+        "app.intelligence.lifecycle_projector": fake_lifecycle_projector,
         "app.rag.engine": fake_rag_engine,
     }
     return modules, FakeHybridRAGEngine
@@ -235,6 +256,27 @@ class RouteRegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/api/anonymizer/config", paths)
         self.assertIn("/api/anonymizer/stats", paths)
         self.assertIn("/api/anonymizer/test", paths)
+
+    def test_intelligence_routes_are_registered(self) -> None:
+        with _load_main_module() as (main_module, _):
+            app = main_module.create_app()
+            paths = {route.path for route in app.routes}
+
+        self.assertIn("/api/intelligence/tools", paths)
+        self.assertIn("/api/intelligence/tools/coverage-analyzer", paths)
+        self.assertIn("/api/intelligence/tools/evidence-auditor", paths)
+        self.assertIn("/api/intelligence/tools/compliance-panorama", paths)
+        self.assertIn("/api/intelligence/tools/graph-path-explainer", paths)
+        self.assertIn("/api/intelligence/tools/contradiction-finder", paths)
+        self.assertIn("/api/intelligence/query", paths)
+
+    def test_planning_coverage_routes_are_registered(self) -> None:
+        with _load_main_module() as (main_module, _):
+            app = main_module.create_app()
+            paths = {route.path for route in app.routes}
+
+        self.assertIn("/api/planningcoverage/config", paths)
+        self.assertIn("/api/planningcoverage/test", paths)
 
     def test_lifespan_configures_lazy_rag_initialization(self) -> None:
         with _load_main_module() as (main_module, _):

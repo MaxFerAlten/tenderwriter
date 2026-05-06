@@ -57,7 +57,9 @@ cd frontend && npm run build         # tsc -b + vite build (also runs in CI)
 cd frontend && npm run dev           # dev server on :3000 (proxies to backend)
 ```
 
-**CI** (`.github/workflows/wave1-ci.yml`) runs Wave-1 smoke/reload scripts from `tools/` and `backend/tests/test_wave1_resume_minimal.py` — not the full pytest suite.
+**CI** (`.github/workflows/backend-ci.yml`) runs a focused backend smoke suite and
+purge guard. Full integration tests should run in Docker where Postgres, Redis,
+Qdrant, Neo4j, MinIO, and service dependencies are available.
 
 ## Ops / debugging shortcuts
 
@@ -69,20 +71,20 @@ docker exec tw-backend sh -c "export PYTHONPATH=/app && python3 app/delete_user.
 
 URLs: frontend `http://localhost:3000`, backend OpenAPI `http://localhost:8000/docs`, Mailpit (OTP inbox) `http://localhost:8025`, Keycloak admin `http://localhost:8180/admin`, Neo4j browser `http://localhost:7474`, Redis Insight `http://localhost:8001`.
 
-## Architecture — two FastAPI apps in one repo
+## Architecture — TenderWriter backend
 
-The `backend/` tree contains **two independent FastAPI applications** that share no state and must not be conflated:
+The `backend/` tree contains one application backend: TenderWriter.
 
-1. **TenderWriter** — `backend/app/` — the production tender-proposal app. Entry point `app.main:app` (that's what the `tw-backend` Dockerfile CMD runs on :8000). Config in `backend/app/config.py` (no env prefix, validates unsafe defaults at startup).
-2. **TenderClaw** — `backend/` top-level modules (`backend/main.py`, `backend/api/`, `backend/agents/`, `backend/orchestration/`, `backend/mcp/`, `backend/plugins/`, `backend/core/`, `backend/config.py`) — a separate multi-agent AI coding assistant. Entry point `backend.main:app` on port 7000, config prefix `TENDERCLAW_`. **It is NOT deployed by docker-compose.** It has its own tests (`test_tenderclaw_*.py`) and its own pyproject is at the repo root-adjacent. Almost all product work targets TenderWriter; touch TenderClaw only when explicitly asked.
+**TenderWriter** lives in `backend/app/`. The entry point is `app.main:app`,
+which is what the `tw-backend` Dockerfile runs on port 8000. Config is in
+`backend/app/config.py` with unsafe default validation at startup.
 
-When editing, always confirm which app you're in:
-- `from app.xxx` / `backend/app/…` → TenderWriter
-- `from backend.xxx` / `backend/{api,core,agents,orchestration,…}` → TenderClaw
+Use `from app.xxx import ...` inside backend code. Do not introduce imports from
+the top-level backend namespace; it is not an application package.
 
 ### TenderWriter (`backend/app/`) internals
 
-- **Lifespan** (`app/main.py`) runs Alembic migrations via `init_db()` → `app.db.migrations.run_migrations` (bootstrap mode set by `DB_SCHEMA_BOOTSTRAP_MODE`, default `alembic`, legacy `metadata_compat` delegates to Alembic anyway). Then seeds/toggles the admin user, lazy-inits `HybridRAGEngine` onto `app.state.rag_engine`, and registers built-in hooks.
+- **Lifespan** (`app/main.py`) runs Alembic migrations via `init_db()` → `app.db.migrations.run_migrations` (bootstrap mode set by `DB_SCHEMA_BOOTSTRAP_MODE`, default `alembic`, legacy `metadata_compat` delegates to Alembic anyway). Then seeds/toggles the admin user and lazy-inits `HybridRAGEngine` onto `app.state.rag_engine`.
 - **Alembic** lives in `backend/migrations/` (NOT `backend/app/migrations/`) with config `backend/alembic.ini`. Versions are `YYYYMMDD_NNNN_*.py`; add a new revision when touching SQLAlchemy models. Do not hand-write DDL in model files.
 - **Routers** are all wired in `app/main.py` under `/api/*`. Auth uses `slowapi` rate-limiting (login/register limits live in `app/api/auth.py`).
 - **HybridRAG** (`app/rag/`): `engine.py` orchestrates `DenseRetriever` (Qdrant) + `SparseRetriever` (BM25) + `GraphRetriever` (Neo4j), fuses via `RankFusion` (RRF), re-ranks with a cross-encoder, and generates via `Generator` talking to the **llama-tender** container (`llama_server_url`, Qwen2.5-Coder-7B served by llama.cpp). `ollama_*` settings are deprecated — don't add new callers. Weights and top-k values are in `settings.rag_*`. `engine.py` also contains substantial prompt-leakage sanitization regex — edit carefully, the regex sets are load-bearing for output quality.

@@ -18,6 +18,7 @@ logger = structlog.get_logger()
 @dataclass
 class ChunkMetadata:
     """Metadata attached to each chunk."""
+
     document_id: int | None = None
     tender_id: int | None = None
     source_file: str = ""
@@ -33,6 +34,7 @@ class ChunkMetadata:
 @dataclass
 class TextChunk:
     """A chunk of text with metadata."""
+
     text: str
     metadata: ChunkMetadata
 
@@ -51,10 +53,10 @@ class SemanticChunker:
     def __init__(
         self,
         embedder=None,
-        min_chunk_size: int = 200,
-        max_chunk_size: int = 1500,
-        similarity_threshold: float = 0.5,
-        overlap_sentences: int = 1,
+        min_chunk_size: int = 300,
+        max_chunk_size: int = 1200,
+        similarity_threshold: float = 0.45,
+        overlap_sentences: int = 0,
     ):
         self.embedder = embedder
         self.min_chunk_size = min_chunk_size
@@ -63,13 +65,14 @@ class SemanticChunker:
         self.overlap_sentences = overlap_sentences
 
     def _split_sentences(self, text: str) -> list[str]:
-        """Split text into sentences using regex."""
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        """Split text into sentences using regex, preserving numbers and parens."""
+        sentences = re.split(r"(?<=[.!?;:])\s+", text.strip())
         return [s.strip() for s in sentences if s.strip()]
 
     def _cosine_similarity(self, vec_a, vec_b) -> float:
         """Compute cosine similarity between two vectors."""
         import numpy as np
+
         dot = np.dot(vec_a, vec_b)
         norm = np.linalg.norm(vec_a) * np.linalg.norm(vec_b)
         return float(dot / norm) if norm > 0 else 0.0
@@ -106,7 +109,6 @@ class SemanticChunker:
         base_metadata: ChunkMetadata,
     ) -> list[TextChunk]:
         """Chunk using embedding similarity to detect topic shifts."""
-        import numpy as np
 
         # Embed all sentences in batch
         embeddings = self.embedder.embed_batch(sentences)
@@ -132,9 +134,7 @@ class SemanticChunker:
                 # Enforce max size — if merged chunk too big, keep separate
                 if len(prev.text) > self.max_chunk_size:
                     prev.text = prev.text[: -len(chunk_text) - 1]
-                    meta = ChunkMetadata(**{
-                        k: v for k, v in base_metadata.__dict__.items()
-                    })
+                    meta = ChunkMetadata(**{k: v for k, v in base_metadata.__dict__.items()})
                     meta.chunk_index = len(chunks)
                     chunks.append(TextChunk(text=chunk_text, metadata=meta))
             else:
@@ -182,9 +182,13 @@ class SemanticChunker:
                 meta.chunk_index = len(chunks)
                 chunks.append(TextChunk(text=text, metadata=meta))
 
-                # Overlap: carry forward last N sentences
-                current_sentences = current_sentences[-self.overlap_sentences:]
-                current_len = sum(len(s) for s in current_sentences)
+                # Overlap: carry forward last N sentences (only if overlap > 0)
+                if self.overlap_sentences > 0:
+                    current_sentences = current_sentences[-self.overlap_sentences :]
+                    current_len = sum(len(s) for s in current_sentences)
+                else:
+                    current_sentences = []
+                    current_len = 0
 
             current_sentences.append(sentence)
             current_len += len(sentence)

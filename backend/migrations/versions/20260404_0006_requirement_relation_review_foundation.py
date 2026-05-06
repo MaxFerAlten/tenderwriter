@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
-
 
 revision = "20260404_0006"
 down_revision = "20260404_0005"
@@ -23,7 +22,9 @@ def upgrade() -> None:
             server_default=sa.text("'pending'"),
         ),
     )
-    op.execute("UPDATE requirement_relations SET review_state = 'pending' WHERE review_state IS NULL")
+    op.execute(
+        "UPDATE requirement_relations SET review_state = 'pending' WHERE review_state IS NULL"
+    )
     op.alter_column(
         "requirement_relations",
         "review_state",
@@ -40,20 +41,29 @@ def upgrade() -> None:
     op.create_table(
         "requirement_relation_reviews",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("tender_id", sa.Integer(), sa.ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tender_id",
+            sa.Integer(),
+            sa.ForeignKey("tenders.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column(
             "requirement_relation_id",
             sa.Integer(),
             sa.ForeignKey("requirement_relations.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("actor_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "actor_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        ),
         sa.Column("action", sa.String(length=50), nullable=False),
         sa.Column("previous_review_state", sa.String(length=50), nullable=True),
         sa.Column("new_review_state", sa.String(length=50), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=True, server_default=sa.text("now()")
+        ),
     )
     op.create_index(
         "ix_requirement_relation_reviews_tender_id",

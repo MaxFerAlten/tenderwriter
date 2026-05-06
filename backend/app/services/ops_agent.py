@@ -32,7 +32,9 @@ class OpsAgentClient:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.base_url = (base_url or settings.ops_agent_base_url or "").rstrip("/")
-        self.service_token = service_token if service_token is not None else settings.ops_agent_token
+        self.service_token = (
+            service_token if service_token is not None else settings.ops_agent_token
+        )
         self.timeout = timeout if timeout is not None else settings.ops_agent_timeout
         self.transport = transport
 
@@ -93,7 +95,11 @@ class OpsAgentClient:
 
         response_json = _safe_response_json(response)
         delivered = 200 <= response.status_code < 300
-        error_message = None if delivered else (response_json.get("detail") or f"Ops agent returned HTTP {response.status_code}")
+        error_message = (
+            None
+            if delivered
+            else (response_json.get("detail") or f"Ops agent returned HTTP {response.status_code}")
+        )
         return OpsAgentClientResult(
             delivered=delivered,
             status_code=response.status_code,

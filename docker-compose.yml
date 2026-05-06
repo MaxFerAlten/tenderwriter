@@ -89,20 +89,7 @@ services:
     volumes:
       - /home/tendermachine/tender/tenderwriter/models:/models
       - llama_tender_cache:/root/.cache/llama.cpp
-    command: [
-      "/llama-server",
-      "-m", "/models/gemma-4-31b-it-q6_k_l.gguf",
-      "--host", "0.0.0.0",
-      "--port", "8080",
-      "-c", "65536",
-      "-b", "2048",
-      "-ub", "512",
-      "-t", "8",
-      "-np", "2",
-      "--n-predict", "-1",
-      "-fa", "on",
-      "-rea", "off"
-    ]
+    command: [ "/llama-server", "-m", "/models/gemma-4-31b-it-q6_k_l.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "65536", "-b", "2048", "-ub", "512", "-t", "8", "-np", "2", "--n-predict", "-1", "-fa", "on", "-rea", "off" ]
     networks:
       - default
 
@@ -382,6 +369,7 @@ services:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ./backend/app:/app/app # Hot reload in development
+      - ./internalprompting:/app/internalprompting:ro
       - ./backend/migrations:/app/migrations
       - ./backend/alembic.ini:/app/alembic.ini:ro
     healthcheck:
@@ -440,6 +428,7 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+      start_period: 60s
 
   # --- Frontend (React + Vite) ---
   frontend:
@@ -500,7 +489,7 @@ services:
     environment:
       GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_UPSTREAM: http://llama-opencode:8080
-      GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-180}
+      GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-1200}
       GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-}
       GATEWAY_OPENCODE_DMZ_UPSTREAM: ${GATEWAY_OPENCODE_DMZ_UPSTREAM:-}
       GATEWAY_ANONYMIZER_URL: http://tw-anonymizer:8090

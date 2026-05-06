@@ -31,7 +31,7 @@ class _FakeExecuteResult:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
 
-    def scalars(self) -> "_FakeExecuteResult":
+    def scalars(self) -> _FakeExecuteResult:
         return self
 
     def all(self) -> list[object]:
@@ -57,12 +57,14 @@ class _FakeAsyncSession:
         self.flush_count += 1
         for instance in self.added:
             if getattr(instance, "id", None) is None:
-                setattr(instance, "id", self._next_id)
+                instance.id = self._next_id
                 self._next_id += 1
 
 
 class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
-    async def test_list_requirement_relations_for_review_orders_overrides_before_dependencies(self) -> None:
+    async def test_list_requirement_relations_for_review_orders_overrides_before_dependencies(
+        self,
+    ) -> None:
         db = _FakeAsyncSession(
             rows=[
                 RequirementRelation(
@@ -113,7 +115,9 @@ class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("graph_state", str(db.statement))
         self.assertIn(":graph_state_1", str(db.statement))
 
-    async def test_list_requirement_relations_for_review_prioritizes_cross_document_conflicts(self) -> None:
+    async def test_list_requirement_relations_for_review_prioritizes_cross_document_conflicts(
+        self,
+    ) -> None:
         db = _FakeAsyncSession(
             rows=[
                 RequirementRelation(
@@ -151,7 +155,9 @@ class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
             [4, 5],
         )
 
-    async def test_apply_requirement_relation_review_updates_state_and_creates_audit_row(self) -> None:
+    async def test_apply_requirement_relation_review_updates_state_and_creates_audit_row(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         relation = RequirementRelation(
             id=41,
@@ -205,7 +211,9 @@ class RequirementRelationReviewTests(unittest.IsolatedAsyncioTestCase):
                 action="archive",
             )
 
-    async def test_apply_requirement_relation_review_edits_relation_type_and_confidence_with_audit(self) -> None:
+    async def test_apply_requirement_relation_review_edits_relation_type_and_confidence_with_audit(
+        self,
+    ) -> None:
         db = _FakeAsyncSession()
         relation = RequirementRelation(
             id=43,

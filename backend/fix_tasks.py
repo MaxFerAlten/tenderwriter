@@ -1,8 +1,8 @@
-import sys
 import re
+import sys
 
-file_path = r'D:\tender\tenderwriter\backend\app\tasks.py'
-with open(file_path, 'r', encoding='utf-8') as f:
+file_path = r"D:\tender\tenderwriter\backend\app\tasks.py"
+with open(file_path, encoding="utf-8") as f:
     text = f.read()
 
 new_func = """@celery_app.task(bind=True, max_retries=3)
@@ -187,13 +187,13 @@ def index_document_task(self, document_id: int):
 """
 
 pattern = re.compile(
-    r'@celery_app\.task\(bind=True, max_retries=3\)\ndef index_document_task\(self, document_id: int\):.*?(?=@celery_app\.task)', 
-    re.DOTALL
+    r"@celery_app\.task\(bind=True, max_retries=3\)\ndef index_document_task\(self, document_id: int\):.*?(?=@celery_app\.task)",
+    re.DOTALL,
 )
 
-new_text = pattern.sub(new_func + '\n\n', text)
+new_text = pattern.sub(new_func + "\n\n", text)
 
-with open(file_path, 'w', encoding='utf-8') as f:
+with open(file_path, "w", encoding="utf-8") as f:
     f.write(new_text)
 
 print("Done")

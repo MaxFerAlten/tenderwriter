@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import structlog
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
 from app.auth.base import AuthenticatedUser, AuthProvider
 from app.config import settings
@@ -57,8 +57,7 @@ def _get_provider() -> AuthProvider:
         return HybridAuthProvider()
 
     raise ValueError(
-        f"Unknown AUTH_PROVIDER: '{provider_name}'. "
-        f"Valid values: legacy, keycloak, hybrid"
+        f"Unknown AUTH_PROVIDER: '{provider_name}'. Valid values: legacy, keycloak, hybrid"
     )
 
 

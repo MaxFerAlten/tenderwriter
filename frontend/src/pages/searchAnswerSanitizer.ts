@@ -124,7 +124,6 @@ export function sanitizeSearchAnswer(text: string): string {
             continue;
         }
 
-        let suffixTrimmed = false;
         let braceTrimmed = false;
         const inlineMatch = PROMPT_LEAKAGE_INLINE_RE.exec(candidate);
         if (inlineMatch && inlineMatch.index >= 0) {
@@ -133,12 +132,10 @@ export function sanitizeSearchAnswer(text: string): string {
         const suffixMatch = PROMPT_LEAKAGE_SUFFIX_RE.exec(candidate);
         if (suffixMatch && suffixMatch.index >= 0) {
             candidate = candidate.slice(0, suffixMatch.index).trimEnd();
-            suffixTrimmed = true;
         }
         const ownPrefixMatch = PROMPT_OWN_TOKEN_PREFIX_RE.exec(candidate);
         if (ownPrefixMatch && ownPrefixMatch.index === 0) {
             candidate = candidate.slice(ownPrefixMatch[0].length).trimStart();
-            suffixTrimmed = true;
         }
         const braceSuffixMatch = DANGLING_CLOSING_BRACE_SUFFIX_RE.exec(candidate);
         if (braceSuffixMatch && braceSuffixMatch.index >= 0) {
@@ -148,7 +145,6 @@ export function sanitizeSearchAnswer(text: string): string {
         const garbagePrefix = stripPromptGarbagePrefix(candidate);
         if (garbagePrefix.trimmed) {
             candidate = garbagePrefix.text;
-            suffixTrimmed = true;
         }
 
         const stripped = candidate.trim();
@@ -157,7 +153,7 @@ export function sanitizeSearchAnswer(text: string): string {
         }
 
         if (
-            (suffixTrimmed || braceTrimmed)
+            braceTrimmed
             && !/[.!?;)"'\]}\u00bb]$/.test(candidate)
             && stripped.split(/\s+/).length >= 3
         ) {

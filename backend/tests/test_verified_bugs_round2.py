@@ -1,11 +1,8 @@
 """
 Tests for bugs 7, 10, 13, 15 from codebase analysis.
 """
-import ast
-import json
-from pathlib import Path
-import pytest
 
+from pathlib import Path
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,6 +12,7 @@ def _read_backend_source(relative_path: str) -> str:
 
 
 # ── Bug 7: Tender update missing FOR UPDATE ──
+
 
 def test_bug7_tender_update_uses_for_update():
     """tenders.py — update_tender should use SELECT FOR UPDATE to prevent race conditions."""
@@ -35,6 +33,7 @@ def test_bug7_tender_update_uses_for_update():
 
 # ── Bug 10: Qdrant vector dimension mismatch ──
 
+
 def test_bug10_qdrant_dimension_validation():
     """dense_retriever.py — _ensure_collection should validate dimension of existing collections."""
     source = _read_backend_source("app/rag/dense_retriever.py")
@@ -47,7 +46,7 @@ def test_bug10_qdrant_dimension_validation():
     assert "else:" in func_body, (
         "_ensure_collection must have an else branch to validate existing collections"
     )
-    else_body = func_body[func_body.index("else:"):]
+    else_body = func_body[func_body.index("else:") :]
     assert "mismatch" in else_body.lower() or "existing_size" in else_body, (
         "_ensure_collection should detect dimension mismatch on existing collections. "
         "A model change causes silent search failures without this check."
@@ -55,6 +54,7 @@ def test_bug10_qdrant_dimension_validation():
 
 
 # ── Bug 13: Proposal section content dict|str inconsistency ──
+
 
 def test_bug13_section_content_normalized():
     """proposals.py — section content should be normalized to dict before saving to JSONB."""
@@ -64,9 +64,16 @@ def test_bug13_section_content_normalized():
     # The DB column is JSONB (expects dict for TipTap format), but the schema accepts str.
     # There should be normalization logic.
     has_content_normalization = (
-        "isinstance" in source and "content" in source and ("str" in source)
-        and ("_text_to_tiptap" in source or "tiptap" in source.lower() or "normalize" in source.lower()
-             or '"type": "doc"' in source or "type.*doc" in source)
+        "isinstance" in source
+        and "content" in source
+        and ("str" in source)
+        and (
+            "_text_to_tiptap" in source
+            or "tiptap" in source.lower()
+            or "normalize" in source.lower()
+            or '"type": "doc"' in source
+            or "type.*doc" in source
+        )
     )
 
     assert has_content_normalization, (
@@ -77,6 +84,7 @@ def test_bug13_section_content_normalized():
 
 
 # ── Bug 15: MinIO blocking calls without run_in_executor ──
+
 
 def test_bug15_minio_uses_executor():
     """onlyoffice.py — MinIO sync operations should use run_in_executor to avoid blocking event loop."""

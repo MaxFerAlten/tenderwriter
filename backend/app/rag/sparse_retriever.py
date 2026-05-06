@@ -21,19 +21,76 @@ logger = structlog.get_logger()
 
 # Common English stop words to filter out
 STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "has", "he", "in", "is", "it", "its", "of", "on", "or", "that",
-    "the", "to", "was", "were", "will", "with", "this", "but", "they",
-    "have", "had", "what", "when", "where", "who", "which", "their",
-    "there", "been", "would", "could", "should", "can", "do", "does",
-    "did", "not", "no", "if", "so", "than", "then", "these", "those",
-    "our", "we", "you", "your", "my", "me", "him", "her", "she",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "he",
+    "in",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "was",
+    "were",
+    "will",
+    "with",
+    "this",
+    "but",
+    "they",
+    "have",
+    "had",
+    "what",
+    "when",
+    "where",
+    "who",
+    "which",
+    "their",
+    "there",
+    "been",
+    "would",
+    "could",
+    "should",
+    "can",
+    "do",
+    "does",
+    "did",
+    "not",
+    "no",
+    "if",
+    "so",
+    "than",
+    "then",
+    "these",
+    "those",
+    "our",
+    "we",
+    "you",
+    "your",
+    "my",
+    "me",
+    "him",
+    "her",
+    "she",
 }
 
 
 @dataclass
 class SparseSearchResult:
     """A single result from BM25 search."""
+
     text: str
     score: float
     metadata: dict
@@ -64,7 +121,7 @@ class SparseRetriever:
         """
         text = text.lower()
         # Keep alphanumeric and hyphens (for codes like ISO-9001, PMP, etc.)
-        tokens = re.findall(r'\b[a-z0-9][\w-]*\b', text)
+        tokens = re.findall(r"\b[a-z0-9][\w-]*\b", text)
         # Filter stop words but keep short technical tokens (e.g., "ai", "ml")
         tokens = [t for t in tokens if t not in STOP_WORDS or len(t) <= 2]
         return tokens
@@ -144,9 +201,8 @@ class SparseRetriever:
             metadata = self._corpus_metadata[idx]
 
             # Apply post-retrieval filters
-            if filters:
-                if not self._matches_filters(metadata, filters):
-                    continue
+            if filters and not self._matches_filters(metadata, filters):
+                continue
 
             results.append(
                 SparseSearchResult(
@@ -180,7 +236,7 @@ class SparseRetriever:
         """Remove all chunks belonging to a specific document and rebuild."""
         new_texts = []
         new_metas = []
-        for text, meta in zip(self._corpus_texts, self._corpus_metadata):
+        for text, meta in zip(self._corpus_texts, self._corpus_metadata, strict=False):
             if meta.get("document_id") != document_id:
                 new_texts.append(text)
                 new_metas.append(meta)

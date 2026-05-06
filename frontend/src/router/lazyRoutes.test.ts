@@ -22,6 +22,10 @@ describe('normalizeRoutePath', () => {
         expect(normalizeRoutePath('/markov-state-process/42')).toBe('/markov-state-process');
     });
 
+    it('normalizes planning coverage admin routes to the page module key', () => {
+        expect(normalizeRoutePath('/planningcoverage')).toBe('/planningcoverage');
+    });
+
     it('returns null for unsupported paths', () => {
         expect(normalizeRoutePath('/unknown')).toBeNull();
         expect(normalizeRoutePath('')).toBeNull();
@@ -34,6 +38,6 @@ describe('getLikelyRoutePaths', () => {
     });
 
     it('extends likely routes for admin users', () => {
-        expect(getLikelyRoutePaths('admin')).toEqual(['/proposals', '/library', '/tasks', '/observability-kpi', '/markov-state-process', '/monitor']);
+        expect(getLikelyRoutePaths('admin')).toEqual(['/proposals', '/library', '/tasks', '/observability-kpi', '/markov-state-process', '/monitor', '/planningcoverage']);
     });
 });

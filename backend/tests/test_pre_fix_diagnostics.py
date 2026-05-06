@@ -12,9 +12,9 @@ import base64
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from importlib import import_module
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -38,6 +38,7 @@ _TEST_ENV = {
 }
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
+
 
 class _CreateOnlyDb:
     """Small fake DB for anonymous content-library write diagnostics."""
@@ -370,7 +371,9 @@ def _load_onlyoffice_module():
             self.paragraphs = []
 
         def add_paragraph(self, text=""):
-            paragraph = SimpleNamespace(text=text, runs=[SimpleNamespace(font=SimpleNamespace(size=None))])
+            paragraph = SimpleNamespace(
+                text=text, runs=[SimpleNamespace(font=SimpleNamespace(size=None))]
+            )
             self.paragraphs.append(paragraph)
             return paragraph
 
@@ -459,7 +462,9 @@ def _load_onlyoffice_module():
     async def _fake_sync_requirement_compliance_and_gate(*args, **kwargs):
         return None
 
-    fake_compliance.sync_requirement_compliance_and_gate = _fake_sync_requirement_compliance_and_gate
+    fake_compliance.sync_requirement_compliance_and_gate = (
+        _fake_sync_requirement_compliance_and_gate
+    )
 
     fake_kpi = ModuleType("app.services.kpi_reason_engine")
     fake_kpi.build_proposal_section_updated_event_payload = lambda *args, **kwargs: {}
@@ -667,7 +672,9 @@ def test_dense_retriever_loads_persisted_chunks_from_qdrant_payloads() -> None:
             if len(self.calls) == 1:
                 return (
                     [
-                        SimpleNamespace(payload={"text": "Alpha chunk", "document_id": 1, "section": "intro"}),
+                        SimpleNamespace(
+                            payload={"text": "Alpha chunk", "document_id": 1, "section": "intro"}
+                        ),
                         SimpleNamespace(payload={"document_id": 999}),
                         SimpleNamespace(payload={"text": "   ", "document_id": 888}),
                     ],
@@ -812,7 +819,7 @@ def test_register_handler_does_not_refresh_user_after_commit() -> None:
     source = auth_path.read_text(encoding="utf-8")
 
     register_block = source.split("async def register(", 1)[1].split(
-        "@router.post(\"/verify-otp\"", 1
+        '@router.post("/verify-otp"', 1
     )[0]
 
     assert "await db.commit()" in register_block
@@ -872,10 +879,10 @@ def test_section_update_normalizes_content_before_setattr() -> None:
     source = proposals_path.read_text(encoding="utf-8")
 
     update_section_block = source.split("async def update_section(", 1)[1].split(
-        "@router.post(\"/{proposal_id}/sections\"", 1
+        '@router.post("/{proposal_id}/sections"', 1
     )[0]
 
-    assert "if key == \"content\":" in update_section_block
+    assert 'if key == "content":' in update_section_block
     assert "value = _normalize_section_content(value)" in update_section_block
     assert "setattr(section, key, value)" in update_section_block
 
@@ -896,11 +903,11 @@ def test_pdf_export_template_escapes_all_untrusted_fields() -> None:
     rendered = template.render(
         proposal=SimpleNamespace(
             title='<script>alert("title")</script>',
-            client='<img src=x onerror="alert(\'client\')">',
+            client="<img src=x onerror=\"alert('client')\">",
         ),
         sections=[
             {
-                "title": '<svg onload="alert(\'section\')"></svg>',
+                "title": "<svg onload=\"alert('section')\"></svg>",
                 "safe_html": tasks_module._content_to_safe_pdf_html(
                     '<script>alert("body")</script>'
                 ),
@@ -909,8 +916,8 @@ def test_pdf_export_template_escapes_all_untrusted_fields() -> None:
     )
 
     assert '<script>alert("title")</script>' not in rendered
-    assert '<img src=x onerror="alert(\'client\')">' not in rendered
-    assert '<svg onload="alert(\'section\')"></svg>' not in rendered
+    assert "<img src=x onerror=\"alert('client')\">" not in rendered
+    assert "<svg onload=\"alert('section')\"></svg>" not in rendered
     assert "&lt;script&gt;alert(&#34;title&#34;)&lt;/script&gt;" in rendered
     assert "&lt;img src=x onerror=&#34;alert(&#39;client&#39;)&#34;&gt;" in rendered
     assert "&lt;svg onload=&#34;alert(&#39;section&#39;)&#34;&gt;&lt;/svg&gt;" in rendered

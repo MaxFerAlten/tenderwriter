@@ -1,17 +1,18 @@
 """Reset admin password to the value in .env"""
+
 import asyncio
+
+from sqlalchemy import select
+
+from app.api.auth import hash_password
+from app.config import settings
 from app.db.database import async_session_factory
 from app.models import User
-from app.config import settings
-from app.api.auth import hash_password
-from sqlalchemy import select
 
 
 async def main():
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(User).where(User.email == settings.admin_username)
-        )
+        result = await session.execute(select(User).where(User.email == settings.admin_username))
         admin = result.scalar_one_or_none()
 
         if not admin:
@@ -24,6 +25,7 @@ async def main():
         await session.commit()
         print(f"Password reset for {settings.admin_username}")
         print(f"New password: {settings.admin_password}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

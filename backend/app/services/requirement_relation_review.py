@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 
 from app.models import RequirementRelation, RequirementRelationReview
 
-
 _RELATION_TYPE_RANK = {
     "conflicts_with": 3,
     "overrides": 2,
@@ -83,15 +82,21 @@ def _apply_relation_edit(
         raise ValueError("Edit action requires at least one relation field.")
 
     before = _snapshot_relation(relation)
-    source_requirement_id = int(payload.get("source_requirement_id") or relation.source_requirement_id)
-    target_requirement_id = int(payload.get("target_requirement_id") or relation.target_requirement_id)
+    source_requirement_id = int(
+        payload.get("source_requirement_id") or relation.source_requirement_id
+    )
+    target_requirement_id = int(
+        payload.get("target_requirement_id") or relation.target_requirement_id
+    )
     if source_requirement_id == target_requirement_id:
         raise ValueError("Relation source and target requirements must be different.")
 
     relation.source_requirement_id = source_requirement_id
     relation.target_requirement_id = target_requirement_id
     if "relation_type" in payload:
-        relation.relation_type = _normalize_relation_type(payload["relation_type"], relation.relation_type)
+        relation.relation_type = _normalize_relation_type(
+            payload["relation_type"], relation.relation_type
+        )
     if "confidence" in payload:
         confidence = float(payload["confidence"])
         relation.confidence = max(0.0, min(confidence, 1.0))

@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import os
 import sys
-import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -88,7 +87,9 @@ class TenderImportStagingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(_TENDERS_MODULE, "Minio", return_value=fake_minio_client),
             patch.dict(sys.modules, {"app.tasks": fake_task_module}),
             patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
-            patch.object(_TENDERS_MODULE, "get_tender_upload_path", return_value="tenders/41/rfp.pdf"),
+            patch.object(
+                _TENDERS_MODULE, "get_tender_upload_path", return_value="tenders/41/rfp.pdf"
+            ),
         ):
             response = await import_tender_document(
                 tender_id=41,
@@ -102,7 +103,7 @@ class TenderImportStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["status"], "queued")
         self.assertEqual(response["task_id"], "celery-abc-123")
         self.assertEqual(response["tender_id"], 41)
-        
+
         self.assertEqual(len(db.added_items), 1)
         doc = db.added_items[0]
         self.assertEqual(doc.filename, "rfp.pdf")
@@ -110,7 +111,7 @@ class TenderImportStagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(doc.ingestion_job_id, "celery-abc-123")
         self.assertGreaterEqual(db.flush_count, 1)
         self.assertGreaterEqual(db.commit_count, 1)
-        
+
         fake_minio_client.put_object.assert_called_once()
         fake_task_module.index_document_task.delay.assert_called_once_with(999)
 

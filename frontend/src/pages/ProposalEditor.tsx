@@ -22,6 +22,7 @@ import {
     type RAGResponse,
 } from '../api/client';
 import LazyOnlyOfficeEditor, { prefetchOnlyOfficeEditor } from '../components/LazyOnlyOfficeEditor';
+import { ProposalWriterPanel } from '../components/ProposalWriterPanel';
 import { ONLYOFFICE_URL } from '../config/runtime';
 
 const DEFAULT_SECTIONS = [
@@ -725,6 +726,27 @@ export default function ProposalEditor() {
                                 </button>
                             ))}
                         </div>
+
+                        {/* ProposalWriterAgent — preview/apply with rehearsal awareness */}
+                        {proposal && proposal.sections[activeSection] && (
+                            <ProposalWriterPanel
+                                tenderId={proposal.tender_id}
+                                proposalId={proposal.id}
+                                sectionId={proposal.sections[activeSection].id}
+                                sectionTitle={proposal.sections[activeSection].title}
+                                onApplied={(result) => {
+                                    if (!proposal) return;
+                                    const updated = [...proposal.sections];
+                                    updated[activeSection] = {
+                                        ...updated[activeSection],
+                                        content: { type: 'doc', content: [
+                                            { type: 'paragraph', content: [{ type: 'text', text: result.draft_text }] },
+                                        ] },
+                                    };
+                                    setProposal({ ...proposal, sections: updated });
+                                }}
+                            />
+                        )}
 
                         {/* AI Error */}
                         {aiError && (

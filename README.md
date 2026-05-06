@@ -2,54 +2,54 @@
 
 > Open-source Tender Proposal Writing Software powered by HybridRAG
 
-TenderWriter aiuta i team a creare, gestire e inviare proposte di gara professionali più velocemente, sfruttando un **motore HybridRAG** (Dense + Sparse + Knowledge Graph retrieval) che gira interamente su infrastruttura locale e open-source.
+TenderWriter helps teams create, manage, and submit professional tender proposals faster by leveraging a **HybridRAG engine** (Dense + Sparse + Knowledge Graph retrieval) that runs entirely on local and open-source infrastructure.
 
 ---
 
-## 🚀 Stato Attuale (AS-IS)
+## 🚀 Current Status (AS-IS)
 
-Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i componenti attualmente implementati e funzionanti:
+The project is under active development. Below are the currently implemented and working features and components:
 
 ### 🔐 Authentication & Security
-- **Login Tradizionale (legacy/local)**: Utente tecnico `admin@admin.com` con password configurata nel file `.env` (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
-- **Login SSO + Tradizionale**: il progetto supporta tre modalità auth configurabili via env:
-  - `legacy`: solo login email/password
-  - `keycloak`: solo login SSO via Keycloak
-  - `hybrid`: doppia modalità, con bottone SSO e form tradizionale attivi insieme
-- **Utenti Keycloak → TenderWriter**: nel setup di sviluppo attualmente allineato al realm `tenderwriter` sono usati:
-  - `admin@admin.com` / `TestPass123!` → ruolo Keycloak `tw_admin` → ruolo TenderWriter `admin`
-  - `registrazioni.hyperknow@gmail.com` / `TestPass123!` → ruolo Keycloak di default → ruolo TenderWriter `editor`
-- **Bootstrap automatico Keycloak**: con `docker compose --profile keycloak up -d`, il servizio one-shot `tw-keycloak-bootstrap` crea/aggiorna automaticamente queste utenze nel realm `tenderwriter`.
-- **Nota Realm Keycloak**: il file di import del realm `tenderwriter` non crea utenti da solo; il bootstrap utenti viene eseguito subito dopo l'avvio di Keycloak.
-- **Registrazione Utente**: Flusso completo di registrazione con verifica **2FA tramite OTP**.
-- **Mail Testing**: Integrazione con **Mailpit** per catturare le email OTP in ambiente di sviluppo (disponibile a `http://localhost:8025`).
-- **Session Management**: Sistema di autenticazione basato su JWT legacy, OIDC Keycloak e React Context con bootstrap runtime.
+- **Traditional Login (legacy/local)**: Technical user `admin@admin.com` with password configured in the `.env` file (default: `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`).
+- **SSO + Traditional Login**: The project supports three auth modes configurable via env:
+  - `legacy`: email/password login only
+  - `keycloak`: SSO login via Keycloak only
+  - `hybrid`: dual mode, with both SSO button and traditional form active together
+- **Keycloak → TenderWriter Users**: In the development setup, currently aligned with the `tenderwriter` realm, the following are used:
+  - `admin@admin.com` / `TestPass123!` → Keycloak role `tw_admin` → TenderWriter role `admin`
+  - `registrazioni.hyperknow@gmail.com` / `TestPass123!` → default Keycloak role → TenderWriter role `editor`
+- **Keycloak Automatic Bootstrap**: With `docker compose --profile keycloak up -d`, the one-shot `tw-keycloak-bootstrap` service automatically creates/updates these users in the `tenderwriter` realm.
+- **Keycloak Realm Note**: The import file of the `tenderwriter` realm does not create users by itself; user bootstrap is executed immediately after Keycloak starts.
+- **User Registration**: Complete registration flow with **2FA via OTP** verification.
+- **Mail Testing**: Integration with **Mailpit** to catch OTP emails in the development environment (available at `http://localhost:8025`).
+- **Session Management**: Authentication system based on legacy JWT, Keycloak OIDC, and React Context with runtime bootstrap.
 
-### 🧠 Motore HybridRAG
-- **Dense Retrieval**: Ricerca semantica tramite **Qdrant** (Vector Database).
-- **Sparse Retrieval**: Ricerca per parole chiave (BM25) integrata.
-- **Knowledge Graph**: Integrazione con **Neo4j** per catturare relazioni complesse tra gare e requisiti.
-- **Local LLM**: Generazione e analisi tramite **Ollama** (Llama 3 di default).
+### 🧠 HybridRAG Engine
+- **Dense Retrieval**: Semantic search via **Qdrant** (Vector Database).
+- **Sparse Retrieval**: Built-in keyword search (BM25).
+- **Knowledge Graph**: Integration with **Neo4j** to capture complex relationships between tenders and requirements.
+- **Local LLM**: Generation and analysis via **Ollama** (Llama 3 by default).
 
 ### 🖥️ Frontend & Dashboard
-- **Interfaccia Moderna**: Design in Dark Mode con estetica premium (Glassmorphism), animazioni fluide e layout centrato per l'auth.
-- **System Monitor**: Visualizzazione in tempo reale dello stato dei container Docker, utilizzo CPU/RAM e log live dei componenti (Qdrant, Redis, Ollama, ecc.).
-- **Configurazione a Caldo**: Gestione dinamica dei timeout di Nginx direttamente dall'interfaccia di amministrazione.
-- **RAG Health**: Dashboard per monitorare lo stato di salute dei singoli componenti del motore AI.
+- **Modern Interface**: Dark Mode design with premium aesthetics (Glassmorphism), fluid animations, and a centered layout for auth.
+- **System Monitor**: Real-time visualization of Docker container status, CPU/RAM usage, and live logs of components (Qdrant, Redis, Ollama, etc.).
+- **Hot Configuration**: Dynamic management of Nginx timeouts directly from the administration interface.
+- **RAG Health**: Dashboard to monitor the health status of individual AI engine components.
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Strato | Tecnologia |
+| Layer | Technology |
 |-------|-----------|
 | **Backend** | Python 3.11+, FastAPI, SQLAlchemy |
 | **Frontend** | React 18, TypeScript, Vite, Framer Motion, Lucide Icons |
-| **Database Relazionale** | PostgreSQL 16 |
+| **Relational Database** | PostgreSQL 16 |
 | **Vector Database** | Qdrant |
 | **Graph Database** | Neo4j Community |
 | **Object Storage** | MinIO |
-| **Infrastruttura AI** | llama.cpp server (Qwen2.5-Coder-7B) |
+| **AI Infrastructure** | llama.cpp server (Qwen2.5-Coder-7B) |
 | **Testing/Developer Tool** | Mailpit (Mock SMTP) |
 | **Proxy & Static** | Nginx |
 
@@ -57,61 +57,61 @@ Il progetto è in fase attiva di sviluppo. Di seguito le funzionalità e i compo
 
 ## 🚦 Quick Start
 
-Per avviare l'intero stack in locale:
+To start the entire stack locally:
 
 ```bash
-# 1. Avvia tutti i container
+# 1. Start all containers
 docker compose up -d
 
-# 2. Accedi all'applicazione
+# 2. Access the application
 # Frontend: http://localhost:3000
-# Mailpit (per OTP): http://localhost:8025
+# Mailpit (for OTP): http://localhost:8025
 # Backend Docs (OpenAPI): http://localhost:8000/docs
 ```
 
-Per avviare anche il profilo SSO con Keycloak:
+To also start the SSO profile with Keycloak:
 
 ```bash
 docker compose --profile keycloak up -d
 ```
 
-Importante:
+Important:
 
-- il profilo `keycloak` avvia Keycloak e il bootstrap utenti SSO, ma non avvia Mattermost
-- Mattermost, `mm-postgres`, `mm-plugin-oidc`, Jitsi, Jigasi, Vosk e `transcript-forwarder` fanno parte del profilo `videochat`
-- per avere insieme TenderWriter + SSO + stack video devi usare `docker compose --profile keycloak --profile videochat up -d`
+- The `keycloak` profile starts Keycloak and SSO user bootstrap, but does not start Mattermost.
+- Mattermost, `mm-postgres`, `mm-plugin-oidc`, Jitsi, Jigasi, Vosk, and `transcript-forwarder` are part of the `videochat` profile.
+- To have TenderWriter + SSO + video stack together, you must use `docker compose --profile keycloak --profile videochat up -d`.
 
-### Reset totale + bootstrap Keycloak
+### Full Reset + Keycloak Bootstrap
 
-Se vuoi ripartire da zero anche per il profilo SSO e ricreare realm, database Keycloak e utenti bootstrap:
+If you want to start from scratch for the SSO profile as well and recreate the realm, Keycloak database, and bootstrap users:
 
 ```bash
-# 1. Ferma tutto e rimuovi anche i volumi
+# 1. Stop everything and also remove volumes
 docker compose down -v
 
-# 2. Rialza lo stack con il profilo Keycloak
+# 2. Bring the stack back up with the Keycloak profile
 docker compose --profile keycloak up -d
 
-# 3. Controlla il bootstrap utenti
+# 3. Check user bootstrap
 docker logs tw-keycloak-bootstrap
 ```
 
-Risultato atteso:
+Expected result:
 
-- Keycloak disponibile su `http://localhost:8180`
-- realm `tenderwriter` importato
-- utenti `admin@admin.com` e `registrazioni.hyperknow@gmail.com` creati o aggiornati automaticamente
-- ruolo `tw_admin` assegnato a `admin@admin.com`
+- Keycloak available at `http://localhost:8180`
+- `tenderwriter` realm imported
+- users `admin@admin.com` and `registrazioni.hyperknow@gmail.com` automatically created or updated
+- `tw_admin` role assigned to `admin@admin.com`
 
-Endpoint utili per la modalità SSO:
+Useful endpoints for SSO mode:
 
 - Frontend: `http://localhost:3000`
 - Keycloak: `http://localhost:8180`
 - Mailpit: `http://localhost:8025`
 
-### Modalità di autenticazione
+### Authentication Modes
 
-Il comportamento del login dipende da queste variabili:
+Login behavior depends on these variables:
 
 ```env
 AUTH_PROVIDER=hybrid
@@ -124,25 +124,25 @@ TW_OIDC_ENABLE=true
 MM_LOGIN_REDIRECT_MODE=plugin
 ```
 
-Significato operativo:
+Operational meaning:
 
-- `AUTH_PROVIDER=legacy` e `VITE_AUTH_MODE=legacy`: solo login tradizionale
-- `AUTH_PROVIDER=keycloak` e `VITE_AUTH_MODE=keycloak`: solo login SSO
-- `AUTH_PROVIDER=hybrid` e `VITE_AUTH_MODE=hybrid`: login tradizionale + SSO insieme
+- `AUTH_PROVIDER=legacy` and `VITE_AUTH_MODE=legacy`: traditional login only
+- `AUTH_PROVIDER=keycloak` and `VITE_AUTH_MODE=keycloak`: SSO login only
+- `AUTH_PROVIDER=hybrid` and `VITE_AUTH_MODE=hybrid`: traditional + SSO login together
 
-Con `hybrid`, la pagina `/login` mostra:
+With `hybrid`, the `/login` page shows:
 
-- bottone `Accedi con SSO`
-- form email/password classico
+- `Sign in with SSO` button
+- classic email/password form
 
 ### Switching Mattermost: Enterprise vs Team/Community
 
-Il progetto supporta due modalità Mattermost, selezionabili solo via configurazione:
+The project supports two Mattermost modes, selectable only via configuration:
 
-- `MM_EDITION=team`: usa Mattermost Team/Community con plugin `com.tenderwriter.oidc` ed è il default
-- `MM_EDITION=enterprise`: usa Mattermost Enterprise/Entry con OIDC nativo
+- `MM_EDITION=team`: uses Mattermost Team/Community with the `com.tenderwriter.oidc` plugin (this is the default)
+- `MM_EDITION=enterprise`: uses Mattermost Enterprise/Entry with native OIDC
 
-Configurazione di default per Team/Community:
+Default configuration for Team/Community:
 
 ```env
 MM_EDITION=team
@@ -151,7 +151,7 @@ TW_OIDC_ENABLE=true
 MM_LOGIN_REDIRECT_MODE=plugin
 ```
 
-Configurazione alternativa per Enterprise/Entry:
+Alternative configuration for Enterprise/Entry:
 
 ```env
 MM_EDITION=enterprise
@@ -160,46 +160,46 @@ TW_OIDC_ENABLE=false
 MM_LOGIN_REDIRECT_MODE=off
 ```
 
-Note operative:
+Operational notes:
 
-- il realm Keycloak importato include già entrambe le callback Mattermost:
+- the imported Keycloak realm already includes both Mattermost callbacks:
   - `http://localhost:3000/mm/signup/openid/complete`
   - `http://localhost:3000/mm/plugins/com.tenderwriter.oidc/callback`
-- in modalità `team`, l’accesso diretto a `http://localhost:3000/mm/login` può essere reindirizzato al plugin solo se `MM_LOGIN_REDIRECT_MODE=plugin`
-- in modalità `hybrid`, solo le sessioni TenderWriter autenticate via Keycloak usano l’SSO Mattermost; i login tradizionali continuano a usare il fallback legacy
+- in `team` mode, direct access to `http://localhost:3000/mm/login` can be redirected to the plugin only if `MM_LOGIN_REDIRECT_MODE=plugin`
+- in `hybrid` mode, only TenderWriter sessions authenticated via Keycloak use Mattermost SSO; traditional logins continue to use the legacy fallback
 
-Switch rapido da terminale:
+Quick terminal switch:
 
 ```powershell
-# passa a Team/Community + plugin
+# switch to Team/Community + plugin
 .\utility\switch-mattermost-mode.ps1 team
 
-# passa a Enterprise/Entry + OIDC nativo
+# switch to Enterprise/Entry + native OIDC
 .\utility\switch-mattermost-mode.ps1 enterprise
 
-# aggiorna solo .env senza riavviare i container
+# update only .env without restarting containers
 .\utility\switch-mattermost-mode.ps1 team -NoRestart
 ```
 
-### Credenziali di sviluppo
+### Development Credentials
 
-Account locale legacy:
+Legacy local account:
 
 - Email: `admin@admin.com`
-- Password: valore presente in `.env` oppure default `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`
+- Password: value present in `.env` or default `vN7pQ3wL9xR5tY2uA4bC6dE8fG1hJ0`
 
-Utenti Keycloak sincronizzati su TenderWriter:
+Keycloak users synchronized to TenderWriter:
 
 - `admin@admin.com` / `TestPass123!`
   - Realm: `tenderwriter`
-  - Ruolo Keycloak: `tw_admin`
-  - Ruolo applicativo TenderWriter: `admin`
+  - Keycloak Role: `tw_admin`
+  - TenderWriter App Role: `admin`
 - `registrazioni.hyperknow@gmail.com` / `TestPass123!`
   - Realm: `tenderwriter`
-  - Ruolo Keycloak: `default-roles-tenderwriter`
-  - Ruolo applicativo TenderWriter: `editor`
+  - Keycloak Role: `default-roles-tenderwriter`
+  - TenderWriter App Role: `editor`
 
-Admin console Keycloak:
+Keycloak admin console:
 
 - URL: `http://localhost:8180/admin`
 - Username: `admin`
@@ -211,32 +211,32 @@ Mattermost system admin:
 - Email: `tw-admin@tenderwriter.local`
 - Password: `TW2026Secure!Pass`
 
-Nota:
+Note:
 
-- In modalità `hybrid`, puoi usare sia il login tradizionale locale sia gli utenti Keycloak sopra.
-- In modalità `keycloak` pura, il login tradizionale viene disabilitato volutamente.
-- Se ricrei i volumi Keycloak, le utenze del realm vengono riseedate automaticamente dal servizio `tw-keycloak-bootstrap`.
-- Se ricrei i volumi Mattermost, l'utente tecnico `tw-admin` e il team `tenderwriter` vengono riseedati automaticamente dal servizio `tw-mattermost-bootstrap`.
+- In `hybrid` mode, you can use both the traditional local login and the Keycloak users above.
+- In pure `keycloak` mode, traditional login is intentionally disabled.
+- If you recreate Keycloak volumes, realm users are automatically reseeded by the `tw-keycloak-bootstrap` service.
+- If you recreate Mattermost volumes, the technical user `tw-admin` and the `tenderwriter` team are automatically reseeded by the `tw-mattermost-bootstrap` service.
 
-### Configurazione Email (Mailpit)
-Il sistema è configurato per inviare le email a un server SMTP locale (Mailpit). Non è necessaria alcuna configurazione SMTP reale per lo sviluppo. Per vedere i codici OTP:
-1. Registrati nell'app (es. `test@example.com`).
-2. Apri `http://localhost:8025` nel browser.
-3. Copia il codice e inseriscilo nel frontend.
+### Email Configuration (Mailpit)
+The system is configured to send emails to a local SMTP server (Mailpit). No real SMTP configuration is required for development. To view OTP codes:
+1. Register in the app (e.g., `test@example.com`).
+2. Open `http://localhost:8025` in your browser.
+3. Copy the code and enter it in the frontend.
 
-### Stack Video Collaboration (Opzionale)
-Mattermost, Jitsi, Vosk e il forwarder delle trascrizioni sono dietro al profilo `videochat`, quindi non partono con il normale `docker compose up -d`.
+### Video Collaboration Stack (Optional)
+Mattermost, Jitsi, Vosk, and the transcript forwarder are behind the `videochat` profile, so they do not start with the standard `docker compose up -d`.
 
-Anche `docker compose --profile keycloak up -d` non li avvia: il profilo `keycloak` resta separato dal profilo `videochat`.
+Even `docker compose --profile keycloak up -d` does not start them: the `keycloak` profile remains separate from the `videochat` profile.
 
-Bootstrap automatico videochat:
+Automatic videochat bootstrap:
 
-- il servizio one-shot `tw-mattermost-bootstrap` crea o riallinea automaticamente l'utente tecnico Mattermost `tw-admin`
-- crea anche il team di default `tenderwriter`
-- aggiunge `tw-admin` al team, così il backend può autenticarsi correttamente anche dopo un reset dei volumi
-- questo evita il classico `401 Unauthorized` su `POST /mm/api/v4/users/login` quando Mattermost riparte vuoto
+- the one-shot `tw-mattermost-bootstrap` service automatically creates or realigns the Mattermost technical user `tw-admin`
+- it also creates the default `tenderwriter` team
+- it adds `tw-admin` to the team, so the backend can correctly authenticate even after a volume reset
+- this avoids the classic `401 Unauthorized` on `POST /mm/api/v4/users/login` when Mattermost starts empty
 
-Per avviare anche la collaborazione video:
+To also start video collaboration:
 ```bash
 docker compose --profile videochat up -d \
   mm-postgres mattermost \
@@ -244,150 +244,159 @@ docker compose --profile videochat up -d \
   transcript-forwarder
 ```
 
-Per avviare contemporaneamente SSO Keycloak e collaborazione video:
+To simultaneously start Keycloak SSO and video collaboration:
 ```bash
 docker compose --profile keycloak --profile videochat up -d
 ```
 
-Note operative:
-- `transcript-forwarder` resta in idle se `MM_TRANSCRIPT_WEBHOOK_URL` non è configurata.
-- Il pulsante Mattermost nel frontend usa l'host corrente come fallback, quindi funziona anche se accedi alla dashboard da un IP/LAN e non da `localhost`.
+Operational notes:
+- `transcript-forwarder` stays idle if `MM_TRANSCRIPT_WEBHOOK_URL` is not configured.
+- The Mattermost button in the frontend uses the current host as fallback, so it works even if you access the dashboard from an IP/LAN and not from `localhost`.
 
 ---
 
-## 🔧 Sviluppo & Debug
+## 🔧 Development & Debugging
 
 ### Backend Debug
-Il backend è configurato con log dettagliati. Puoi monitorarli con:
+The backend is configured with detailed logs. You can monitor them with:
 ```bash
 docker logs -f tw-backend
 ```
-### cancellare gli user 
+### Delete Users 
 ```bash
 docker exec tw-backend sh -c "export PYTHONPATH=/app && python3 app/delete_user.py"
 docker compose build backend
 ```
 
 ### Frontend Build
-Poiché il frontend viene servito da Nginx, dopo modifiche strutturali è necessario ricostruire l'immagine:
+Since the frontend is served by Nginx, after structural changes you need to rebuild the image:
 ```bash
 docker compose build frontend
 docker compose up -d frontend
 ```
 
 ### Backend Debug
-Il backend è ora in funzione con:
+The backend is now running with:
 
-✅ Validazione secret al startup
+✅ Secret validation at startup
 ✅ Rate limiting (3/min register, 5/min login)
-✅ Storage MinIO per OnlyOffice
-✅ Valori di default cambiati nel docker-compose
+✅ MinIO storage for OnlyOffice
+✅ Changed default values in docker-compose
 
-Nota: Le password di default sono ora DefaultPg2024Pass, DefaultNEO4J2024Pass, DefaultMinIO2024Pass. In produzione dovresti usarne di più sicure e memorizzarle in un vault.
+Note: The default passwords are now DefaultPg2024Pass, DefaultNEO4J2024Pass, DefaultMinIO2024Pass. In production, you should use more secure ones and store them in a vault.
 
-Credenziali temporanee per test:
+Temporary test credentials:
 
-- Legacy locale: `admin@admin.com` / valore in `.env`
+- Local legacy: `admin@admin.com` / value in `.env`
 - Keycloak/TenderWriter admin: `admin@admin.com` / `TestPass123!`
 - Keycloak/TenderWriter editor: `registrazioni.hyperknow@gmail.com` / `TestPass123!`
 - Mattermost admin: `tw-admin` / `TW2026Secure!Pass`
 ---
 
-## 🗺️ Roadmap Prossimi Passi
-- [ ] Integrazione completa della ricerca AI con cronologia utente.
-- [ ] Export professionale in PDF/Docx.
-- [ ] Raffinamento del Compliance Matrix per la mappatura automatica dei bandi.
+## 🗺️ Roadmap Next Steps
+- [ ] Full integration of AI search with user history.
+- [ ] Professional export to PDF/Docx.
+- [ ] Refinement of the Compliance Matrix for automatic tender mapping.
 
 
-### usare repomix per ottenere un md file da dare a LLM esternmi per analisi architetturali e bug fix e robustezza
-Occorre installare repomix: 
-```
+### Use repomix to get an md file to provide to external LLMs for architectural analysis, bug fixing, and robustness
+You need to install repomix: 
+```bash
 curl -fsSL https://raw.githubusercontent.com/repomix/repomix/main/install.sh | bash
 ```
-poi: 
-```
+then: 
+```bash
 repomix --style markdown
 ```
-se non funziona repomix per vari motivi di conflitti con altri tool si può usare: 
-```
+if repomix does not work due to various conflicts with other tools, you can use: 
+```bash
 docker pull ghcr.io/yamadashy/repomix:latest
 docker run --rm -v "d:/tender/tenderwriter:/app" ghcr.io/yamadashy/repomix .
 📦 Repomix v1.11.0
 No custom config found at repomix.config.ts, repomix.co
 ✔ Packing completed successfully!      
 ```
-consigliamo di usare repomix in locale con nvm per evitare conflitti con altri tool aggiornare nvm alla versione 20.11.1 (64-bit) con nvm install 20.11. 
+we recommend using repomix locally with nvm to avoid conflicts with other tools, update nvm to version 20.11.1 (64-bit) with nvm install 20.11. 
 
-E' utile avere repomix file md o xml per analisi architetturali e bug fix e robustezza in pdf per certi llm quindi:
+It is useful to have repomix md or xml files for architectural analysis, bug fixing, and robustness in pdf for certain llms so:
 
+```bash
 pip install markdown-pdf
 
-bash
-# Crea l'ambiente
+# Create the environment
 python -m venv venv
 
-# Attivalo
+# Activate it
 .\venv\Scripts\activate
 
-# Installa solo quello che ti serve qui
+# Install only what you need here
 pip install markdown-pdf 
 
-# per convertire il file md in pdf
+# to convert the md file to pdf
 python convert-md-to-pdf.py
-
+```
 
 # NEO4J
-Tutti i nodi Tender
+1. All Tender nodes
+```cypher
 MATCH (t:Tender) RETURN t LIMIT 25
-2. Nodi correlati a Tender con relazioni
+```
+2. Nodes related to Tender with relationships
+```cypher
 MATCH (t:Tender)-[r]->(n) 
-RETURN t.id as tender, type(r) as relazione, labels(n)[0] as tipo_nodo, n.name as nome
-3. Visualizzazione completa grafo
+RETURN t.id as tender, type(r) as relationship, labels(n)[0] as node_type, n.name as name
+```
+3. Full graph visualization
+```cypher
 MATCH (n) RETURN n
-4. Solo nodi Tender con loro requisiti
+```
+4. Only Tender nodes with their requirements
+```cypher
 MATCH (t:Tender)-[:HAS_REQUIREMENT]->(r:Requirement)
 RETURN t.id, t.title, r.id, r.description
-5. Statistiche nodi
-MATCH (n) 
-RETURN labels(n)[0] as Tipo, count(*) as Quantita
-ORDER BY Quantita DESC
-Nota: Il database Neo4j sembra vuoto. I nodi vengono creati quando inserisci dati nel sistema (es. tenders, proposals). Per popolare il grafo, usa la funzionalità RAG di TenderWriter.
-
-
-
 ```
-Utilizzo:
-Celery Worker - esegue i task in background
-Redis - gestisce la coda dei messaggi tra backend e worker
-Quando avvii un task (Index/Generate/Export), il backend invia il messaggio a Redis → Celery Worker lo preleva ed esegue il task.
+5. Node statistics
+```cypher
+MATCH (n) 
+RETURN labels(n)[0] as Type, count(*) as Quantity
+ORDER BY Quantity DESC
+```
+Note: The Neo4j database appears empty. Nodes are created when you insert data into the system (e.g., tenders, proposals). To populate the graph, use TenderWriter's RAG functionality.
 
+```text
+Usage:
+Celery Worker - executes background tasks
+Redis - manages the message queue between backend and worker
+When you start a task (Index/Generate/Export), the backend sends the message to Redis → Celery Worker picks it up and executes the task.
+```
 
-Vai su http://localhost:7474
-Inserisci:
-Username: neo4j
-Password: DefaultNEO4J2024Pass
+Go to `http://localhost:7474`
+Enter:
+Username: `neo4j`
+Password: `DefaultNEO4J2024Pass`
 
-Configurazione:
-Apri http://localhost:8001
-Connettiti a Redis:
-Host: redis (dal container) o localhost (dal host)
-Port: 6379
+Configuration:
+Open `http://localhost:8001`
+Connect to Redis:
+Host: `redis` (from container) or `localhost` (from host)
+Port: `6379`
+
 ---
 
 ## 🤖 OpenCode - AI Coding Agent
 
-TenderWriter include **OpenCode**, un agente AI per coding che gira localmente con un LLM dedicato.
+TenderWriter includes **OpenCode**, an AI coding agent running locally with a dedicated LLM.
 
-### Architettura
+### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    OpenCode + Codebase + LLM                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐   │
 │  │  tw-opencode │────▶│ tw-codebase  │     │   tw-llama-server    │   │
-│  │  (agente AI) │     │ (sorgente)   │     │  (Qwen2.5-Coder 7B)│   │
+│  │  (AI agent)  │     │ (source)     │     │  (Qwen2.5-Coder 7B)│   │
 │  └──────────────┘     └──────────────┘     └──────────────────────┘   │
 │         │                     │                      │                 │
 │         │            /workspace/codebase           http://localhost:8080│
@@ -395,111 +404,110 @@ TenderWriter include **OpenCode**, un agente AI per coding che gira localmente c
 │         └─────────────────────┴──────────────────────┘                 │
 │                                                                         │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                     Provider Supportati                           │  │
-│  │  1. Locale: llama.cpp (Qwen2.5-Coder 7B)                      │  │
-│  │  2. Cloud: Anthropic (Claude) - richiede API key               │  │
-│  │  3. Cloud: OpenAI (GPT-4.1) - richiede API key                 │  │
+│  │                     Supported Providers                           │  │
+│  │  1. Local: llama.cpp (Qwen2.5-Coder 7B)                      │  │
+│  │  2. Cloud: Anthropic (Claude) - requires API key               │  │
+│  │  3. Cloud: OpenAI (GPT-4.1) - requires API key                 │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Servizi
+### Services
 
-| Servizio | Container | Descrizione |
+| Service | Container | Description |
 |----------|-----------|-------------|
-| LLM Server | tw-llama-server | Qwen2.5-Coder:7B (porta 8080) |
-| OpenCode | tw-opencode | Agente AI |
-| Codebase | tw-codebase | Codice sorgente montato |
+| LLM Server | tw-llama-server | Qwen2.5-Coder:7B (port 8080) |
+| OpenCode | tw-opencode | AI Agent |
+| Codebase | tw-codebase | Mounted source code |
 
-### Come Usare
+### How to Use
 
 ```bash
-# 1. Entrare nel container OpenCode
+# 1. Enter the OpenCode container
 docker compose exec opencode bash
 
-# 2. Avviare OpenCode
+# 2. Start OpenCode
 opencode
 
-# 3. Il codice è disponibile in /workspace/codebase
+# 3. The code is available in /workspace/codebase
 cd /workspace/codebase
-ls -la  # Vedrai backend/ e frontend/
+ls -la  # You will see backend/ and frontend/
 ```
 
-### Cambiare Provider/Modello
+### Changing Provider/Model
 
 ```bash
-# Vedere modelli disponibili (locale + cloud)
+# View available models (local + cloud)
 /models
 
-# Usare modello locale (default)
+# Use local model (default)
 /use llama-cpp/qwen2.5-coder-7b
 
-# Usare Claude (richiede ANTHROPIC_API_KEY)
+# Use Claude (requires ANTHROPIC_API_KEY)
 /use anthropic/claude-sonnet-4-20250514
 
-# Usare GPT-4.1 (richiede OPENAI_API_KEY)
+# Use GPT-4.1 (requires OPENAI_API_KEY)
 /use openai/gpt-4.1
 ```
 
-### Configurazione API Cloud
+### Cloud API Configuration
 
-Per usare modelli cloud, imposta le variabili d'ambiente:
+To use cloud models, set the environment variables:
 
 ```bash
-# Nel docker-compose o .env
+# In docker-compose or .env
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
 
-Oppure passa le variabili all'avvio:
+Or pass the variables at startup:
 
 ```bash
 docker compose exec -e ANTHROPIC_API_KEY=sk-ant-... opencode bash
 ```
 
-### Comandi Utili
+### Useful Commands
 
 ```bash
-# Vedere i modelli disponibili
+# View available models
 /models
 
-# Cambiare modello
+# Change model
 /use llama-cpp/qwen2.5-coder-7b
 
-# Analizzare il codice corrente
+# Analyze current code
 analyze the codebase
 
-# Chiedere aiuto
+# Ask for help
 /help
 ```
 
-### Configurazione
+### Configuration
 
-Il file `opencode.json` supporta:
+The `opencode.json` file supports:
 
-| Provider | Modello | Tipo |
+| Provider | Model | Type |
 |----------|---------|------|
-| llama-cpp | qwen2.5-coder-7b | Locale (default) |
+| llama-cpp | qwen2.5-coder-7b | Local (default) |
 | anthropic | claude-sonnet-4 | Cloud |
 | openai | gpt-4.1 | Cloud |
 
-### Risoluzione Problemi
+### Troubleshooting
 
 ```bash
-# Verificare che il server LLM sia attivo
+# Verify that the LLM server is active
 curl http://localhost:8080/v1/models
 
-# Vedere i log di llama-server
+# View llama-server logs
 docker compose logs llama-server
 
-# Vedere i log di OpenCode
+# View OpenCode logs
 docker compose logs opencode
 
-# Verificare che il codebase sia montato
+# Verify that the codebase is mounted
 docker compose exec opencode ls -la /workspace/codebase
 ```
 
 ---
 
-*Progetto sviluppato con ❤️ per l'efficienza nelle gare d'appalto.*
-```
+*Project developed with ❤️ for efficiency in tender proposals.*

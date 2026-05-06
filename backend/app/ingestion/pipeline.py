@@ -11,13 +11,16 @@ Processes uploaded documents (PDF, DOCX, PPTX) through:
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import os
 import re
+import unicodedata
 
 import structlog
 
 from app.config import settings
+from app.ingestion.document_quality import document_quality_metadata
 from app.services.tender_document_requirement_extractor import (
     extract_tender_participation_requirements,
 )
@@ -229,6 +232,11 @@ _HIGH_PRIORITY_KEYWORDS = (
     "dovra",
     "obbligatorio",
 )
+_PROCEDURE_HEADING_RE = re.compile(
+    r"\b(?:gara|procedura|appalto|tender)\b.*\b\d{5,}/\d{4}\b",
+    re.IGNORECASE,
+)
+_PROCEDURE_CODE_RE = re.compile(r"\b\d{5,}/\d{4}\b")
 
 
 class IngestionPipeline:
@@ -417,9 +425,7 @@ class IngestionPipeline:
                 status="started",
                 detail="Indexing chunks into dense and sparse retrieval stores.",
             )
-            point_ids = await run_in_threadpool(
-                self.rag_engine.index_chunks, chunks
-            )
+            point_ids = await run_in_threadpool(self.rag_engine.index_chunks, chunks)
             await self._emit_progress(
                 progress_callback,
                 stage="index_qdrant",
@@ -551,16 +557,22 @@ class IngestionPipeline:
 
         normalized = f" {cleaned.casefold()} "
         keyword_hit = any(keyword in normalized for keyword in _REQUIREMENT_LINE_KEYWORDS)
-        strong_action_hit = any(keyword in normalized for keyword in _STRONG_REQUIREMENT_ACTION_KEYWORDS)
+        strong_action_hit = any(
+            keyword in normalized for keyword in _STRONG_REQUIREMENT_ACTION_KEYWORDS
+        )
         object_hit = any(keyword in normalized for keyword in _REQUIREMENT_OBJECT_KEYWORDS)
         academic_hit = any(keyword in normalized for keyword in _ACADEMIC_CONTEXT_KEYWORDS)
-        explicit_list_hit = bool(re.match(r"^(?:[-•*\u2022]\s+|\(?\d+[\).]\s+|[A-Za-z][\).]\s+)", raw))
+        explicit_list_hit = bool(
+            re.match(r"^(?:[-•*\u2022]\s+|\(?\d+[\).]\s+|[A-Za-z][\).]\s+)", raw)
+        )
         procurement_hit = strong_action_hit or object_hit
 
         if force:
             if academic_hit and not procurement_hit:
                 return False
-            return len(cleaned.split()) >= 4 and (procurement_hit or keyword_hit or explicit_list_hit)
+            return len(cleaned.split()) >= 4 and (
+                procurement_hit or keyword_hit or explicit_list_hit
+            )
 
         if academic_hit and not procurement_hit:
             return False
@@ -568,10 +580,7 @@ class IngestionPipeline:
         if procurement_hit and (keyword_hit or explicit_list_hit):
             return True
 
-        if strong_action_hit and object_hit:
-            return True
-
-        return False
+        return bool(strong_action_hit and object_hit)
 
     def _infer_requirement_priority(self, text: str) -> str:
         normalized = str(text or "").casefold()
@@ -597,19 +606,49 @@ class IngestionPipeline:
         try:
             from unstructured.partition.auto import partition
 
-            elements = partition(filename=file_path)
+            elements = None
+            if os.path.splitext(file_path)[1].casefold() == ".pdf":
+                try:
+                    from unstructured.partition.pdf import partition_pdf
+
+                    elements = partition_pdf(
+                        filename=file_path,
+                        strategy="hi_res",
+                        infer_table_structure=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Structured PDF parsing failed, falling back to auto partition",
+                        error=str(exc),
+                    )
+
+            if elements is None:
+                elements = partition(filename=file_path)
 
             parsed = []
             for elem in elements:
-                parsed.append({
-                    "type": type(elem).__name__,
-                    "text": str(elem),
-                    "metadata": {
-                        "page_number": getattr(elem.metadata, "page_number", None),
-                        "section": getattr(elem.metadata, "section", None),
-                        "filename": getattr(elem.metadata, "filename", None),
-                    },
-                })
+                elem_type = type(elem).__name__
+                elem_metadata = getattr(elem, "metadata", None)
+                is_table = (
+                    elem_type.casefold() == "table" or getattr(elem, "category", None) == "Table"
+                )
+                metadata = {
+                    "page_number": getattr(elem_metadata, "page_number", None),
+                    "section": getattr(elem_metadata, "section", None),
+                    "filename": getattr(elem_metadata, "filename", None),
+                }
+                if is_table:
+                    metadata["is_table"] = True
+                    text_as_html = getattr(elem_metadata, "text_as_html", None)
+                    if text_as_html:
+                        metadata["text_as_html"] = text_as_html
+                parsed.append(
+                    {
+                        "type": elem_type,
+                        "text": str(elem),
+                        "metadata": metadata,
+                    }
+                )
 
             logger.debug("Document parsed", elements=len(parsed))
             return parsed
@@ -625,6 +664,7 @@ class IngestionPipeline:
     def _fallback_parse(self, file_path: str) -> list[dict]:
         """Fallback parser for when unstructured is not available."""
         import os
+
         ext = os.path.splitext(file_path)[1].lower()
 
         if ext == ".pdf":
@@ -647,11 +687,13 @@ class IngestionPipeline:
             for page_num, page in enumerate(doc, start=1):
                 text = page.get_text("text")
                 if text.strip():
-                    elements.append({
-                        "type": "Text",
-                        "text": text.strip(),
-                        "metadata": {"page_number": page_num},
-                    })
+                    elements.append(
+                        {
+                            "type": "Text",
+                            "text": text.strip(),
+                            "metadata": {"page_number": page_num},
+                        }
+                    )
             doc.close()
             return elements
 
@@ -668,11 +710,13 @@ class IngestionPipeline:
             elements = []
             for para in doc.paragraphs:
                 if para.text.strip():
-                    elements.append({
-                        "type": "Title" if para.style.name.startswith("Heading") else "Text",
-                        "text": para.text.strip(),
-                        "metadata": {"style": para.style.name},
-                    })
+                    elements.append(
+                        {
+                            "type": "Title" if para.style.name.startswith("Heading") else "Text",
+                            "text": para.text.strip(),
+                            "metadata": {"style": para.style.name},
+                        }
+                    )
             return elements
 
         except Exception as e:
@@ -682,7 +726,7 @@ class IngestionPipeline:
     def _parse_text(self, file_path: str) -> list[dict]:
         """Parse plain text file."""
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 text = f.read()
             return [{"type": "Text", "text": text, "metadata": {}}]
         except Exception as e:
@@ -770,8 +814,6 @@ Return as JSON:
                 temperature=0.1,
             )
 
-            # Parse the extracted entities
-            import json
             entities = _extract_first_json_object(result.text)
             if entities is None:
                 logger.warning("Failed to parse entity extraction response")
@@ -814,6 +856,7 @@ Return as JSON:
         metadata["doc_type"] = doc_type
 
         from fastapi.concurrency import run_in_threadpool
+
         chunk_meta = self._build_chunk_metadata(
             document_id=document_id,
             doc_type=doc_type,
@@ -821,14 +864,10 @@ Return as JSON:
             metadata=metadata,
         )
 
-        chunks = await run_in_threadpool(
-            self.rag_engine.chunk_and_embed, text, chunk_meta
-        )
+        chunks = await run_in_threadpool(self.rag_engine.chunk_and_embed, text, chunk_meta)
         for chunk_index, chunk in enumerate(chunks):
             chunk.metadata.chunk_index = chunk_index
-        point_ids = await run_in_threadpool(
-            self.rag_engine.index_chunks, chunks
-        ) if chunks else []
+        point_ids = await run_in_threadpool(self.rag_engine.index_chunks, chunks) if chunks else []
 
         return {
             "status": "completed",
@@ -846,6 +885,7 @@ Return as JSON:
         metadata: dict,
         section_title: str = "",
         page_number: int | None = None,
+        extra: dict | None = None,
     ):
         from app.rag.chunker import ChunkMetadata
 
@@ -857,7 +897,7 @@ Return as JSON:
             or file_path
         ).strip()
 
-        return ChunkMetadata(
+        chunk_metadata = ChunkMetadata(
             document_id=document_id,
             tender_id=metadata.get("tender_id"),
             source_file=file_path,
@@ -867,6 +907,31 @@ Return as JSON:
             page_number=page_number,
             doc_type=doc_type,
         )
+        if extra:
+            chunk_metadata.extra.update(extra)
+        return chunk_metadata
+
+    def _detect_procedure_label(self, heading: str | None) -> str | None:
+        text = re.sub(r"\s+", " ", str(heading or "").strip())
+        if not text:
+            return None
+        if _PROCEDURE_HEADING_RE.search(text):
+            return text
+        if _PROCEDURE_CODE_RE.search(text) and any(
+            token in text.casefold() for token in ("gara", "procedura", "appalto", "tender")
+        ):
+            return text
+        return None
+
+    def _procedure_key(self, label: str, index: int) -> str:
+        normalized = "".join(
+            ch
+            for ch in unicodedata.normalize("NFKD", label.casefold())
+            if not unicodedata.combining(ch)
+        )
+        slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")[:80] or f"procedure-{index}"
+        digest = hashlib.sha1(label.encode("utf-8")).hexdigest()[:8]
+        return f"{index}-{slug}-{digest}"
 
     def _build_chunk_inputs(
         self,
@@ -882,9 +947,28 @@ Return as JSON:
         current_section = "Introduction"
         current_page: int | None = None
         current_parts: list[str] = []
+        current_procedure_label: str | None = None
+        current_procedure_key: str | None = None
+        current_procedure_index = 0
+
+        def current_extra() -> dict:
+            if not current_procedure_label or not current_procedure_key:
+                return {}
+            return {
+                "procedure_label": current_procedure_label,
+                "procedure_key": current_procedure_key,
+                "procedure_index": current_procedure_index,
+            }
+
+        def quality_extra(chunk_text: str, extra: dict | None = None) -> dict:
+            merged = dict(extra or {})
+            merged.update(document_quality_metadata(chunk_text))
+            return merged
 
         def flush_current_group() -> None:
-            chunk_text = "\n\n".join(part for part in current_parts if part and part.strip()).strip()
+            chunk_text = "\n\n".join(
+                part for part in current_parts if part and part.strip()
+            ).strip()
             if not chunk_text:
                 return
             chunk_inputs.append(
@@ -897,6 +981,7 @@ Return as JSON:
                         metadata=metadata,
                         section_title=current_section,
                         page_number=current_page,
+                        extra=quality_extra(chunk_text, current_extra()),
                     ),
                 )
             )
@@ -914,9 +999,52 @@ Return as JSON:
                 if current_parts:
                     flush_current_group()
                     current_parts = []
+                detected_procedure = self._detect_procedure_label(text)
+                if detected_procedure:
+                    current_procedure_index += 1
+                    current_procedure_label = detected_procedure
+                    current_procedure_key = self._procedure_key(
+                        detected_procedure,
+                        current_procedure_index,
+                    )
                 current_section = text
                 current_page = page_number
                 current_parts.append(text)
+                continue
+
+            if elem_metadata.get("is_table") or elem_type.casefold() == "table":
+                if current_parts:
+                    flush_current_group()
+                    current_parts = []
+                table_extra = current_extra()
+                table_extra.update(
+                    {
+                        "is_table": True,
+                        "table_html": elem_metadata.get("text_as_html"),
+                    }
+                )
+                chunk_inputs.append(
+                    (
+                        text,
+                        self._build_chunk_metadata(
+                            document_id=document_id,
+                            doc_type=doc_type,
+                            file_path=file_path,
+                            metadata=metadata,
+                            section_title=current_section,
+                            page_number=page_number,
+                            extra=quality_extra(
+                                text,
+                                {
+                                    key: value
+                                    for key, value in table_extra.items()
+                                    if value is not None
+                                },
+                            ),
+                        ),
+                    )
+                )
+                current_page = page_number
                 continue
 
             if current_parts and page_number != current_page:
@@ -944,6 +1072,7 @@ Return as JSON:
                     doc_type=doc_type,
                     file_path=file_path,
                     metadata=metadata,
+                    extra=quality_extra(fallback),
                 ),
             )
         ]

@@ -30,7 +30,7 @@ class _FakeExecuteResult:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
 
-    def scalars(self) -> "_FakeExecuteResult":
+    def scalars(self) -> _FakeExecuteResult:
         return self
 
     def all(self) -> list[object]:
@@ -48,7 +48,9 @@ class _FakeAsyncSession:
 
 
 class RequirementCandidateQueryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_list_staged_requirement_candidate_runs_orders_candidates_and_clamps_limit(self) -> None:
+    async def test_list_staged_requirement_candidate_runs_orders_candidates_and_clamps_limit(
+        self,
+    ) -> None:
         run = RequirementExtractionRun(
             id=5,
             tender_id=21,
@@ -83,7 +85,10 @@ class RequirementCandidateQueryTests(unittest.IsolatedAsyncioTestCase):
             limit_runs=99,
         )
 
-        self.assertEqual([candidate.summary_text for candidate in runs[0].candidates], ["First item", "Second item"])
+        self.assertEqual(
+            [candidate.summary_text for candidate in runs[0].candidates],
+            ["First item", "Second item"],
+        )
         self.assertIsNotNone(db.statement)
         self.assertEqual(db.statement._limit_clause.value, 20)
 

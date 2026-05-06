@@ -36,11 +36,15 @@ class _FakeGenerator:
 class _FailingGenerator:
     async def generate(self, template, variables, temperature=None, max_tokens=None):
         del template, variables, temperature, max_tokens
-        raise RuntimeError("OpenAI-compatible completion generation failed with status 502: upstream unavailable")
+        raise RuntimeError(
+            "OpenAI-compatible completion generation failed with status 502: upstream unavailable"
+        )
 
 
 class TenderDocumentRequirementExtractorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_extract_tender_participation_requirements_uses_participation_prompt(self) -> None:
+    async def test_extract_tender_participation_requirements_uses_participation_prompt(
+        self,
+    ) -> None:
         generator = _FakeGenerator(
             {
                 "schema_version": "requirement_extraction_v2.schema.v1",
@@ -93,9 +97,13 @@ class TenderDocumentRequirementExtractorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generator.calls[0][0], "participation_requirement_extractor_v1")
         self.assertEqual(result.candidates[0]["category"], "certifications")
         self.assertEqual(result.candidates[0]["requirement_scope"], "participation")
-        self.assertEqual(result.candidates[0]["extractor_pipeline"], "tender_document_llm_participation_v1")
+        self.assertEqual(
+            result.candidates[0]["extractor_pipeline"], "tender_document_llm_participation_v1"
+        )
 
-    async def test_extract_tender_participation_requirements_keeps_heuristic_fallback_warning(self) -> None:
+    async def test_extract_tender_participation_requirements_keeps_heuristic_fallback_warning(
+        self,
+    ) -> None:
         fake_settings = SimpleNamespace(
             requirement_extraction_llm_v2_enabled=True,
             requirement_extraction_llm_v2_rollout_percent=100,

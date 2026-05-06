@@ -3,7 +3,6 @@ TenderWriter — SQLAlchemy Models for Tenders, Proposals, Content, and Document
 """
 
 import enum
-from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
@@ -23,7 +22,6 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
-
 
 # ──────────────────────────────────────────────
 # Enums
@@ -82,6 +80,7 @@ class KpiEventDeliveryStatus(str, enum.Enum):
     PENDING = "pending"
     DELIVERED = "delivered"
     FAILED = "failed"
+
 
 # ──────────────────────────────────────────────
 # Models
@@ -152,6 +151,13 @@ class SearchHistory(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     query = Column(Text, nullable=False)
     response = Column(Text, nullable=False)
+    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True)
+    route_key = Column(String(16), nullable=True)
+    llm_route = Column(String(64), nullable=True)
+    anonymized = Column(Boolean, nullable=False, server_default="false")
+    retrieval_version = Column(String(32), nullable=True)
+    sources_json = Column(JSONB, nullable=True)
+    settings_json = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
@@ -211,7 +217,9 @@ class Tender(Base):
     )
     proposals = relationship("Proposal", back_populates="tender", cascade="all, delete")
     permissions = relationship("TenderPermission", back_populates="tender", cascade="all, delete")
-    chat_room = relationship("ChatRoom", back_populates="tender", uselist=False, cascade="all, delete")
+    chat_room = relationship(
+        "ChatRoom", back_populates="tender", uselist=False, cascade="all, delete"
+    )
     documents = relationship(
         "Document",
         back_populates="tender",
@@ -228,11 +236,10 @@ class TenderRequirement(Base):
     requirement_text = Column(Text, nullable=False)
     category = Column(String(100))
     priority = Column(String(20), default="medium")
-    compliance_status = Column(
-        Enum(ComplianceStatus), default=ComplianceStatus.NOT_ADDRESSED
-    )
+    compliance_status = Column(Enum(ComplianceStatus), default=ComplianceStatus.NOT_ADDRESSED)
     proposal_section_id = Column(Integer, ForeignKey("proposal_sections.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_projected_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     tender = relationship("Tender", back_populates="requirements")
@@ -243,8 +250,12 @@ class RequirementExtractionRun(Base):
     __tablename__ = "requirement_extraction_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
-    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     source_document_ref = Column(String(1000), nullable=True)
     filename = Column(String(500), nullable=True)
     extraction_method = Column(String(100), nullable=False, default="heuristic_v1")
@@ -265,7 +276,9 @@ class RequirementCandidate(Base):
     __tablename__ = "requirement_candidates"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     extraction_run_id = Column(
         Integer,
         ForeignKey("requirement_extraction_runs.id", ondelete="CASCADE"),
@@ -298,7 +311,9 @@ class ConsolidatedRequirement(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     canonical_text = Column(Text, nullable=False)
     normalized_text = Column(Text, nullable=False)
     category = Column(String(100))
@@ -357,14 +372,18 @@ class RequirementReview(Base):
     __tablename__ = "requirement_reviews"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     consolidated_requirement_id = Column(
         Integer,
         ForeignKey("consolidated_requirements.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    actor_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     action = Column(String(50), nullable=False, index=True)
     previous_review_state = Column(String(50), nullable=True)
     new_review_state = Column(String(50), nullable=False, index=True)
@@ -394,7 +413,9 @@ class RequirementRelation(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     source_requirement_id = Column(
         Integer,
         ForeignKey("consolidated_requirements.id", ondelete="CASCADE"),
@@ -436,14 +457,18 @@ class RequirementRelationReview(Base):
     __tablename__ = "requirement_relation_reviews"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     requirement_relation_id = Column(
         Integer,
         ForeignKey("requirement_relations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    actor_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     action = Column(String(50), nullable=False, index=True)
     previous_review_state = Column(String(50), nullable=True)
     new_review_state = Column(String(50), nullable=False, index=True)
@@ -473,8 +498,10 @@ class Proposal(Base):
     tender = relationship("Tender", back_populates="proposals")
     created_by_user = relationship("User", back_populates="proposals")
     sections = relationship(
-        "ProposalSection", back_populates="proposal", cascade="all, delete",
-        order_by="ProposalSection.order"
+        "ProposalSection",
+        back_populates="proposal",
+        cascade="all, delete",
+        order_by="ProposalSection.order",
     )
 
 
@@ -571,6 +598,7 @@ class Chunk(Base):
 
 class TenderPermission(Base):
     """Granular per-tender access control."""
+
     __tablename__ = "tender_permissions"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -632,7 +660,9 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    chat_room_id = Column(Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    chat_room_id = Column(
+        Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     message_type = Column(Enum(ChatMessageType), default=ChatMessageType.TEXT, index=True)
     text_bucket = Column(String(255), nullable=True)
@@ -655,7 +685,9 @@ class ChatAttachment(Base):
     __tablename__ = "chat_attachments"
 
     id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    message_id = Column(
+        Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     bucket = Column(String(255), nullable=False)
     object_key = Column(String(1000), nullable=False)
     filename = Column(String(500), nullable=False)
@@ -671,7 +703,9 @@ class ChatEvent(Base):
     __tablename__ = "chat_events"
 
     id = Column(Integer, primary_key=True, index=True)
-    chat_room_id = Column(Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    chat_room_id = Column(
+        Integer, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     event_type = Column(String(100), nullable=False, index=True)
     payload_json = Column(JSONB, default=dict)
@@ -685,14 +719,18 @@ class KpiDomainEvent(Base):
     __tablename__ = "kpi_domain_events"
 
     id = Column(Integer, primary_key=True, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     event_type = Column(String(100), nullable=False, index=True)
     source = Column(String(100), nullable=False, default="tw-backend")
     external_tender_id = Column(String(100), nullable=False, index=True)
     occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
     payload_json = Column(JSONB, default=dict)
-    delivery_status = Column(Enum(KpiEventDeliveryStatus), default=KpiEventDeliveryStatus.PENDING, index=True)
+    delivery_status = Column(
+        Enum(KpiEventDeliveryStatus), default=KpiEventDeliveryStatus.PENDING, index=True
+    )
     delivery_attempts = Column(Integer, default=0)
     response_status_code = Column(Integer, nullable=True)
     response_json = Column(JSONB, default=dict)
@@ -710,8 +748,12 @@ class KpiAdminAuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     action = Column(String(100), nullable=False, index=True)
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
-    admin_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    admin_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     admin_user_email = Column(String(255), nullable=False)
     admin_user_role = Column(String(50), nullable=False)
     delivered = Column(Boolean, nullable=True)
@@ -750,14 +792,20 @@ class AnonymizerAuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     action = Column(String(100), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     user_email = Column(String(255), nullable=False, default="")
     user_role = Column(String(50), nullable=False, default="")
-    tender_id = Column(Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
+    tender_id = Column(
+        Integer, ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     route_key = Column(String(50), nullable=True, index=True)
     llm_route = Column(String(50), nullable=True, index=True)
     anonymized = Column(Boolean, nullable=True)
-    target_id = Column(Integer, ForeignKey("ai_gateway_targets.id", ondelete="SET NULL"), nullable=True, index=True)
+    target_id = Column(
+        Integer, ForeignKey("ai_gateway_targets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     target_provider = Column(String(50), nullable=True)
     target_base_url = Column(String(500), nullable=True)
     session_token = Column(String(64), nullable=True)
@@ -770,22 +818,66 @@ class AnonymizerAuditLog(Base):
     tender = relationship("Tender", foreign_keys=[tender_id])
     target = relationship("AIGatewayTarget", foreign_keys=[target_id])
 
-from app.models.operational_observability import (
-    AttendanceRecord,
-    AttendanceStatus,
-    CallSession,
-    CallSessionStatus,
-    ComplianceGate,
-    ComplianceGateStatus,
-    ContributionRequest,
-    ContributionRequestStatus,
-    ContributionUnit,
-    ContributionUnitStatus,
-    ReworkAction,
-    ReworkStatus,
-    ReviewCycle,
-    ReviewCycleStatus,
-)
-from app.models.llm_settings import LLMSettings
-from app.models.app_settings import AppSettings
 
+from app.models.app_settings import AppSettings as AppSettings
+from app.models.llm_settings import LLMSettings as LLMSettings
+from app.models.operational_observability import (
+    AttendanceRecord as AttendanceRecord,
+)
+from app.models.operational_observability import (
+    AttendanceStatus as AttendanceStatus,
+)
+from app.models.operational_observability import (
+    CallSession as CallSession,
+)
+from app.models.operational_observability import (
+    CallSessionStatus as CallSessionStatus,
+)
+from app.models.operational_observability import (
+    ComplianceGate as ComplianceGate,
+)
+from app.models.operational_observability import (
+    ComplianceGateStatus as ComplianceGateStatus,
+)
+from app.models.operational_observability import (
+    ContributionRequest as ContributionRequest,
+)
+from app.models.operational_observability import (
+    ContributionRequestStatus as ContributionRequestStatus,
+)
+from app.models.operational_observability import (
+    ContributionUnit as ContributionUnit,
+)
+from app.models.operational_observability import (
+    ContributionUnitStatus as ContributionUnitStatus,
+)
+from app.models.operational_observability import (
+    ReviewCycle as ReviewCycle,
+)
+from app.models.operational_observability import (
+    ReviewCycleStatus as ReviewCycleStatus,
+)
+from app.models.operational_observability import (
+    ReworkAction as ReworkAction,
+)
+from app.models.operational_observability import (
+    ReworkStatus as ReworkStatus,
+)
+from app.models.rehearsal import (
+    RehearsalMode as RehearsalMode,
+)
+from app.models.rehearsal import (
+    RehearsalPersonaResult as RehearsalPersonaResult,
+)
+from app.models.rehearsal import (
+    RehearsalRecommendation as RehearsalRecommendation,
+)
+from app.models.rehearsal import (
+    RehearsalRecommendationStatus as RehearsalRecommendationStatus,
+)
+from app.models.rehearsal import (
+    RehearsalRun as RehearsalRun,
+)
+from app.models.rehearsal import (
+    RehearsalRunStatus as RehearsalRunStatus,
+)

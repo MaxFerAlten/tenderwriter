@@ -61,6 +61,7 @@ from app.schemas import (
     ServiceReadinessResponse,
     ServiceVersionManifestResponse,
     SnapshotHistoryItem,
+    TenderRehearsalSummaryRequest,
     TenderSnapshotResponse,
     TenderSyncRequest,
     TransitionItem,
@@ -840,6 +841,7 @@ async def get_forecast(
         **dict((snapshot_record or {}).get("analysis_metadata") or {}),
         **dict(forecast.analysis_metadata or {}),
     }
+    rehearsal_summary = store.get_rehearsal_summary(external_tender_id) if tender is not None else None
     return ForecastResponse(
         external_tender_id=external_tender_id,
         generated_at=_snapshot_generated_at(snapshot_record),
@@ -869,7 +871,24 @@ async def get_forecast(
             for item in forecast.next_best_actions
         ],
         analysis_metadata=merged_analysis_metadata,
+        rehearsal_summary=rehearsal_summary,
     )
+
+
+@app.put(
+    "/v1/tenders/{external_tender_id}/rehearsal-summary",
+    status_code=202,
+    dependencies=[Depends(require_internal_service)],
+)
+async def upsert_rehearsal_summary(
+    external_tender_id: str,
+    payload: TenderRehearsalSummaryRequest,
+    store: SqliteStore = Depends(get_store),
+) -> dict[str, str]:
+    if store.get_tender(external_tender_id) is None:
+        raise HTTPException(status_code=404, detail="tender not found")
+    store.set_rehearsal_summary(external_tender_id, payload.summary)
+    return {"status": "accepted"}
 
 
 @app.get(

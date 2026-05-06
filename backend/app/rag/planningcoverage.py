@@ -408,9 +408,7 @@ def classify_query_for_coverage(
         )
 
     enabled_slots = [
-        slot
-        for key, slot in PLANNING_COVERAGE_SLOTS.items()
-        if cfg["slots"].get(key, False)
+        slot for key, slot in PLANNING_COVERAGE_SLOTS.items() if cfg["slots"].get(key, False)
     ]
     run_all_enabled = cfg["mode"] == "always_on" or (cfg["alwaysRunPlanner"] and tender_like)
     selected_slots = (
@@ -445,9 +443,7 @@ def _result_text(result: Any) -> str:
 
 def _result_score(result: Any) -> float:
     value = (
-        result.get("score", 0.0)
-        if isinstance(result, Mapping)
-        else getattr(result, "score", 0.0)
+        result.get("score", 0.0) if isinstance(result, Mapping) else getattr(result, "score", 0.0)
     )
     try:
         return float(value)

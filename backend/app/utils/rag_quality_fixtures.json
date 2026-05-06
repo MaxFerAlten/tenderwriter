@@ -1,0 +1,10 @@
+[
+  {
+    "id": "overview-oscat-smoke",
+    "question": "Analizza la gara OSCAT",
+    "answer": "La gara richiede qualificazione ACN. La durata indicata e di 48 mesi. La piattaforma START e presente nel contesto.",
+    "context": "La gara richiede qualificazione ACN. La durata indicata e di 48 mesi. La piattaforma START e presente nel contesto.",
+    "required_facts": ["ACN", "START"],
+    "numeric_facts": ["48 mesi"]
+  }
+]

@@ -55,7 +55,7 @@ from app.rag.engine import (
     QueryMode,
     RAGQuery,
 )
-from app.rag.generator import GenerationResult, PROMPT_TEMPLATES
+from app.rag.generator import PROMPT_TEMPLATES, GenerationResult
 
 
 class _EmptyRetriever:
@@ -137,13 +137,15 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        with patch("app.rag.engine.settings.anonymizer_enabled", True), patch(
-            "app.rag.engine.settings.external_llm_url",
-            "https://llm.example.com/v1",
-        ), patch("app.rag.engine.settings.external_llm_model", "gpt-test"):
-            result = await engine.query(
-                RAGQuery(text="Chi e Mario Rossi?", mode=QueryMode.QA)
-            )
+        with (
+            patch("app.rag.engine.settings.anonymizer_enabled", True),
+            patch(
+                "app.rag.engine.settings.external_llm_url",
+                "https://llm.example.com/v1",
+            ),
+            patch("app.rag.engine.settings.external_llm_model", "gpt-test"),
+        ):
+            result = await engine.query(RAGQuery(text="Chi e Mario Rossi?", mode=QueryMode.QA))
 
         self.assertEqual(result.answer, "Mario Rossi e il project manager.")
         self.assertEqual(result.llm_route, LLMRoute.EXTERNAL_ANONYMIZED)
@@ -179,9 +181,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        with patch("app.rag.engine.settings.anonymizer_enabled", True), patch(
-            "app.rag.engine.settings.external_llm_url",
-            "https://llm.example.com/v1",
+        with (
+            patch("app.rag.engine.settings.anonymizer_enabled", True),
+            patch(
+                "app.rag.engine.settings.external_llm_url",
+                "https://llm.example.com/v1",
+            ),
         ):
             result = await engine.query(RAGQuery(text="Domanda sensibile", mode=QueryMode.QA))
 
@@ -190,7 +195,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.anonymized)
         self.assertIs(engine._generate.await_args.kwargs["generator"], engine.generator)
 
-    async def test_internal_route_skips_anonymizer_when_external_llm_is_not_configured(self) -> None:
+    async def test_internal_route_skips_anonymizer_when_external_llm_is_not_configured(
+        self,
+    ) -> None:
         engine = self._build_engine()
         engine._anonymize_prompt_variables = AsyncMock()
         engine._generate = AsyncMock(
@@ -201,9 +208,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        with patch("app.rag.engine.settings.anonymizer_enabled", True), patch(
-            "app.rag.engine.settings.external_llm_url",
-            "",
+        with (
+            patch("app.rag.engine.settings.anonymizer_enabled", True),
+            patch(
+                "app.rag.engine.settings.external_llm_url",
+                "",
+            ),
         ):
             result = await engine.query(RAGQuery(text="Domanda locale", mode=QueryMode.QA))
 
@@ -224,9 +234,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         )
         engine._extend_answer_if_needed = AsyncMock(side_effect=RuntimeError("timeout"))
 
-        with patch("app.rag.engine.settings.anonymizer_enabled", False), patch(
-            "app.rag.engine.settings.external_llm_url",
-            "",
+        with (
+            patch("app.rag.engine.settings.anonymizer_enabled", False),
+            patch(
+                "app.rag.engine.settings.external_llm_url",
+                "",
+            ),
         ):
             result = await engine.query(
                 RAGQuery(
@@ -383,7 +396,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "Primo blocco.\n\nInoltre, il fornitore puo scegliere i prezzi f e g.\n\nConclusione finale.",
         )
 
-    def test_clean_final_answer_text_removes_inline_answer_prompt_leakage_and_keeps_following_text(self) -> None:
+    def test_clean_final_answer_text_removes_inline_answer_prompt_leakage_and_keeps_following_text(
+        self,
+    ) -> None:
         engine = self._build_engine()
 
         cleaned = engine._clean_final_answer_text(
@@ -396,7 +411,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "Il problema di assegnamento e un problema classico.\nApprofondimento utile.",
         )
 
-    def test_clean_final_answer_text_removes_compito_prompt_leakage_and_keeps_following_text(self) -> None:
+    def test_clean_final_answer_text_removes_compito_prompt_leakage_and_keeps_following_text(
+        self,
+    ) -> None:
         engine = self._build_engine()
 
         cleaned = engine._clean_final_answer_text(
@@ -446,7 +463,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(top_k, 10)
 
-    def test_detailed_tender_overview_queries_boost_effective_final_top_k_more_aggressively(self) -> None:
+    def test_detailed_tender_overview_queries_boost_effective_final_top_k_more_aggressively(
+        self,
+    ) -> None:
         engine = self._build_engine()
 
         top_k = engine._effective_final_top_k(
@@ -471,7 +490,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(retrieval_top_k, 30)
 
-    def test_broad_tender_overview_queries_strip_instruction_words_from_retrieval_query(self) -> None:
+    def test_broad_tender_overview_queries_strip_instruction_words_from_retrieval_query(
+        self,
+    ) -> None:
         engine = self._build_engine()
 
         retrieval_query = engine._query_text_for_retrieval(
@@ -535,17 +556,17 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             template,
         )
 
-        # Conflict: ONLY the blocked output string, nothing else.
+        # Conflict: keep useful analysis, but never emit conflicted protected values.
         self.assertIn(
-            'Se stato_verifica è "conflitto"',
+            'Per ogni campo "conflitto_rilevato"',
             template,
         )
         self.assertIn(
-            "output bloccato: conflitto o dato non verificato",
+            "riportare valori conflittuali",
             template,
         )
         self.assertIn(
-            "Niente prefazione, niente elenco, niente analisi",
+            "continua comunque con l'analisi",
             template,
         )
 
@@ -557,7 +578,7 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         # No repeated sections / restarted paragraphs.
         self.assertIn(
-            'Non ripetere intestazioni, paragrafi o introduzioni',
+            "Non ripetere intestazioni, paragrafi o introduzioni",
             template,
         )
         self.assertIn(
@@ -606,7 +627,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("response_constraints", variables)
         self.assertTrue(variables["response_constraints"].strip())
 
-    def test_resolve_retriever_selection_falls_back_to_defaults_when_everything_is_disabled(self) -> None:
+    def test_resolve_retriever_selection_falls_back_to_defaults_when_everything_is_disabled(
+        self,
+    ) -> None:
         engine = self._build_engine()
 
         selection = engine._resolve_retriever_selection(
@@ -682,7 +705,9 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine.graph_retriever.search.assert_awaited_once()
         self.assertIn("Risultato dense", retrieved.context)
 
-    async def test_retrieve_context_and_sources_uses_more_final_chunks_for_broad_tender_summary(self) -> None:
+    async def test_retrieve_context_and_sources_uses_more_final_chunks_for_broad_tender_summary(
+        self,
+    ) -> None:
         engine = self._build_engine()
         distinct_terms = [
             "alpha bravo charlie delta echo foxtrot",
@@ -737,10 +762,7 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_broad_tender_summary_backfills_after_context_deduplication(self) -> None:
         engine = self._build_engine()
         duplicated = [
-            (
-                "SCT CCTT gestione servizi cloud qualificazione ACN entro 210 giorni "
-                f"variante {idx}."
-            )
+            (f"SCT CCTT gestione servizi cloud qualificazione ACN entro 210 giorni variante {idx}.")
             for idx in range(10)
         ]
         distinct_terms = [
@@ -787,13 +809,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(retrieved.sources), 10)
         self.assertTrue(
-            any(
-                "area unica" in str(source.get("text", ""))
-                for source in retrieved.sources
-            )
+            any("area unica" in str(source.get("text", "")) for source in retrieved.sources)
         )
 
-    async def test_retrieve_context_and_sources_uses_more_chunks_for_detailed_tender_overview(self) -> None:
+    async def test_retrieve_context_and_sources_uses_more_chunks_for_detailed_tender_overview(
+        self,
+    ) -> None:
         engine = self._build_engine()
         distinct_terms = [
             "alpha bravo charlie delta echo foxtrot",
@@ -870,11 +891,13 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
     def test_local_generator_context_is_trimmed_to_budget(self) -> None:
         engine = self._build_engine()
         local_generator = SimpleNamespace(provider="llama")
-        context = "\n\n---\n\n".join([
-            "A" * 2500,
-            "B" * 2500,
-            "C" * 2500,
-        ])
+        context = "\n\n---\n\n".join(
+            [
+                "A" * 2500,
+                "B" * 2500,
+                "C" * 2500,
+            ]
+        )
 
         fitted = engine._fit_context_for_generator(context, generator=local_generator)
 
@@ -893,12 +916,14 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
     def test_broad_tender_summary_local_generator_gets_expanded_context_budget(self) -> None:
         engine = self._build_engine()
         local_generator = SimpleNamespace(provider="llama")
-        context = "\n\n---\n\n".join([
-            "A" * 3800,
-            "B" * 3800,
-            "C" * 3800,
-            "D" * 3800,
-        ])
+        context = "\n\n---\n\n".join(
+            [
+                "A" * 3800,
+                "B" * 3800,
+                "C" * 3800,
+                "D" * 3800,
+            ]
+        )
 
         fitted = engine._fit_context_for_generator(
             context,
@@ -1030,13 +1055,21 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("[PERSONA_1]" not in chunk for chunk in chunks))
         self.assertGreaterEqual(engine._deanonymize_text.await_count, 1)
         self.assertTrue(
-            all(await_call.args[1] == "session-stream" for await_call in engine._deanonymize_text.await_args_list)
+            all(
+                await_call.args[1] == "session-stream"
+                for await_call in engine._deanonymize_text.await_args_list
+            )
         )
         self.assertTrue(
-            any("[PERSONA_1]" in await_call.args[0] for await_call in engine._deanonymize_text.await_args_list)
+            any(
+                "[PERSONA_1]" in await_call.args[0]
+                for await_call in engine._deanonymize_text.await_args_list
+            )
         )
 
-    async def test_query_stream_passes_large_budget_to_external_generator_for_line_requests(self) -> None:
+    async def test_query_stream_passes_large_budget_to_external_generator_for_line_requests(
+        self,
+    ) -> None:
         engine = self._build_engine()
         captured_calls: list[dict] = []
         engine._continuation_attempt_budget = Mock(return_value=1)
@@ -1131,9 +1164,12 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine = self._build_engine()
         engine._anonymizer_circuit_open_until = 100.0
 
-        with patch("app.rag.engine.time.monotonic", return_value=50.0), patch(
-            "app.rag.engine.settings.anonymizer_url",
-            "http://tw-anonymizer:8090",
+        with (
+            patch("app.rag.engine.time.monotonic", return_value=50.0),
+            patch(
+                "app.rag.engine.settings.anonymizer_url",
+                "http://tw-anonymizer:8090",
+            ),
         ):
             with self.assertRaises(AnonymizerUnavailableError):
                 await engine._anonymize_chunks(["chunk sensibile"])
@@ -1141,13 +1177,17 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
     def test_repeated_failures_open_anonymizer_circuit(self) -> None:
         engine = self._build_engine()
 
-        with patch(
-            "app.rag.engine.settings.anonymizer_circuit_breaker_threshold",
-            2,
-        ), patch(
-            "app.rag.engine.settings.anonymizer_circuit_open_seconds",
-            30.0,
-        ), patch("app.rag.engine.time.monotonic", return_value=10.0):
+        with (
+            patch(
+                "app.rag.engine.settings.anonymizer_circuit_breaker_threshold",
+                2,
+            ),
+            patch(
+                "app.rag.engine.settings.anonymizer_circuit_open_seconds",
+                30.0,
+            ),
+            patch("app.rag.engine.time.monotonic", return_value=10.0),
+        ):
             engine._record_anonymizer_failure(reason="timeout")
             engine._record_anonymizer_failure(reason="timeout")
 

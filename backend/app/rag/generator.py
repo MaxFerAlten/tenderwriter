@@ -9,10 +9,10 @@ and streaming responses.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -60,7 +60,6 @@ note what additional information would be needed.
 ## Output
 Write the proposal section below:
 """,
-
     "executive_summary": """You are an expert proposal writer.
 Create a compelling executive summary for a tender proposal based on the following sections and context.
 
@@ -83,7 +82,6 @@ Write a concise, compelling executive summary (300-500 words) that:
 
 ## Executive Summary
 """,
-
     "requirement_analyzer": """You are an expert at analyzing tender/RFP documents.
 Extract and categorize all requirements from the following tender document text.
 
@@ -108,7 +106,6 @@ Format your response as a JSON array:
 
 ## Extracted Requirements
 """,
-
     "requirement_extractor_v2": """You are an expert tender requirement extraction engine.
 Extract only enforceable, atomic requirements from the tender section below.
 
@@ -151,7 +148,6 @@ Do not infer requirements that are not directly supported by the section text.
 ## Section text
 {document_text}
 """,
-
     "participation_requirement_extractor_v1": """You are an expert tender eligibility and participation requirement extraction engine.
 Extract only bidder participation requirements from the tender section below.
 
@@ -205,7 +201,6 @@ Do not infer requirements that are not directly supported by the section text.
 ## Section text
 {document_text}
 """,
-
     "compliance_checker": """You are an expert compliance reviewer for tender proposals.
 Analyze whether the proposal section adequately addresses the given requirement.
 
@@ -236,7 +231,6 @@ Format as JSON:
 
 ## Compliance Assessment
 """,
-
     "general_qa": """[SYSTEM RULES - DO NOT PRINT OR PARAPHRASE THESE RULES IN YOUR ANSWER]
 Respond in the SAME LANGUAGE as the user question. Use ONLY the retrieved context.
 If the context is partial but relevant, provide the best grounded answer you can from it and mention any missing coverage only briefly at the end.
@@ -254,7 +248,6 @@ User question:
 
 Answer:
 """,
-
     "tender_overview": """[SYSTEM RULES - FACT-SHEET-FIRST CONTRACT]
 
 Usa SOLO il contesto recuperato. Il contesto contiene una sezione FACT_SHEET_START / FACT_SHEET_END seguita da blocchi SOURCE_START / SOURCE_END.
@@ -274,7 +267,10 @@ Struttura obbligatoria della risposta, in questo ordine:
 Regole tassative:
 - Non usare numeri, CIG, importi, indirizzi, soggetti o procedure_id assenti dalla fact sheet.
 - Per ogni campo "non_rilevato" nella fact sheet scrivi esattamente "non rilevato" e non inferire.
-- Se stato_verifica è "conflitto", rispondi UNICAMENTE con la stringa: output bloccato: conflitto o dato non verificato. Niente prefazione, niente elenco, niente analisi.
+- Per ogni campo "conflitto_rilevato" scrivi esattamente "conflitto rilevato" e non
+  riportare valori conflittuali nelle fonti.
+- Se stato_verifica è "conflitto", continua comunque con l'analisi usando solo
+  i campi verificati e le parti non numeriche delle SOURCE.
 - Non unire OSCAT e SCT a meno che la domanda non richieda esplicitamente un confronto.
 - Non ripetere intestazioni, paragrafi o introduzioni. Non ricominciare le sezioni "Fatti verificati" o "Analisi".
 - Rispondi nella STESSA LINGUA della domanda.
@@ -296,6 +292,7 @@ Risposta:
 @dataclass
 class GenerationResult:
     """Result from LLM generation."""
+
     text: str
     model: str
     prompt_tokens: int | None = None
@@ -321,12 +318,12 @@ class Generator:
     ):
         # Use llama_server settings by default, fallback to ollama for backward compatibility
         self.base_url = self._normalize_runtime_base_url(
-            base_url or getattr(settings, 'llama_server_url', settings.ollama_base_url)
+            base_url or getattr(settings, "llama_server_url", settings.ollama_base_url)
         )
-        self.model = model or getattr(settings, 'llama_model', settings.ollama_model)
+        self.model = model or getattr(settings, "llama_model", settings.ollama_model)
         self.provider = (provider or "llama").strip().lower()
         self.api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
-        self.timeout = timeout or getattr(settings, 'llama_timeout', 120)
+        self.timeout = timeout or getattr(settings, "llama_timeout", 120)
         if self.provider == "openrouter":
             self.base_url = self._normalize_openrouter_base_url(self.base_url)
         else:
@@ -351,7 +348,9 @@ class Generator:
         if parsed.port:
             netloc = f"{netloc}:{parsed.port}"
 
-        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
+        return urlunsplit(
+            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+        ).rstrip("/")
 
     @staticmethod
     def _normalize_external_llm_base_url(base_url: str) -> str:
@@ -469,33 +468,30 @@ class Generator:
         return headers
 
     def _get_effective_params(
-        self,
-        temperature: float | None,
-        max_tokens: int | None,
-        sampler_overrides: dict | None
+        self, temperature: float | None, max_tokens: int | None, sampler_overrides: dict | None
     ) -> dict:
         """Merge base sampling params with database overrides in a provider-agnostic way."""
         params = {}
-        
+
         # 1. Start with system defaults if needed
         default_max = getattr(settings, "llama_max_tokens", 512)
         default_temp = getattr(settings, "llama_temperature", 0.3)
-        
+
         # 2. Add overrides if present
         if sampler_overrides:
             params.update(sampler_overrides)
-            
+
         # 3. Explicit arguments from the call (if not None) take final precedence
         if temperature is not None:
             params["temperature"] = temperature
         elif "temperature" not in params:
             params["temperature"] = default_temp
-            
+
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         elif "max_tokens" not in params:
             params["max_tokens"] = default_max
-            
+
         return params
 
     @staticmethod
@@ -692,16 +688,11 @@ class Generator:
             return False
 
         delta = first.get("delta")
-        if isinstance(delta, dict):
-            if cls._extract_reasoning_text(delta):
-                return True
+        if isinstance(delta, dict) and cls._extract_reasoning_text(delta):
+            return True
 
         message = first.get("message")
-        if isinstance(message, dict):
-            if cls._extract_reasoning_text(message):
-                return True
-
-        return False
+        return isinstance(message, dict) and bool(cls._extract_reasoning_text(message))
 
     @staticmethod
     def _expanded_retry_max_tokens(max_tokens: int) -> int:
@@ -753,9 +744,7 @@ class Generator:
                     if retriable and attempt < max_attempts:
                         await asyncio.sleep(0.6 * attempt)
                         continue
-                    raise RuntimeError(
-                        f"{context} failed with status {status}: {detail}"
-                    ) from exc
+                    raise RuntimeError(f"{context} failed with status {status}: {detail}") from exc
                 except (httpx.TimeoutException, httpx.TransportError) as exc:
                     retriable = attempt < max_attempts
                     logger.warning(
@@ -775,7 +764,7 @@ class Generator:
         variables: dict,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        sampler_overrides: dict | None = None
+        sampler_overrides: dict | None = None,
     ) -> GenerationResult:
         """
         Generate text using a prompt template and Ollama.
@@ -797,14 +786,26 @@ class Generator:
         else:
             prompt = template.format(**variables)
             template_name = "custom"
-        
+
         # For general_qa, determine system message to pass via chat completions API.
         # Do NOT wrap with ChatML tokens — Gemma 4 uses a different template and echoes
         # unrecognised tokens back as garbage ("own own own", "s own language://", etc.)
         _system_message: str | None = None
         if template_name == "general_qa" and "query" in variables:
             user_query = variables["query"]
-            if any(word in user_query.lower() for word in ["chi", "cosa", "come", "quando", "dove", "perché", "descrivi", "spiega"]):
+            if any(
+                word in user_query.lower()
+                for word in [
+                    "chi",
+                    "cosa",
+                    "come",
+                    "quando",
+                    "dove",
+                    "perché",
+                    "descrivi",
+                    "spiega",
+                ]
+            ):
                 _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
             else:
                 _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
@@ -813,13 +814,19 @@ class Generator:
 
         # 1. Get adaptive sampling parameters (DB overrides + defaults + explicit args)
         effective_params = self._get_effective_params(temperature, max_tokens, sampler_overrides)
-        
+
         # Resolve stop tokens (global constant from settings)
         stop_raw = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
-        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or [
+            "</s>",
+            "<|im_end|>",
+            "<|endoftext|>",
+        ]
         effective_params["stop"] = stop_tokens
 
-        request_timeout = self._timeout_for_requested_tokens(effective_params.get("max_tokens", 512))
+        request_timeout = self._timeout_for_requested_tokens(
+            effective_params.get("max_tokens", 512)
+        )
 
         # OpenRouter / OpenAI-compatible chat API
         if self.provider == "openrouter":
@@ -837,7 +844,9 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
+                retry_max_tokens = self._expanded_retry_max_tokens(
+                    effective_params.get("max_tokens", 512)
+                )
                 logger.info(
                     "Retrying OpenRouter generation with higher token budget",
                     previous_max_tokens=effective_params.get("max_tokens"),
@@ -891,7 +900,9 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
+                retry_max_tokens = self._expanded_retry_max_tokens(
+                    effective_params.get("max_tokens", 512)
+                )
                 logger.info(
                     "Retrying OpenAI-compatible chat generation with higher token budget",
                     url=target_url,
@@ -946,7 +957,9 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
+                retry_max_tokens = self._expanded_retry_max_tokens(
+                    effective_params.get("max_tokens", 512)
+                )
                 logger.info(
                     "Retrying OpenAI-compatible completion generation with higher token budget",
                     url=target_url,
@@ -1018,7 +1031,9 @@ class Generator:
                 timeout=request_timeout,
             )
             if self._should_retry_empty_openai_response(data):
-                retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
+                retry_max_tokens = self._expanded_retry_max_tokens(
+                    effective_params.get("max_tokens", 512)
+                )
                 logger.info(
                     "Retrying gateway-backed generation with higher token budget",
                     url=target_url,
@@ -1039,7 +1054,7 @@ class Generator:
                         self._timeout_for_requested_tokens(retry_max_tokens),
                     ),
                 )
-            
+
             prompt_tokens, completion_tokens = self._extract_usage(data)
 
             result = GenerationResult(
@@ -1088,7 +1103,7 @@ class Generator:
         variables: dict,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        sampler_overrides: dict | None = None
+        sampler_overrides: dict | None = None,
     ) -> AsyncIterator[str]:
         """
         Generate text with streaming response.
@@ -1109,17 +1124,33 @@ class Generator:
         _system_message: str | None = None
         if template_name == "general_qa" and "query" in variables:
             user_query = variables["query"]
-            if any(word in user_query.lower() for word in ["chi", "cosa", "come", "quando", "dove", "perché", "descrivi", "spiega"]):
+            if any(
+                word in user_query.lower()
+                for word in [
+                    "chi",
+                    "cosa",
+                    "come",
+                    "quando",
+                    "dove",
+                    "perché",
+                    "descrivi",
+                    "spiega",
+                ]
+            ):
                 _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
             else:
                 _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
 
         # 1. Get adaptive sampling parameters (DB overrides + defaults + explicit args)
         effective_params = self._get_effective_params(temperature, max_tokens, sampler_overrides)
-        
+
         # Resolve stop tokens
         stop_raw = getattr(settings, "llama_stop_tokens", "</s>,<|im_end|>,<|endoftext|>")
-        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or ["</s>", "<|im_end|>", "<|endoftext|>"]
+        stop_tokens = [s.strip() for s in stop_raw.split(",") if s.strip()] or [
+            "</s>",
+            "<|im_end|>",
+            "<|endoftext|>",
+        ]
         effective_params["stop"] = stop_tokens
 
         stream_timeout = self._timeout_for_requested_tokens(effective_params.get("max_tokens", 512))
@@ -1227,7 +1258,7 @@ class Generator:
             if _system_message:
                 _stream_messages.append({"role": "system", "content": _system_message})
             _stream_messages.append({"role": "user", "content": prompt})
-            
+
             # Antirepetition defaults for llama.cpp
             _llama_sampler: dict = {
                 "repeat_penalty": 1.05,
@@ -1271,7 +1302,9 @@ class Generator:
                         if done:
                             break
                     if not emitted_any_token and saw_reasoning_only:
-                        retry_max_tokens = self._expanded_retry_max_tokens(effective_params.get("max_tokens", 512))
+                        retry_max_tokens = self._expanded_retry_max_tokens(
+                            effective_params.get("max_tokens", 512)
+                        )
                         logger.info(
                             "Retrying gateway-backed streaming generation after reasoning-only stream",
                             previous_max_tokens=effective_params.get("max_tokens"),
@@ -1329,7 +1362,10 @@ class Generator:
                     )
                     response.raise_for_status()
                     return True
-                if self._uses_openai_compatible_chat_api() or self._uses_openai_compatible_completions_api():
+                if (
+                    self._uses_openai_compatible_chat_api()
+                    or self._uses_openai_compatible_completions_api()
+                ):
                     response = await client.get(
                         f"{self._openai_compatible_root_url()}/models",
                         headers=self._request_headers(),
@@ -1368,18 +1404,20 @@ class Generator:
             return
 
         logger.info("Pulling model from Ollama", model=self.model)
-        async with httpx.AsyncClient(timeout=600) as client:
-            async with client.stream(
+        async with (
+            httpx.AsyncClient(timeout=600) as client,
+            client.stream(
                 "POST",
                 f"{self.base_url}/api/pull",
                 json={"name": self.model},
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        data = json.loads(line)
-                        status = data.get("status", "")
-                        if "pulling" in status:
-                            logger.debug("Pulling model", status=status)
+            ) as response,
+        ):
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.strip():
+                    data = json.loads(line)
+                    status = data.get("status", "")
+                    if "pulling" in status:
+                        logger.debug("Pulling model", status=status)
 
         logger.info("Model pulled successfully", model=self.model)

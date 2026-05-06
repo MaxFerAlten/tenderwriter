@@ -27,11 +27,19 @@ _TENDERS_MODULE = _TENDERS_MODULES.tenders
 get_tender = _TENDERS_MODULE.get_tender
 get_tender_requirement_candidates = _TENDERS_MODULE.get_tender_requirement_candidates
 get_tender_consolidated_requirements = _TENDERS_MODULE.get_tender_consolidated_requirements
-get_tender_consolidated_requirement_relations = _TENDERS_MODULE.get_tender_consolidated_requirement_relations
-get_tender_consolidated_requirement_relation_review_queue = _TENDERS_MODULE.get_tender_consolidated_requirement_relation_review_queue
-get_tender_consolidated_requirement_review_queue = _TENDERS_MODULE.get_tender_consolidated_requirement_review_queue
+get_tender_consolidated_requirement_relations = (
+    _TENDERS_MODULE.get_tender_consolidated_requirement_relations
+)
+get_tender_consolidated_requirement_relation_review_queue = (
+    _TENDERS_MODULE.get_tender_consolidated_requirement_relation_review_queue
+)
+get_tender_consolidated_requirement_review_queue = (
+    _TENDERS_MODULE.get_tender_consolidated_requirement_review_queue
+)
 rebuild_tender_consolidated_requirements = _TENDERS_MODULE.rebuild_tender_consolidated_requirements
-review_tender_consolidated_requirement_relation = _TENDERS_MODULE.review_tender_consolidated_requirement_relation
+review_tender_consolidated_requirement_relation = (
+    _TENDERS_MODULE.review_tender_consolidated_requirement_relation
+)
 review_tender_consolidated_requirement = _TENDERS_MODULE.review_tender_consolidated_requirement
 
 ComplianceStatus = _TENDERS_MODULES.models.ComplianceStatus
@@ -158,7 +166,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending_response.coverage_source, "consolidated_review_pending")
         self.assertIsNone(pending_response.mapped_section_id)
 
-    async def test_get_tender_requirement_candidates_keeps_staged_contract_when_consolidated_rows_exist(self) -> None:
+    async def test_get_tender_requirement_candidates_keeps_staged_contract_when_consolidated_rows_exist(
+        self,
+    ) -> None:
         tender = Tender(id=33, title="Services Tender", status=TenderStatus.ACTIVE)
         tender.consolidated_requirements = [
             ConsolidatedRequirement(
@@ -349,7 +359,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].conditions, ["Before service start"])
         self.assertEqual(response.items[0].exceptions, ["Optional modules excluded"])
         self.assertEqual(len(response.items[0].metadata_json["sources"]), 2)
-        self.assertEqual(response.items[0].metadata_json["primary_source"]["document_role"], "clarification")
+        self.assertEqual(
+            response.items[0].metadata_json["primary_source"]["document_role"], "clarification"
+        )
         self.assertEqual(response.items[0].metadata_json["precedence_policy"], "document_role_v1")
         self.assertNotIn("reviews", response.model_dump()["items"][0])
         self.assertNotIn("relations", response.model_dump()["items"][0])
@@ -370,7 +382,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
             consolidation_method="staging_v1",
             review_state="approved",
             graph_state="obsolete",
-            metadata_json={"lifecycle": {"graph_state": "obsolete", "reason": "missing_from_latest_rebuild"}},
+            metadata_json={
+                "lifecycle": {"graph_state": "obsolete", "reason": "missing_from_latest_rebuild"}
+            },
             created_at=datetime(2026, 4, 8, 9, 0, tzinfo=timezone.utc),
         )
 
@@ -392,9 +406,13 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         list_mock.assert_awaited_once_with(fake_db, tender_id=43, graph_state="obsolete")
         self.assertEqual(response.total_items, 1)
         self.assertEqual(response.items[0].graph_state, "obsolete")
-        self.assertEqual(response.items[0].metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild")
+        self.assertEqual(
+            response.items[0].metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild"
+        )
 
-    async def test_get_tender_consolidated_requirement_relations_returns_inferred_edges(self) -> None:
+    async def test_get_tender_consolidated_requirement_relations_returns_inferred_edges(
+        self,
+    ) -> None:
         tender = Tender(id=39, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=16, role="admin")
         fake_db = SimpleNamespace()
@@ -456,13 +474,17 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.total_items, 1)
         self.assertEqual(response.items[0].relation_type, "overrides")
-        self.assertEqual(response.items[0].source_requirement_text, "Provide signed annex A with wet signature.")
+        self.assertEqual(
+            response.items[0].source_requirement_text, "Provide signed annex A with wet signature."
+        )
         self.assertEqual(response.items[0].target_requirement_text, "Provide signed annex A.")
         self.assertEqual(response.items[0].review_state, "pending")
         self.assertEqual(response.items[0].graph_state, "active")
         self.assertEqual(response.items[0].metadata_json["inference_method"], "lexical_override_v1")
 
-    async def test_get_tender_consolidated_requirement_relations_filters_depends_on_edges(self) -> None:
+    async def test_get_tender_consolidated_requirement_relations_filters_depends_on_edges(
+        self,
+    ) -> None:
         tender = Tender(id=40, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=17, role="admin")
         fake_db = SimpleNamespace()
@@ -528,9 +550,13 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].target_requirement_id, 132)
         self.assertEqual(response.items[0].review_state, "pending")
         self.assertEqual(response.items[0].graph_state, "active")
-        self.assertEqual(response.items[0].metadata_json["inference_method"], "dependency_clause_v1")
+        self.assertEqual(
+            response.items[0].metadata_json["inference_method"], "dependency_clause_v1"
+        )
 
-    async def test_get_tender_consolidated_requirement_relations_filters_cross_document_conflicts(self) -> None:
+    async def test_get_tender_consolidated_requirement_relations_filters_cross_document_conflicts(
+        self,
+    ) -> None:
         tender = Tender(id=41, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=18, role="admin")
         fake_db = SimpleNamespace()
@@ -592,10 +618,14 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.total_items, 1)
         self.assertEqual(response.items[0].relation_type, "conflicts_with")
-        self.assertEqual(response.items[0].metadata_json["inference_method"], "cross_document_conflict_v1")
+        self.assertEqual(
+            response.items[0].metadata_json["inference_method"], "cross_document_conflict_v1"
+        )
         self.assertEqual(response.items[0].metadata_json["conflict_signals"], ["numeric_mismatch"])
 
-    async def test_get_tender_consolidated_requirement_relations_can_return_obsolete_edges(self) -> None:
+    async def test_get_tender_consolidated_requirement_relations_can_return_obsolete_edges(
+        self,
+    ) -> None:
         tender = Tender(id=44, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=23, role="admin")
         fake_db = SimpleNamespace()
@@ -630,7 +660,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.52,
             review_state="approved",
             graph_state="obsolete",
-            metadata_json={"lifecycle": {"graph_state": "obsolete", "reason": "missing_from_latest_rebuild"}},
+            metadata_json={
+                "lifecycle": {"graph_state": "obsolete", "reason": "missing_from_latest_rebuild"}
+            },
         )
         relation.source_requirement = source_requirement
         relation.target_requirement = target_requirement
@@ -659,9 +691,13 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.total_items, 1)
         self.assertEqual(response.items[0].graph_state, "obsolete")
-        self.assertEqual(response.items[0].metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild")
+        self.assertEqual(
+            response.items[0].metadata_json["lifecycle"]["reason"], "missing_from_latest_rebuild"
+        )
 
-    async def test_get_tender_consolidated_requirement_relation_review_queue_returns_triaged_edges(self) -> None:
+    async def test_get_tender_consolidated_requirement_relation_review_queue_returns_triaged_edges(
+        self,
+    ) -> None:
         tender = Tender(id=41, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=18, role="admin")
         fake_db = SimpleNamespace()
@@ -723,9 +759,13 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.total_items, 1)
         self.assertEqual(response.items[0].relation_type, "overrides")
         self.assertEqual(response.items[0].review_state, "pending")
-        self.assertEqual(response.items[0].source_requirement_text, "Provide signed annex A with wet signature.")
+        self.assertEqual(
+            response.items[0].source_requirement_text, "Provide signed annex A with wet signature."
+        )
 
-    async def test_get_tender_consolidated_requirement_review_queue_returns_triaged_rows(self) -> None:
+    async def test_get_tender_consolidated_requirement_review_queue_returns_triaged_rows(
+        self,
+    ) -> None:
         tender = Tender(id=36, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=13, role="admin")
         fake_db = SimpleNamespace()
@@ -804,7 +844,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].canonical_text, "Submit insurance certificate.")
         self.assertEqual(response.items[0].priority, "high")
 
-    async def test_review_tender_consolidated_requirement_returns_updated_requirement_and_review(self) -> None:
+    async def test_review_tender_consolidated_requirement_returns_updated_requirement_and_review(
+        self,
+    ) -> None:
         tender = Tender(id=37, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=14, role="admin")
         fake_db = SimpleNamespace()
@@ -871,7 +913,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.review.new_review_state, "approved")
         self.assertEqual(response.review.notes, "Verified manually.")
 
-    async def test_review_tender_consolidated_requirement_passes_editorial_edit_payload(self) -> None:
+    async def test_review_tender_consolidated_requirement_passes_editorial_edit_payload(
+        self,
+    ) -> None:
         tender = Tender(id=44, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=23, role="admin")
         fake_db = SimpleNamespace()
@@ -1013,7 +1057,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.review.new_review_state, "merged")
 
-    async def test_review_tender_consolidated_requirement_relation_returns_updated_relation_and_review(self) -> None:
+    async def test_review_tender_consolidated_requirement_relation_returns_updated_relation_and_review(
+        self,
+    ) -> None:
         tender = Tender(id=42, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=21, role="admin")
         fake_db = SimpleNamespace()
@@ -1100,7 +1146,9 @@ class TenderRequirementCandidateApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.review.new_review_state, "approved")
         self.assertEqual(response.review.notes, "Dependency confirmed manually.")
 
-    async def test_review_tender_consolidated_requirement_relation_passes_editorial_edit_payload(self) -> None:
+    async def test_review_tender_consolidated_requirement_relation_passes_editorial_edit_payload(
+        self,
+    ) -> None:
         tender = Tender(id=46, title="Complex Tender", status=TenderStatus.ACTIVE)
         current_user = SimpleNamespace(id=25, role="admin")
         fake_db = SimpleNamespace()

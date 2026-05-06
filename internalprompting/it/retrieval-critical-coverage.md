@@ -11,3 +11,8 @@ Ambito: solo retrieval. Non usare questo file come prompt di generazione.
 - START piattaforma telematica negoziazione gara
 - 180 giorni 210 giorni 270 giorni 48 mesi affiancamento migrazione
 - penali 100 euro giorno 10% risoluzione art. 1456 c.c.
+- OSCAT CIG numero procedura 012942/2025 bando disciplinare accordo quadro
+- OSCAT durata accordo quadro 36 mesi durata procedimento 9 mesi contratti attuativi
+- OSCAT importo base d'asta garanzia provvisoria 2% euro 223.451,66
+- OSCAT luogo svolgimento servizio sede Regione Toscana Regione Sardegna codice NUTS
+- Gestione OSCAT-GitLab Gestione OSCAT VA qualificazione ACN as a Service

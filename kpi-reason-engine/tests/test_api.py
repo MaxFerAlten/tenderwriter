@@ -75,7 +75,7 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(payload["forecast_output_schema_version"], "forecast-output-v1")
 
     def test_store_schema_version_matches_current_migration(self) -> None:
-        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260329_0004")
+        self.assertEqual(self.client.app.state.store.get_schema_version(), "20260419_0005")
 
 
     def test_protected_routes_require_service_credentials(self) -> None:
@@ -727,6 +727,82 @@ class KpiReasonEngineApiTests(unittest.TestCase):
         self.assertEqual(forecast["analysis_metadata"]["forecast_fallback_reason"], "markov_rollout_disabled")
         self.assertFalse(forecast["analysis_metadata"]["markov_rollout_enabled"])
         self.assertFalse(forecast["analysis_metadata"]["calibrated_forecast_enabled"])
+
+    def test_rehearsal_summary_put_persists_and_forecast_returns_it(self) -> None:
+        sync_response = self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-REHEARSAL",
+                "title": "Rehearsal-aware Tender",
+                "departments": [],
+                "requirement_contexts": [],
+                "section_contexts": [],
+                "metadata": {},
+            },
+        )
+        self.assertEqual(sync_response.status_code, 202)
+
+        payload = {
+            "summary": {
+                "run_id": 42,
+                "tender_id": 1,
+                "overall_score": 71.4,
+                "persona_divergence": 0.28,
+                "blocking_findings": 3,
+                "high_severity_rework_suggestions": 2,
+                "health_projection": "amber",
+                "last_rehearsal_at": "2026-04-17T18:40:00Z",
+                "version": "tw-rehearsal-v1",
+            }
+        }
+        put_response = self.client.put(
+            "/v1/tenders/TEN-REHEARSAL/rehearsal-summary",
+            headers=self._auth_headers(),
+            json=payload,
+        )
+        self.assertEqual(put_response.status_code, 202)
+        self.assertEqual(put_response.json(), {"status": "accepted"})
+
+        forecast_response = self.client.get(
+            "/v1/tenders/TEN-REHEARSAL/forecast",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(forecast_response.status_code, 200)
+        forecast = forecast_response.json()
+        self.assertIsNotNone(forecast.get("rehearsal_summary"))
+        rehearsal_summary = forecast["rehearsal_summary"]
+        self.assertEqual(rehearsal_summary["run_id"], 42)
+        self.assertEqual(rehearsal_summary["health_projection"], "amber")
+        self.assertEqual(rehearsal_summary["blocking_findings"], 3)
+        self.assertIn("updated_at", rehearsal_summary)
+
+    def test_rehearsal_summary_put_on_unknown_tender_returns_404(self) -> None:
+        response = self.client.put(
+            "/v1/tenders/TEN-UNKNOWN/rehearsal-summary",
+            headers=self._auth_headers(),
+            json={"summary": {"run_id": 1}},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_forecast_without_rehearsal_summary_returns_null(self) -> None:
+        self.client.post(
+            "/v1/tenders",
+            headers=self._auth_headers(),
+            json={
+                "external_tender_id": "TEN-NOREHEARSAL",
+                "title": "No Rehearsal",
+                "departments": [],
+                "requirement_contexts": [],
+                "section_contexts": [],
+                "metadata": {},
+            },
+        )
+        forecast = self.client.get(
+            "/v1/tenders/TEN-NOREHEARSAL/forecast",
+            headers=self._auth_headers(),
+        ).json()
+        self.assertIsNone(forecast.get("rehearsal_summary"))
 
 
 if __name__ == "__main__":

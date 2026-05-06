@@ -4,11 +4,12 @@ then confirm they are fixed after applying patches.
 
 All tests are synchronous to avoid pytest-asyncio dependency.
 """
+
 import ast
 import json
 from pathlib import Path
-import pytest
 
+import pytest
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,6 +19,7 @@ def _read_backend_source(relative_path: str) -> str:
 
 
 # ── Bug 1: int(user_id) ValueError in legacy.py ──
+
 
 def test_bug_legacy_int_valueerror():
     """legacy.py:50 — int(user_id) raises unhandled ValueError for non-numeric JWT sub.
@@ -54,6 +56,7 @@ def test_bug_legacy_int_valueerror():
 
 # ── Bug 2: json.loads without try/except in onlyoffice.py ──
 
+
 def test_bug_onlyoffice_redis_json_loads():
     """onlyoffice.py:406 — json.loads on corrupted Redis data should not crash.
 
@@ -70,13 +73,16 @@ def test_bug_onlyoffice_redis_json_loads():
     func_body = source[func_start:next_func] if next_func != -1 else source[func_start:]
 
     # The fix should wrap json.loads in try/except
-    assert "try:" in func_body and ("JSONDecodeError" in func_body or "Exception" in func_body or "ValueError" in func_body), (
+    assert "try:" in func_body and (
+        "JSONDecodeError" in func_body or "Exception" in func_body or "ValueError" in func_body
+    ), (
         "get_session_metadata must handle json.JSONDecodeError. "
         "Corrupted Redis data currently crashes the endpoint with an unhandled exception."
     )
 
 
 # ── Bug 3: JSON extraction with find/rfind in pipeline.py ──
+
 
 def _extract_first_json_object(text):
     """Local copy of the fixed function for testing without structlog dependency."""
@@ -133,13 +139,16 @@ def test_bug_pipeline_json_extraction_mixed():
 
     # Verify pipeline.py uses the new function (not find/rfind)
     source = _read_backend_source("app/ingestion/pipeline.py")
-    assert "_extract_first_json_object" in source, "pipeline.py should use _extract_first_json_object"
+    assert "_extract_first_json_object" in source, (
+        "pipeline.py should use _extract_first_json_object"
+    )
     # The old fragile pattern should be gone from _extract_and_graph
-    extract_section = source[source.index("_extract_and_graph"):]
+    extract_section = source[source.index("_extract_and_graph") :]
     assert "response_text.find" not in extract_section, "Old find/rfind pattern should be removed"
 
 
 # ── Bug 4: traceback.print_exc() instead of logger in main.py ──
+
 
 def test_bug_main_traceback_print():
     """main.py:72-73 — startup errors go to stdout instead of structured logger."""
@@ -159,6 +168,7 @@ def test_bug_main_traceback_print():
 
 
 # ── Bug 5: Streaming history save failure is silent ──
+
 
 def test_bug_rag_stream_history_no_try_except():
     """rag.py:108-115 — db.commit() failure in stream generator should be caught."""

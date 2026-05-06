@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+
 from test_module_loaders import load_tenders_test_modules
 
 _TEST_ENV = {
@@ -98,7 +99,9 @@ class TenderRequirementResponseTests(unittest.TestCase):
 
         assert response.lifecycle_metadata is not None
         self.assertEqual(response.lifecycle_metadata["decision"]["decision"], "go")
-        self.assertEqual(response.lifecycle_metadata["submission_status"]["submission_status"], "acknowledged")
+        self.assertEqual(
+            response.lifecycle_metadata["submission_status"]["submission_status"], "acknowledged"
+        )
 
 
 class _FakeAsyncSession:
@@ -119,14 +122,20 @@ class TenderClarificationLifecycleTests(unittest.IsolatedAsyncioTestCase):
             submit_tender_clarification_response,
             close_tender_clarification,
         ):
-            tender = Tender(id=13, title="Lifecycle tender", client="ACME", status=TenderStatus.ACTIVE)
+            tender = Tender(
+                id=13, title="Lifecycle tender", client="ACME", status=TenderStatus.ACTIVE
+            )
             tender.metadata_json = {"lifecycle": {}}
             db = _FakeAsyncSession()
 
             with self.subTest(route=route.__name__):
                 with (
-                    patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
-                    patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+                    patch.object(
+                        _TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)
+                    ),
+                    patch.object(
+                        _TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()
+                    ) as sync_mock,
                 ):
                     with self.assertRaises(HTTPException) as exc:
                         await route(
@@ -153,7 +162,9 @@ class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
-            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+            patch.object(
+                _TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()
+            ) as sync_mock,
         ):
             with self.assertRaises(HTTPException) as exc:
                 await record_structured_outcome(
@@ -182,7 +193,9 @@ class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
-            patch.object(_TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()) as sync_mock,
+            patch.object(
+                _TENDERS_MODULE, "sync_tender_and_publish_event", AsyncMock()
+            ) as sync_mock,
         ):
             response = await stop_tender_at_gate(
                 tender_id=13,
@@ -195,7 +208,9 @@ class TenderStructuredOutcomeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(db.flush_called)
             self.assertEqual(tender.status, TenderStatus.CANCELLED)
             assert tender.metadata_json is not None
-            self.assertEqual(tender.metadata_json["lifecycle"]["structured_outcome"]["outcome"], "stopped")
+            self.assertEqual(
+                tender.metadata_json["lifecycle"]["structured_outcome"]["outcome"], "stopped"
+            )
             sync_mock.assert_awaited_once()
             event_payload = sync_mock.await_args.kwargs["event_payload"]
             self.assertEqual(sync_mock.await_args.kwargs["event_type"], "tender_stopped_at_gate")

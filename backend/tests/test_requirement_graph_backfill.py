@@ -60,20 +60,23 @@ class RequirementGraphBackfillTests(unittest.IsolatedAsyncioTestCase):
     async def test_backfill_requirement_graphs_rebuilds_discovered_tenders(self) -> None:
         db = _FakeAsyncSession(tender_ids=[41, 42, 42])
 
-        with patch.object(
-            _SERVICE_MODULE,
-            "list_staged_requirement_candidate_runs",
-            AsyncMock(return_value=[SimpleNamespace(id=7)]),
-        ), patch.object(
-            _SERVICE_MODULE,
-            "rebuild_consolidated_requirements_from_staging",
-            AsyncMock(
-                side_effect=[
-                    [SimpleNamespace(id=1)],
-                    [SimpleNamespace(id=2), SimpleNamespace(id=3)],
-                ]
+        with (
+            patch.object(
+                _SERVICE_MODULE,
+                "list_staged_requirement_candidate_runs",
+                AsyncMock(return_value=[SimpleNamespace(id=7)]),
             ),
-        ) as rebuild_mock:
+            patch.object(
+                _SERVICE_MODULE,
+                "rebuild_consolidated_requirements_from_staging",
+                AsyncMock(
+                    side_effect=[
+                        [SimpleNamespace(id=1)],
+                        [SimpleNamespace(id=2), SimpleNamespace(id=3)],
+                    ]
+                ),
+            ) as rebuild_mock,
+        ):
             summary = await _SERVICE_MODULE.backfill_requirement_graphs(
                 db,
                 limit_runs=3,
@@ -109,22 +112,28 @@ class RequirementGraphBackfillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.results[0].status, "planned")
         rebuild_mock.assert_not_awaited()
 
-    async def test_backfill_requirement_graphs_falls_back_to_legacy_requirements_without_staged_runs(self) -> None:
+    async def test_backfill_requirement_graphs_falls_back_to_legacy_requirements_without_staged_runs(
+        self,
+    ) -> None:
         db = _FakeAsyncSession(tender_ids=[61])
 
-        with patch.object(
-            _SERVICE_MODULE,
-            "list_staged_requirement_candidate_runs",
-            AsyncMock(return_value=[]),
-        ), patch.object(
-            _SERVICE_MODULE,
-            "rebuild_consolidated_requirements_from_staging",
-            AsyncMock(return_value=[SimpleNamespace(id=99)]),
-        ) as staged_rebuild_mock, patch.object(
-            _SERVICE_MODULE,
-            "rebuild_consolidated_requirements_from_legacy",
-            AsyncMock(return_value=[SimpleNamespace(id=601), SimpleNamespace(id=602)]),
-        ) as legacy_rebuild_mock:
+        with (
+            patch.object(
+                _SERVICE_MODULE,
+                "list_staged_requirement_candidate_runs",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                _SERVICE_MODULE,
+                "rebuild_consolidated_requirements_from_staging",
+                AsyncMock(return_value=[SimpleNamespace(id=99)]),
+            ) as staged_rebuild_mock,
+            patch.object(
+                _SERVICE_MODULE,
+                "rebuild_consolidated_requirements_from_legacy",
+                AsyncMock(return_value=[SimpleNamespace(id=601), SimpleNamespace(id=602)]),
+            ) as legacy_rebuild_mock,
+        ):
             summary = await _SERVICE_MODULE.backfill_requirement_graphs(
                 db,
                 limit_runs=4,

@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_user, UserResponse
+from app.api.auth import UserResponse, get_current_user
+from app.api.tenders import check_tender_access
 from app.config import settings
 from app.db.database import get_db
 from app.models import AppSettings, SearchHistory
@@ -77,7 +78,7 @@ class RAGQueryRequest(BaseModel):
     save_history: bool = True
     retrievers: dict[str, bool] = {}
     fusion_weights: dict[str, float] = {}
-    route_key: str = "tender"
+    route_key: str = "global"
     tender_id: int | None = None
 
 
@@ -136,6 +137,14 @@ class LLMSettingsPayload(BaseModel):
     max_tokens: int | None = None
 
 
+class GuardrailConfigPayload(BaseModel):
+    enabled: bool | None = None
+    mode: str | None = None
+    onlyTenderOverview: bool | None = None
+    blockOnConflict: bool | None = None
+    blockOnUnverifiedNumbers: bool | None = None
+    blockOnCrossProcedureMixing: bool | None = None
+
 
 def _should_save_search_history(data: RAGQueryRequest) -> bool:
     return bool(data.save_history)
@@ -169,6 +178,7 @@ async def _audit_rag_result(
 
 # ── Routes ──
 
+
 async def _load_llm_settings(db: AsyncSession) -> dict:
     result = await db.execute(select(AppSettings).limit(1))
     if result is None:
@@ -201,17 +211,16 @@ async def _load_guardrail_config(db: AsyncSession) -> dict:
 
 @router.get("/llmsetting", response_model=LLMSettingsPayload)
 async def get_llm_settings(
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: UserResponse = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     """Get the current dynamic LLM override settings."""
     result = await db.execute(select(AppSettings).limit(1))
     row = result.scalar_one_or_none()
-    
+
     settings_data = {}
     if row and isinstance(row.data, dict) and "llm_settings" in row.data:
         settings_data = row.data["llm_settings"]
-        
+
     return LLMSettingsPayload(**settings_data)
 
 
@@ -219,50 +228,115 @@ async def get_llm_settings(
 async def update_llm_settings(
     payload: LLMSettingsPayload,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update global LLM override settings. Null fields are removed."""
     result = await db.execute(select(AppSettings).limit(1))
     row = result.scalar_one_or_none()
-    
+
     if not row:
         row = AppSettings(data={"llm_settings": {}})
         db.add(row)
-        
+
     if not isinstance(row.data, dict):
         row.data = {}
-        
+
     current_settings = row.data.get("llm_settings", {})
-    
+
     pay_dict = payload.model_dump(exclude_unset=True)
     for key, val in pay_dict.items():
         if val is None:
             current_settings.pop(key, None)
         else:
             current_settings[key] = val
-            
+
     # Force SQLAlchemy to detect JSONB mutation
     new_data = dict(row.data)
     new_data["llm_settings"] = current_settings
     row.data = new_data
-    
+
     await db.commit()
-    
+
     return LLMSettingsPayload(**current_settings)
+
+
+@router.get("/guardrail", response_model=dict)
+async def get_guardrail_config(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return effective RAG guardrail config (DB override merged with defaults)."""
+    return await _load_guardrail_config(db)
+
+
+@router.post("/guardrail", response_model=dict)
+async def update_guardrail_config(
+    payload: GuardrailConfigPayload,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update RAG guardrail config. Null fields leave the stored value untouched."""
+    result = await db.execute(select(AppSettings).limit(1))
+    row = result.scalar_one_or_none()
+
+    if not row:
+        row = AppSettings(data={})
+        db.add(row)
+
+    if not isinstance(row.data, dict):
+        row.data = {}
+
+    stored = dict(row.data.get(GUARDRAIL_SETTINGS_KEY) or {})
+    pay_dict = payload.model_dump(exclude_unset=True)
+    for key, val in pay_dict.items():
+        if val is None:
+            continue
+        stored[key] = val
+
+    normalized = normalize_guardrail_config(stored)
+
+    new_data = dict(row.data)
+    new_data[GUARDRAIL_SETTINGS_KEY] = normalized
+    row.data = new_data
+
+    await db.commit()
+
+    return normalized
+
+
+_VALID_ROUTE_KEYS = ("tender", "global")
 
 
 @router.post("/query", response_model=RAGResponse)
 async def rag_query(
-    data: RAGQueryRequest, 
+    data: RAGQueryRequest,
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Query the HybridRAG engine and save to search history.
 
     Supports modes: search, qa, write_section, exec_summary, analyze_reqs, compliance
     """
+    if data.route_key not in _VALID_ROUTE_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid route_key: {data.route_key}. Valid: {list(_VALID_ROUTE_KEYS)}",
+        )
+    if data.route_key == "tender":
+        if data.tender_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="tender_id is required when route_key='tender'",
+            )
+        await check_tender_access(data.tender_id, current_user, db)
+    elif data.tender_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="tender_id must be omitted when route_key='global'",
+        )
+
     engine = request.app.state.rag_engine
     policy = await _resolve_runtime_privacy_policy(
         db,
@@ -272,16 +346,33 @@ async def rag_query(
 
     try:
         mode = QueryMode(data.mode)
-    except ValueError:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid mode: {data.mode}. Valid modes: {[m.value for m in QueryMode]}"
-        )
+            detail=f"Invalid mode: {data.mode}. Valid modes: {[m.value for m in QueryMode]}",
+        ) from exc
+
+    enforced_filters = dict(data.filters or {})
+    if data.tender_id is not None:
+        enforced_filters["tender_id"] = data.tender_id
+
+    settings_snapshot = {
+        "mode": data.mode,
+        "filters": enforced_filters,
+        "top_k": data.top_k,
+        "retrieval_top_k": data.retrieval_top_k,
+        "temperature": data.temperature,
+        "retrievers": dict(data.retrievers or {}),
+        "fusion_weights": dict(data.fusion_weights or {}),
+        "stream": bool(data.stream),
+        "route_key": data.route_key,
+        "tender_id": data.tender_id,
+    }
 
     rag_query = RAGQuery(
         text=data.query,
         mode=mode,
-        filters=data.filters,
+        filters=enforced_filters,
         top_k=data.top_k,
         retrieval_top_k=data.retrieval_top_k,
         temperature=data.temperature,
@@ -327,7 +418,14 @@ async def rag_query(
                     history = SearchHistory(
                         user_id=current_user.id,
                         query=data.query,
-                        response=full_response
+                        response=full_response,
+                        tender_id=data.tender_id,
+                        route_key=data.route_key,
+                        llm_route=None,
+                        anonymized=policy.mode == "external_anonymized",
+                        retrieval_version=settings.rag_retrieval_version,
+                        sources_json=None,
+                        settings_json=settings_snapshot,
                     )
                     db.add(history)
                 await _audit_rag_result(
@@ -348,6 +446,7 @@ async def rag_query(
                 await db.commit()
             except Exception:
                 import structlog
+
                 structlog.get_logger().warning(
                     "Failed to save search history during stream",
                     user_id=current_user.id,
@@ -367,7 +466,23 @@ async def rag_query(
         history = SearchHistory(
             user_id=current_user.id,
             query=data.query,
-            response=result.answer
+            response=result.answer,
+            tender_id=data.tender_id,
+            route_key=data.route_key,
+            llm_route=result.llm_route.value if result.llm_route else None,
+            anonymized=result.anonymized,
+            retrieval_version=settings.rag_retrieval_version,
+            sources_json=[
+                {
+                    "text": s.get("text", ""),
+                    "score": s.get("score", 0),
+                    "metadata": s.get("metadata", {}),
+                    "retriever_sources": s.get("retriever_sources", []),
+                    "source_scores": s.get("source_scores", {}),
+                }
+                for s in result.sources
+            ],
+            settings_json=settings_snapshot,
         )
         db.add(history)
     await _audit_rag_result(
@@ -399,10 +514,10 @@ async def rag_query(
         anonymized=result.anonymized,
     )
 
+
 @router.get("/history")
 async def get_search_history(
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: UserResponse = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     """Get the search history for the current user."""
     result = await db.execute(
@@ -412,14 +527,9 @@ async def get_search_history(
         .limit(50)
     )
     history = result.scalars().all()
-    
+
     return [
-        {
-            "id": h.id,
-            "query": h.query,
-            "response": h.response,
-            "created_at": h.created_at
-        }
+        {"id": h.id, "query": h.query, "response": h.response, "created_at": h.created_at}
         for h in history
     ]
 
@@ -430,9 +540,7 @@ async def clear_search_history(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete the current user's search history."""
-    result = await db.execute(
-        delete(SearchHistory).where(SearchHistory.user_id == current_user.id)
-    )
+    result = await db.execute(delete(SearchHistory).where(SearchHistory.user_id == current_user.id))
     await db.commit()
     return {"deleted": int(result.rowcount or 0)}
 
@@ -561,6 +669,7 @@ async def compliance_check(
 
     # Try to parse JSON from LLM response
     import json
+
     try:
         assessment = json.loads(result.answer)
     except json.JSONDecodeError:
@@ -628,6 +737,7 @@ async def analyze_requirements(
 
     # Try to parse JSON array from LLM response
     import json
+
     try:
         requirements = json.loads(result.answer)
     except json.JSONDecodeError:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -89,7 +88,9 @@ class TenderDocumentsApiTests(unittest.IsolatedAsyncioTestCase):
             patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
             patch.object(db, "execute", AsyncMock(return_value=fake_result)),
         ):
-            result = await get_tender_document(tender_id=42, document_id=99, current_user=current_user, db=db)
+            result = await get_tender_document(
+                tender_id=42, document_id=99, current_user=current_user, db=db
+            )
 
         self.assertEqual(result.filename, "doc_specific.pdf")
 
@@ -105,9 +106,15 @@ class TenderDocumentsApiTests(unittest.IsolatedAsyncioTestCase):
             patch.object(_TENDERS_MODULE, "check_tender_access", AsyncMock(return_value=tender)),
             patch.object(db, "execute", AsyncMock(return_value=fake_result)),
             patch.object(_TENDERS_MODULE, "ensure_official_chat_room", AsyncMock()) as chat_mock,
-            patch.object(_TENDERS_MODULE, "sync_chat_members_from_tender_permissions", AsyncMock()) as sync_chat_mock,
+            patch.object(
+                _TENDERS_MODULE, "sync_chat_members_from_tender_permissions", AsyncMock()
+            ) as sync_chat_mock,
             patch.object(_TENDERS_MODULE, "publish_tender_sync", AsyncMock()) as publish_sync_mock,
-            patch.object(_TENDERS_MODULE, "_tender_to_response", Mock(return_value={"id": 42, "status": "active"}))
+            patch.object(
+                _TENDERS_MODULE,
+                "_tender_to_response",
+                Mock(return_value={"id": 42, "status": "active"}),
+            ),
         ):
             response = await activate_tender(tender_id=42, current_user=current_user, db=db)
 
@@ -117,6 +124,7 @@ class TenderDocumentsApiTests(unittest.IsolatedAsyncioTestCase):
         sync_chat_mock.assert_awaited_once_with(db, tender_id=42, actor_id=1)
         publish_sync_mock.assert_awaited_once_with(db, tender_id=42, actor_id=1)
         self.assertGreaterEqual(db.flush_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

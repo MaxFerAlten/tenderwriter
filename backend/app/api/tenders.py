@@ -8,42 +8,43 @@ All endpoints are protected with JWT auth and granular RBAC.
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
-from typing import Annotated, Any
-import traceback
 import logging
+import re
+import traceback
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
-logger = logging.getLogger(__name__)
-
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from minio import Minio
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, or_, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.auth import UserResponse, get_current_user
 from app.config import settings
 from app.db.database import get_db
+from app.ingestion.observability import extract_ingestion_observability
 from app.models import (
     ConsolidatedRequirement,
-    RequirementReview,
-    RequirementRelation,
-    RequirementRelationReview,
-    Tender,
-    TenderRequirement,
-    TenderStatus,
-    ComplianceStatus,
-    TenderPermission,
-    RequirementCandidate,
-    RequirementExtractionRun,
     Document,
     IngestionStatus,
+    RequirementCandidate,
+    RequirementExtractionRun,
+    RequirementRelation,
+    RequirementRelationReview,
+    RequirementReview,
+    Tender,
+    TenderPermission,
+    TenderRequirement,
+    TenderStatus,
 )
-from app.api.auth import get_current_user, UserResponse
-from app.utils.naming import get_tender_upload_path
 from app.services.chat import ensure_official_chat_room, sync_chat_members_from_tender_permissions
-from app.ingestion.observability import extract_ingestion_observability
+from app.services.compliance_observability import (
+    ComplianceRequirementCoverage,
+    build_compliance_requirement_coverage,
+    sync_requirement_compliance_and_gate,
+)
 from app.services.kpi_reason_engine import (
     build_bid_plan_event_payload,
     build_bid_team_assigned_event_payload,
@@ -52,45 +53,36 @@ from app.services.kpi_reason_engine import (
     build_contribution_wave_event_payload,
     build_coordination_risk_raised_event_payload,
     build_rework_reescalated_to_coordination_event_payload,
-    build_requirements_extracted_event_payload,
     build_tender_created_event_payload,
     build_tender_decision_event_payload,
-    build_tender_document_ingested_event_payload,
     build_tender_outcome_recorded_event_payload,
-    build_terminal_lifecycle_event_payload,
     build_tender_stopped_at_gate_event_payload,
+    build_terminal_lifecycle_event_payload,
     publish_domain_event,
     publish_tender_sync,
     sync_tender_and_publish_event,
 )
-from app.services.compliance_observability import (
-    ComplianceRequirementCoverage,
-    build_compliance_requirement_coverage,
-    sync_requirement_compliance_and_gate,
-)
 from app.services.requirement_candidates import (
     list_staged_requirement_candidate_runs,
-    stage_extracted_requirement_candidates,
 )
 from app.services.requirement_consolidation import (
     list_consolidated_requirements,
     list_requirement_relations,
     rebuild_consolidated_requirements_from_staging,
 )
-from app.services.requirement_review import (
-    apply_requirement_review,
-    get_consolidated_requirement_for_tender,
-    list_consolidated_requirements_for_review,
-)
 from app.services.requirement_relation_review import (
     apply_requirement_relation_review,
     get_requirement_relation_for_tender,
     list_requirement_relations_for_review,
 )
-from app.services.tender_requirements import (
-    apply_extracted_requirement_candidates,
-    sync_tender_requirements_to_graph,
+from app.services.requirement_review import (
+    apply_requirement_review,
+    get_consolidated_requirement_for_tender,
+    list_consolidated_requirements_for_review,
 )
+from app.utils.naming import get_tender_upload_path
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -386,9 +378,7 @@ async def _ensure_unique_tender_title(
     return normalized_title
 
 
-async def check_tender_access(
-    tender_id: int, user: UserResponse, db: AsyncSession
-) -> Tender:
+async def check_tender_access(tender_id: int, user: UserResponse, db: AsyncSession) -> Tender:
     """
     Check that the current user has access to the given tender.
     Returns the tender if access is granted, raises 404 otherwise.
@@ -433,30 +423,36 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
     creator_name = None
     # Use inspect to check if created_by_user was loaded to avoid lazy-load errors
     from sqlalchemy import inspect as sa_inspect
+
     insp = sa_inspect(tender)
-    if 'created_by_user' not in insp.unloaded and tender.created_by_user:
+    if "created_by_user" not in insp.unloaded and tender.created_by_user:
         creator_name = tender.created_by_user.name
 
     req_count = 0
-    if 'requirements' not in insp.unloaded and tender.requirements:
+    if "requirements" not in insp.unloaded and tender.requirements:
         req_count = len(tender.requirements)
 
     prop_id = None
-    if 'proposals' not in insp.unloaded and tender.proposals and len(tender.proposals) > 0:
+    if "proposals" not in insp.unloaded and tender.proposals and len(tender.proposals) > 0:
         prop_id = tender.proposals[0].id
 
     ing_status = None
     ing_progress = 0.0
-    if 'documents' not in insp.unloaded and tender.documents:
+    if "documents" not in insp.unloaded and tender.documents:
         # Diagnostic print
         # print(f"Processing documents for tender {tender.id}: {len(tender.documents)}")
-        statuses = [d.ingestion_status.value if hasattr(d.ingestion_status, 'value') else d.ingestion_status for d in tender.documents]
-        progress_vals = [d.ingestion_progress or 0.0 for d in tender.documents]
-        
+        statuses = [
+            d.ingestion_status.value if hasattr(d.ingestion_status, "value") else d.ingestion_status
+            for d in tender.documents
+        ]
         if "processing" in statuses:
             ing_status = "processing"
             # Return mean progress of processing documents
-            processing_vals = [d.ingestion_progress or 0.0 for d in tender.documents if d.ingestion_status == IngestionStatus.PROCESSING]
+            processing_vals = [
+                d.ingestion_progress or 0.0
+                for d in tender.documents
+                if d.ingestion_status == IngestionStatus.PROCESSING
+            ]
             ing_progress = sum(processing_vals) / len(processing_vals) if processing_vals else 0.0
         elif "completed" in statuses:
             ing_status = "completed"
@@ -470,7 +466,7 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
 
     # Coerce tags to clean list of strings
     clean_tags = [str(t) for t in (tender.tags or []) if t is not None]
-    
+
     # Coerce metadata safely
     metadata_raw = tender.metadata_json if isinstance(tender.metadata_json, dict) else {}
     lifecycle = metadata_raw.get("lifecycle")
@@ -483,7 +479,9 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         client=tender.client,
         description=tender.description,
         deadline=tender.deadline,
-        status=tender.status.value if hasattr(tender.status, 'value') else str(tender.status or "draft"),
+        status=tender.status.value
+        if hasattr(tender.status, "value")
+        else str(tender.status or "draft"),
         category=tender.category,
         tags=clean_tags,
         budget_estimate=tender.budget_estimate,
@@ -496,6 +494,7 @@ def _tender_to_response(tender: Tender) -> TenderResponse:
         ingestion_status=ing_status,
         ingestion_progress=ing_progress,
     )
+
 
 def _safe_tender_to_response(tender: Tender) -> TenderResponse | None:
     try:
@@ -520,7 +519,9 @@ def _requirement_to_response(requirement: TenderRequirement) -> RequirementRespo
     )
 
 
-def _coverage_requirement_to_response(requirement: ComplianceRequirementCoverage) -> RequirementResponse:
+def _coverage_requirement_to_response(
+    requirement: ComplianceRequirementCoverage,
+) -> RequirementResponse:
     return RequirementResponse(
         id=requirement.id,
         requirement_text=requirement.requirement_text,
@@ -565,7 +566,9 @@ def _requirement_extraction_run_to_response(
         candidate_count=extraction_run.candidate_count,
         metadata_json=dict(extraction_run.metadata_json or {}),
         created_at=extraction_run.created_at,
-        candidates=[_requirement_candidate_to_response(candidate) for candidate in ordered_candidates],
+        candidates=[
+            _requirement_candidate_to_response(candidate) for candidate in ordered_candidates
+        ],
     )
 
 
@@ -667,9 +670,8 @@ async def list_tenders(
 
     # RBAC filter: non-admin sees only own tenders + tenders with explicit permission
     if current_user.role != "admin":
-        permitted_subq = (
-            select(TenderPermission.tender_id)
-            .where(TenderPermission.user_id == current_user.id)
+        permitted_subq = select(TenderPermission.tender_id).where(
+            TenderPermission.user_id == current_user.id
         )
         query = query.where(
             or_(
@@ -690,15 +692,21 @@ async def list_tenders(
         # Count total - use a clean query for counting to avoid subquery issues with load options
         count_q = select(func.count(Tender.id))
         if current_user.role != "admin":
-             permitted_subq = select(TenderPermission.tender_id).where(TenderPermission.user_id == current_user.id)
-             count_q = count_q.where(or_(Tender.created_by == current_user.id, Tender.id.in_(permitted_subq)))
-        
-        if status: count_q = count_q.where(Tender.status == status)
-        if category: count_q = count_q.where(Tender.category == category)
+            permitted_subq = select(TenderPermission.tender_id).where(
+                TenderPermission.user_id == current_user.id
+            )
+            count_q = count_q.where(
+                or_(Tender.created_by == current_user.id, Tender.id.in_(permitted_subq))
+            )
+
+        if status:
+            count_q = count_q.where(Tender.status == status)
+        if category:
+            count_q = count_q.where(Tender.category == category)
         if search:
             escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             count_q = count_q.where(Tender.title.ilike(f"%{escaped_search}%", escape="\\"))
-            
+
         total = (await db.execute(count_q)).scalar() or 0
 
         # Fetch page
@@ -1023,7 +1031,9 @@ async def review_tender_consolidated_requirement_relation(
     if relation is None:
         raise HTTPException(status_code=404, detail="Requirement relation not found")
 
-    relation_edit_payload = data.edit.model_dump(exclude_none=True) if data.edit is not None else None
+    relation_edit_payload = (
+        data.edit.model_dump(exclude_none=True) if data.edit is not None else None
+    )
     if relation_edit_payload:
         for requirement_key in ("source_requirement_id", "target_requirement_id"):
             requirement_id = relation_edit_payload.get(requirement_key)
@@ -1075,9 +1085,7 @@ async def update_tender(
     await check_tender_access(tender_id, current_user, db)
 
     # Re-fetch with FOR UPDATE lock to prevent concurrent overwrites
-    result = await db.execute(
-        select(Tender).where(Tender.id == tender_id).with_for_update()
-    )
+    result = await db.execute(select(Tender).where(Tender.id == tender_id).with_for_update())
     tender = result.scalar_one()
     previous_status = tender.status
 
@@ -1116,7 +1124,10 @@ async def update_tender(
         actor_id=current_user.id,
     )
 
-    if tender.status in [TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED] and tender.status != previous_status:
+    if (
+        tender.status in [TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED]
+        and tender.status != previous_status
+    ):
         await sync_tender_and_publish_event(
             db,
             tender_id=tender.id,
@@ -1124,7 +1135,7 @@ async def update_tender(
             event_type="tender_outcome_recorded",
             event_payload=build_tender_outcome_recorded_event_payload(
                 outcome=tender.status.value,
-                recorded_at=datetime.now(timezone.utc),
+                recorded_at=datetime.now(UTC),
             ),
         )
     else:
@@ -1172,12 +1183,17 @@ async def import_tender_document(
     Creates a Document record and enqueues the ingestion task.
     """
     tender = await check_tender_access(tender_id, current_user, db)
-    
+
     # Restrict uploads for finalized tenders
-    if tender.status in [TenderStatus.SUBMITTED, TenderStatus.WON, TenderStatus.LOST, TenderStatus.CANCELLED]:
+    if tender.status in [
+        TenderStatus.SUBMITTED,
+        TenderStatus.WON,
+        TenderStatus.LOST,
+        TenderStatus.CANCELLED,
+    ]:
         raise HTTPException(
             status_code=403,
-            detail=f"Cannot upload documents to a tender with status '{tender.status.value}'"
+            detail=f"Cannot upload documents to a tender with status '{tender.status.value}'",
         )
 
     # 1. Create Document record in PENDING state
@@ -1208,21 +1224,22 @@ async def import_tender_document(
         minio_client.make_bucket(bucket_name)
 
     # Determine user prefix for folder structure
-    user_prefix = current_user.email.split('@')[0] if current_user.email else "unknown"
+    user_prefix = current_user.email.split("@")[0] if current_user.email else "unknown"
 
     # Determine structured path
     object_name = get_tender_upload_path(
         user_prefix=user_prefix,
         tender_title=tender.title,
         tender_id=tender.id,
-        filename=file.filename
+        filename=file.filename,
     )
-    
+
     # Read file content to upload
     content = await file.read()
     import io
+
     file_stream = io.BytesIO(content)
-    
+
     minio_client.put_object(
         bucket_name,
         object_name,
@@ -1239,11 +1256,12 @@ async def import_tender_document(
 
     # 4. Enqueue Ingestion Task
     from app.tasks import index_document_task
+
     task = index_document_task.delay(doc.id)
 
     # 5. Save tracking information
     doc.ingestion_job_id = task.id
-    
+
     await db.commit()
 
     return {
@@ -1256,8 +1274,6 @@ async def import_tender_document(
     }
 
 
-
-
 @router.get("/{tender_id}/documents", response_model=list[DocumentResponse])
 async def list_tender_documents(
     tender_id: int,
@@ -1267,9 +1283,7 @@ async def list_tender_documents(
     """List all documents for a tender."""
     await check_tender_access(tender_id, current_user, db)
     result = await db.execute(
-        select(Document)
-        .where(Document.tender_id == tender_id)
-        .order_by(Document.created_at.desc())
+        select(Document).where(Document.tender_id == tender_id).order_by(Document.created_at.desc())
     )
     return result.scalars().all()
 
@@ -1284,10 +1298,7 @@ async def get_tender_document(
     """Get the status of a specific tender document."""
     await check_tender_access(tender_id, current_user, db)
     result = await db.execute(
-        select(Document).where(
-            Document.id == document_id,
-            Document.tender_id == tender_id
-        )
+        select(Document).where(Document.id == document_id, Document.tender_id == tender_id)
     )
     doc = result.scalar_one_or_none()
     if not doc:
@@ -1303,9 +1314,11 @@ async def stream_document_status(
     db: AsyncSession = Depends(get_db),
 ):
     """SSE endpoint to stream document ingestion status updates."""
-    from fastapi.responses import StreamingResponse
-    import json
     import asyncio
+    import json
+
+    from fastapi.responses import StreamingResponse
+
     from app.db.database import async_session_factory
 
     await check_tender_access(tender_id, current_user, db)
@@ -1316,17 +1329,22 @@ async def stream_document_status(
             async with async_session() as session:
                 result = await session.execute(
                     select(Document).where(
-                        Document.id == document_id,
-                        Document.tender_id == tender_id
+                        Document.id == document_id, Document.tender_id == tender_id
                     )
                 )
                 doc = result.scalar_one_or_none()
                 if not doc:
-                    yield "event: error\ndata: {\"error\": \"Document not found\"}\n\n"
+                    yield 'event: error\ndata: {"error": "Document not found"}\n\n'
                     break
 
-                status_val = doc.ingestion_status.value if hasattr(doc.ingestion_status, 'value') else doc.ingestion_status
-                metadata_json = dict(doc.metadata_json or {}) if isinstance(doc.metadata_json, dict) else {}
+                status_val = (
+                    doc.ingestion_status.value
+                    if hasattr(doc.ingestion_status, "value")
+                    else doc.ingestion_status
+                )
+                metadata_json = (
+                    dict(doc.metadata_json or {}) if isinstance(doc.metadata_json, dict) else {}
+                )
                 observability = extract_ingestion_observability(metadata_json)
                 payload = {
                     "id": doc.id,
@@ -1360,13 +1378,13 @@ async def activate_tender(
     """
     # Use check_tender_access which eager loads proposals for response mapping
     tender = await check_tender_access(tender_id, current_user, db)
-    
+
     if tender.status != TenderStatus.DRAFT:
         raise HTTPException(
             status_code=400,
-            detail=f"Tender cannot be activated from status '{tender.status.value}'"
+            detail=f"Tender cannot be activated from status '{tender.status.value}'",
         )
-        
+
     # Lock for update
     result = await db.execute(select(Tender).where(Tender.id == tender_id).with_for_update())
     tender_db = result.scalar_one()
@@ -1483,7 +1501,7 @@ _ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "stopped", "cancell
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
-    return value or datetime.now(timezone.utc)
+    return value or datetime.now(UTC)
 
 
 def _clone_tender_metadata(tender: Tender) -> dict:
@@ -1603,7 +1621,9 @@ async def record_tender_decision(
         event_payload=payload,
         occurred_at=decided_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted", event_type=event_type, tender_id=tender.id, payload=payload
+    )
 
 
 @router.post("/{tender_id}/bid-plan", response_model=TenderLifecycleActionResponse, status_code=202)
@@ -1660,10 +1680,14 @@ async def record_tender_bid_plan(
             ),
             occurred_at=planned_at,
         )
-    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted", event_type=event_type, tender_id=tender.id, payload=payload
+    )
 
 
-@router.post("/{tender_id}/contribution-wave", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/contribution-wave", response_model=TenderLifecycleActionResponse, status_code=202
+)
 async def open_contribution_wave(
     tender_id: int,
     data: ContributionWaveRequest,
@@ -1697,7 +1721,12 @@ async def open_contribution_wave(
         event_payload=payload,
         occurred_at=opened_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="contribution_request_wave_opened", tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="contribution_request_wave_opened",
+        tender_id=tender.id,
+        payload=payload,
+    )
 
 
 @router.post("/{tender_id}/outcome", response_model=TenderLifecycleActionResponse, status_code=202)
@@ -1743,10 +1772,14 @@ async def record_structured_outcome(
         event_payload=payload,
         occurred_at=recorded_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type=event_type, tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted", event_type=event_type, tender_id=tender.id, payload=payload
+    )
 
 
-@router.post("/{tender_id}/coordination-risk", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/coordination-risk", response_model=TenderLifecycleActionResponse, status_code=202
+)
 async def raise_tender_coordination_risk(
     tender_id: int,
     data: TenderCoordinationRiskRequest,
@@ -1771,10 +1804,19 @@ async def raise_tender_coordination_risk(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="coordination_risk_raised", tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="coordination_risk_raised",
+        tender_id=tender.id,
+        payload=payload,
+    )
 
 
-@router.post("/{tender_id}/coordination-recovery", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/coordination-recovery",
+    response_model=TenderLifecycleActionResponse,
+    status_code=202,
+)
 async def return_tender_to_coordination(
     tender_id: int,
     data: TenderCoordinationRecoveryRequest,
@@ -1799,10 +1841,17 @@ async def return_tender_to_coordination(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="rework_reescalated_to_coordination", tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="rework_reescalated_to_coordination",
+        tender_id=tender.id,
+        payload=payload,
+    )
 
 
-@router.post("/{tender_id}/gate-rework", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/gate-rework", response_model=TenderLifecycleActionResponse, status_code=202
+)
 async def request_tender_gate_rework(
     tender_id: int,
     data: TenderGateLifecycleRequest,
@@ -1827,10 +1876,17 @@ async def request_tender_gate_rework(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="compliance_gate_rework_requested", tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="compliance_gate_rework_requested",
+        tender_id=tender.id,
+        payload=payload,
+    )
 
 
-@router.post("/{tender_id}/gate-stop", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/gate-stop", response_model=TenderLifecycleActionResponse, status_code=202
+)
 async def stop_tender_at_gate(
     tender_id: int,
     data: TenderGateLifecycleRequest,
@@ -1867,10 +1923,14 @@ async def stop_tender_at_gate(
         event_payload=payload,
         occurred_at=recorded_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="tender_stopped_at_gate", tender_id=tender.id, payload=payload)
+    return TenderLifecycleActionResponse(
+        status="accepted", event_type="tender_stopped_at_gate", tender_id=tender.id, payload=payload
+    )
 
 
-@router.post("/{tender_id}/clarifications", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/clarifications", response_model=TenderLifecycleActionResponse, status_code=202
+)
 async def create_tender_clarification(
     tender_id: int,
     data: TenderClarificationCreate,
@@ -1914,10 +1974,19 @@ async def create_tender_clarification(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_requested", tender_id=tender.id, payload={**payload, "clarification": clarification})
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="clarification_requested",
+        tender_id=tender.id,
+        payload={**payload, "clarification": clarification},
+    )
 
 
-@router.post("/{tender_id}/clarifications/{clarification_id}/draft", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/clarifications/{clarification_id}/draft",
+    response_model=TenderLifecycleActionResponse,
+    status_code=202,
+)
 async def draft_tender_clarification_response(
     tender_id: int,
     clarification_id: str,
@@ -1960,10 +2029,19 @@ async def draft_tender_clarification_response(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_response_drafted", tender_id=tender.id, payload={**payload, "clarification": clarification})
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="clarification_response_drafted",
+        tender_id=tender.id,
+        payload={**payload, "clarification": clarification},
+    )
 
 
-@router.post("/{tender_id}/clarifications/{clarification_id}/submit", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/clarifications/{clarification_id}/submit",
+    response_model=TenderLifecycleActionResponse,
+    status_code=202,
+)
 async def submit_tender_clarification_response(
     tender_id: int,
     clarification_id: str,
@@ -2007,10 +2085,19 @@ async def submit_tender_clarification_response(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_submitted", tender_id=tender.id, payload={**payload, "clarification": clarification})
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="clarification_submitted",
+        tender_id=tender.id,
+        payload={**payload, "clarification": clarification},
+    )
 
 
-@router.post("/{tender_id}/clarifications/{clarification_id}/close", response_model=TenderLifecycleActionResponse, status_code=202)
+@router.post(
+    "/{tender_id}/clarifications/{clarification_id}/close",
+    response_model=TenderLifecycleActionResponse,
+    status_code=202,
+)
 async def close_tender_clarification(
     tender_id: int,
     clarification_id: str,
@@ -2054,7 +2141,9 @@ async def close_tender_clarification(
         event_payload=payload,
         occurred_at=occurred_at,
     )
-    return TenderLifecycleActionResponse(status="accepted", event_type="clarification_closed", tender_id=tender.id, payload={**payload, "clarification": clarification})
-
-
-
+    return TenderLifecycleActionResponse(
+        status="accepted",
+        event_type="clarification_closed",
+        tender_id=tender.id,
+        payload={**payload, "clarification": clarification},
+    )

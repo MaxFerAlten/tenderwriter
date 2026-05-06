@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -21,17 +21,17 @@ from app.models import (
     ContributionRequestStatus,
     ContributionUnit,
     ContributionUnitStatus,
-    ReworkAction,
-    ReworkStatus,
     ReviewCycle,
     ReviewCycleStatus,
+    ReworkAction,
+    ReworkStatus,
 )
 from app.services.kpi_reason_engine import (
-    build_contribution_assignment_confirmed_event_payload,
     build_call_attendance_recorded_event_payload,
     build_call_scheduled_event_payload,
     build_compliance_gate_decision_event_payload,
     build_compliance_gate_opened_event_payload,
+    build_contribution_assignment_confirmed_event_payload,
     build_contribution_due_date_set_event_payload,
     build_contribution_received_event_payload,
     build_contribution_request_created_event_payload,
@@ -47,7 +47,7 @@ router = APIRouter()
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _enum_value(value: object) -> object:
@@ -367,12 +367,21 @@ async def get_operational_summary(
 ) -> OperationalSummaryResponse:
     await check_tender_access(tender_id, current_user, db)
 
-    contribution_count = len((await db.execute(select(ContributionUnit.id).where(ContributionUnit.tender_id == tender_id))).all())
+    contribution_count = len(
+        (
+            await db.execute(
+                select(ContributionUnit.id).where(ContributionUnit.tender_id == tender_id)
+            )
+        ).all()
+    )
     request_count = len(
         (
             await db.execute(
                 select(ContributionRequest.id)
-                .join(ContributionUnit, ContributionUnit.id == ContributionRequest.contribution_unit_id)
+                .join(
+                    ContributionUnit,
+                    ContributionUnit.id == ContributionRequest.contribution_unit_id,
+                )
                 .where(ContributionUnit.tender_id == tender_id)
             )
         ).all()
@@ -399,7 +408,9 @@ async def get_operational_summary(
             )
         ).all()
     )
-    call_count = len((await db.execute(select(CallSession.id).where(CallSession.tender_id == tender_id))).all())
+    call_count = len(
+        (await db.execute(select(CallSession.id).where(CallSession.tender_id == tender_id))).all()
+    )
     return OperationalSummaryResponse(
         tender_id=tender_id,
         contribution_count=contribution_count,
@@ -410,7 +421,9 @@ async def get_operational_summary(
     )
 
 
-@router.get("/{tender_id}/observability/contributions", response_model=list[ContributionUnitResponse])
+@router.get(
+    "/{tender_id}/observability/contributions", response_model=list[ContributionUnitResponse]
+)
 async def list_contributions(
     tender_id: int,
     current_user: UserResponse = Depends(get_current_user),
@@ -438,7 +451,11 @@ async def list_contributions(
     ]
 
 
-@router.post("/{tender_id}/observability/contributions", response_model=ContributionUnitResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/contributions",
+    response_model=ContributionUnitResponse,
+    status_code=201,
+)
 async def create_contribution(
     tender_id: int,
     data: ContributionUnitCreate,
@@ -473,7 +490,11 @@ async def create_contribution(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/requests", response_model=ContributionRequestResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/requests",
+    response_model=ContributionRequestResponse,
+    status_code=201,
+)
 async def create_contribution_request(
     tender_id: int,
     contribution_id: int,
@@ -482,7 +503,9 @@ async def create_contribution_request(
     db: AsyncSession = Depends(get_db),
 ) -> ContributionRequestResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
     request_row = ContributionRequest(
         contribution_unit_id=contribution.id,
         requested_by=current_user.id,
@@ -506,7 +529,9 @@ async def create_contribution_request(
     events: list[tuple[str, dict]] = [
         (
             "contribution_request_created",
-            build_contribution_request_created_event_payload(request=request_row, contribution=contribution),
+            build_contribution_request_created_event_payload(
+                request=request_row, contribution=contribution
+            ),
         )
     ]
     events.append(
@@ -525,10 +550,14 @@ async def create_contribution_request(
         events.append(
             (
                 "contribution_due_date_set",
-                build_contribution_due_date_set_event_payload(request=request_row, contribution=contribution),
+                build_contribution_due_date_set_event_payload(
+                    request=request_row, contribution=contribution
+                ),
             )
         )
-    await _publish_operational_events(db, tender_id=tender_id, actor_id=current_user.id, events=events)
+    await _publish_operational_events(
+        db, tender_id=tender_id, actor_id=current_user.id, events=events
+    )
 
     return ContributionRequestResponse(
         id=request_row.id,
@@ -546,7 +575,10 @@ async def create_contribution_request(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/requests/{request_id}/receive", response_model=ContributionRequestResponse)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/requests/{request_id}/receive",
+    response_model=ContributionRequestResponse,
+)
 async def receive_contribution_request(
     tender_id: int,
     contribution_id: int,
@@ -556,8 +588,12 @@ async def receive_contribution_request(
     db: AsyncSession = Depends(get_db),
 ) -> ContributionRequestResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
-    request_row = await _load_request_or_404(db, contribution_id=contribution.id, request_id=request_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
+    request_row = await _load_request_or_404(
+        db, contribution_id=contribution.id, request_id=request_id
+    )
 
     request_row.response_received_at = data.response_received_at or _now_utc()
     if data.response_summary is not None:
@@ -572,7 +608,9 @@ async def receive_contribution_request(
         events=[
             (
                 "contribution_received",
-                build_contribution_received_event_payload(request=request_row, contribution=contribution),
+                build_contribution_received_event_payload(
+                    request=request_row, contribution=contribution
+                ),
             )
         ],
     )
@@ -593,7 +631,11 @@ async def receive_contribution_request(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/reviews", response_model=ReviewCycleResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/reviews",
+    response_model=ReviewCycleResponse,
+    status_code=201,
+)
 async def create_review_cycle(
     tender_id: int,
     contribution_id: int,
@@ -602,7 +644,9 @@ async def create_review_cycle(
     db: AsyncSession = Depends(get_db),
 ) -> ReviewCycleResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
     review = ReviewCycle(
         contribution_unit_id=contribution.id,
         reviewer_id=data.reviewer_id,
@@ -640,7 +684,10 @@ async def create_review_cycle(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/reviews/{review_id}/complete", response_model=ReviewCycleResponse)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/reviews/{review_id}/complete",
+    response_model=ReviewCycleResponse,
+)
 async def complete_review_cycle(
     tender_id: int,
     contribution_id: int,
@@ -650,7 +697,9 @@ async def complete_review_cycle(
     db: AsyncSession = Depends(get_db),
 ) -> ReviewCycleResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
     review = await _load_review_or_404(db, contribution_id=contribution.id, review_id=review_id)
 
     review.completed_at = data.completed_at or _now_utc()
@@ -661,14 +710,18 @@ async def complete_review_cycle(
     if str(review.outcome).strip().casefold() == "approved":
         contribution.status = ContributionUnitStatus.COMPLETED
     await db.flush()
-    review_payload = build_contribution_review_completed_event_payload(review=review, contribution=contribution)
+    review_payload = build_contribution_review_completed_event_payload(
+        review=review, contribution=contribution
+    )
     await _publish_operational_events(
         db,
         tender_id=tender_id,
         actor_id=current_user.id,
         events=[
             (
-                "review_approved" if str(review.outcome).strip().casefold() == "approved" else "review_changes_requested",
+                "review_approved"
+                if str(review.outcome).strip().casefold() == "approved"
+                else "review_changes_requested",
                 review_payload,
             )
         ],
@@ -687,7 +740,11 @@ async def complete_review_cycle(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/rework", response_model=ReworkResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/rework",
+    response_model=ReworkResponse,
+    status_code=201,
+)
 async def create_rework_action(
     tender_id: int,
     contribution_id: int,
@@ -696,7 +753,9 @@ async def create_rework_action(
     db: AsyncSession = Depends(get_db),
 ) -> ReworkResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
     rework = ReworkAction(
         contribution_unit_id=contribution.id,
         review_cycle_id=data.review_cycle_id,
@@ -709,7 +768,9 @@ async def create_rework_action(
         requested_at=data.requested_at or _now_utc(),
         status=ReworkStatus.OPEN,
     )
-    contribution.status = ContributionUnitStatus.REWORK if data.is_blocking else ContributionUnitStatus.IN_REVIEW
+    contribution.status = (
+        ContributionUnitStatus.REWORK if data.is_blocking else ContributionUnitStatus.IN_REVIEW
+    )
     db.add(rework)
     await db.flush()
     await db.refresh(rework)
@@ -741,7 +802,10 @@ async def create_rework_action(
     )
 
 
-@router.post("/{tender_id}/observability/contributions/{contribution_id}/rework/{rework_id}/resolve", response_model=ReworkResponse)
+@router.post(
+    "/{tender_id}/observability/contributions/{contribution_id}/rework/{rework_id}/resolve",
+    response_model=ReworkResponse,
+)
 async def resolve_rework_action(
     tender_id: int,
     contribution_id: int,
@@ -751,7 +815,9 @@ async def resolve_rework_action(
     db: AsyncSession = Depends(get_db),
 ) -> ReworkResponse:
     await check_tender_access(tender_id, current_user, db)
-    contribution = await _load_contribution_or_404(db, tender_id=tender_id, contribution_id=contribution_id)
+    contribution = await _load_contribution_or_404(
+        db, tender_id=tender_id, contribution_id=contribution_id
+    )
     rework = await _load_rework_or_404(db, contribution_id=contribution.id, rework_id=rework_id)
 
     rework.resolved_at = data.resolved_at or _now_utc()
@@ -787,7 +853,9 @@ async def resolve_rework_action(
     )
 
 
-@router.post("/{tender_id}/observability/gates", response_model=ComplianceGateResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/gates", response_model=ComplianceGateResponse, status_code=201
+)
 async def create_compliance_gate(
     tender_id: int,
     data: ComplianceGateCreate,
@@ -832,7 +900,9 @@ async def create_compliance_gate(
     )
 
 
-@router.post("/{tender_id}/observability/gates/{gate_id}/decision", response_model=ComplianceGateResponse)
+@router.post(
+    "/{tender_id}/observability/gates/{gate_id}/decision", response_model=ComplianceGateResponse
+)
 async def decide_compliance_gate(
     tender_id: int,
     gate_id: int,
@@ -849,7 +919,11 @@ async def decide_compliance_gate(
         gate.decision_notes = data.decision_notes
     await db.flush()
 
-    event_type = "compliance_gate_passed" if gate.status == ComplianceGateStatus.PASSED else "compliance_gate_failed"
+    event_type = (
+        "compliance_gate_passed"
+        if gate.status == ComplianceGateStatus.PASSED
+        else "compliance_gate_failed"
+    )
     await _publish_operational_events(
         db,
         tender_id=tender_id,
@@ -875,7 +949,9 @@ async def decide_compliance_gate(
     )
 
 
-@router.post("/{tender_id}/observability/calls", response_model=CallSessionResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/calls", response_model=CallSessionResponse, status_code=201
+)
 async def create_call_session(
     tender_id: int,
     data: CallSessionCreate,
@@ -916,7 +992,11 @@ async def create_call_session(
     )
 
 
-@router.post("/{tender_id}/observability/calls/{call_id}/attendance", response_model=AttendanceRecordResponse, status_code=201)
+@router.post(
+    "/{tender_id}/observability/calls/{call_id}/attendance",
+    response_model=AttendanceRecordResponse,
+    status_code=201,
+)
 async def upsert_attendance_record(
     tender_id: int,
     call_id: int,
@@ -931,7 +1011,9 @@ async def upsert_attendance_record(
     if data.user_id is not None:
         existing_query = existing_query.where(AttendanceRecord.user_id == data.user_id)
     elif data.attendee_label:
-        existing_query = existing_query.where(AttendanceRecord.attendee_label == data.attendee_label)
+        existing_query = existing_query.where(
+            AttendanceRecord.attendee_label == data.attendee_label
+        )
     else:
         raise HTTPException(status_code=400, detail="Either user_id or attendee_label is required")
 
@@ -976,6 +1058,7 @@ async def upsert_attendance_record(
         recorded_at=record.recorded_at,
         notes=record.notes,
     )
+
 
 class CallSessionDetailResponse(CallSessionResponse):
     attendance: list[AttendanceRecordResponse] = []
@@ -1024,7 +1107,9 @@ async def get_operational_workspace(
                 .where(ContributionUnit.tender_id == tender_id)
                 .order_by(ContributionUnit.created_at.desc(), ContributionUnit.id.desc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     contribution_ids = [item.id for item in contributions]
 
@@ -1037,9 +1122,13 @@ async def get_operational_workspace(
                 await db.execute(
                     select(ContributionRequest)
                     .where(ContributionRequest.contribution_unit_id.in_(contribution_ids))
-                    .order_by(ContributionRequest.requested_at.desc(), ContributionRequest.id.desc())
+                    .order_by(
+                        ContributionRequest.requested_at.desc(), ContributionRequest.id.desc()
+                    )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         reviews = list(
             (
@@ -1048,7 +1137,9 @@ async def get_operational_workspace(
                     .where(ReviewCycle.contribution_unit_id.in_(contribution_ids))
                     .order_by(ReviewCycle.started_at.desc(), ReviewCycle.id.desc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         reworks = list(
             (
@@ -1057,7 +1148,9 @@ async def get_operational_workspace(
                     .where(ReworkAction.contribution_unit_id.in_(contribution_ids))
                     .order_by(ReworkAction.requested_at.desc(), ReworkAction.id.desc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
 
     gates = list(
@@ -1067,7 +1160,9 @@ async def get_operational_workspace(
                 .where(ComplianceGate.tender_id == tender_id)
                 .order_by(ComplianceGate.created_at.desc(), ComplianceGate.id.desc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     calls = list(
         (
@@ -1076,7 +1171,9 @@ async def get_operational_workspace(
                 .where(CallSession.tender_id == tender_id)
                 .order_by(CallSession.scheduled_at.desc(), CallSession.id.desc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     call_ids = [item.id for item in calls]
     attendance_map: dict[int, list[AttendanceRecord]] = {call_id: [] for call_id in call_ids}
@@ -1088,7 +1185,9 @@ async def get_operational_workspace(
                     .where(AttendanceRecord.call_session_id.in_(call_ids))
                     .order_by(AttendanceRecord.recorded_at.desc(), AttendanceRecord.id.desc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         for record in attendance_rows:
             attendance_map.setdefault(record.call_session_id, []).append(record)
@@ -1197,6 +1296,3 @@ async def get_operational_workspace(
             for item in calls
         ],
     )
-
-
-

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -19,7 +19,6 @@ from app.models import (
 )
 from app.services.requirement_candidates import list_staged_requirement_candidate_runs
 from app.services.tender_requirements import normalize_requirement_text
-
 
 _PRIORITY_RANK = {"high": 3, "medium": 2, "low": 1}
 _DOCUMENT_ROLE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -44,9 +43,39 @@ _PRESERVED_METADATA_KEYS = ("review_count", "latest_review")
 _WHITESPACE_RE = re.compile(r"\s+")
 _RELATION_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _RELATION_STOPWORDS = {
-    "a", "an", "and", "con", "da", "dei", "degli", "del", "della", "delle", "dello",
-    "di", "e", "for", "gli", "i", "if", "il", "in", "la", "le", "lo", "of", "or",
-    "per", "provided", "subject", "that", "the", "to", "un", "una", "with",
+    "a",
+    "an",
+    "and",
+    "con",
+    "da",
+    "dei",
+    "degli",
+    "del",
+    "della",
+    "delle",
+    "dello",
+    "di",
+    "e",
+    "for",
+    "gli",
+    "i",
+    "if",
+    "il",
+    "in",
+    "la",
+    "le",
+    "lo",
+    "of",
+    "or",
+    "per",
+    "provided",
+    "subject",
+    "that",
+    "the",
+    "to",
+    "un",
+    "una",
+    "with",
 }
 _RELATION_OVERLAP_THRESHOLD = 0.8
 _DEPENDENCY_MARKERS: tuple[str, ...] = (
@@ -206,7 +235,9 @@ def _extract_graph_v2_payload_from_candidate(candidate: RequirementCandidate) ->
         "applicability": _clean_applicability(raw_candidate.get("applicability")),
         "conditions": _clean_text_list(raw_candidate.get("conditions")),
         "exceptions": _clean_text_list(raw_candidate.get("exceptions")),
-        "parent_requirement_key": _clean_parent_requirement_key(raw_candidate.get("parent_requirement_key")),
+        "parent_requirement_key": _clean_parent_requirement_key(
+            raw_candidate.get("parent_requirement_key")
+        ),
     }
     return graph_payload
 
@@ -227,16 +258,27 @@ def _merge_applicability(left: Any, right: Any) -> dict[str, Any]:
         elif merged[key] != value:
             existing_values = merged[key] if isinstance(merged[key], list) else [merged[key]]
             incoming_values = value if isinstance(value, list) else [value]
-            merged[key] = [*existing_values, *[item for item in incoming_values if item not in existing_values]]
+            merged[key] = [
+                *existing_values,
+                *[item for item in incoming_values if item not in existing_values],
+            ]
     return merged
 
 
 def _merge_graph_v2_payload(existing: dict[str, Any], incoming: Mapping[str, Any]) -> None:
-    existing["conditions"] = _merge_text_lists(existing.get("conditions"), incoming.get("conditions"))
-    existing["exceptions"] = _merge_text_lists(existing.get("exceptions"), incoming.get("exceptions"))
-    existing["applicability"] = _merge_applicability(existing.get("applicability"), incoming.get("applicability"))
+    existing["conditions"] = _merge_text_lists(
+        existing.get("conditions"), incoming.get("conditions")
+    )
+    existing["exceptions"] = _merge_text_lists(
+        existing.get("exceptions"), incoming.get("exceptions")
+    )
+    existing["applicability"] = _merge_applicability(
+        existing.get("applicability"), incoming.get("applicability")
+    )
     if not existing.get("parent_requirement_key") and incoming.get("parent_requirement_key"):
-        existing["parent_requirement_key"] = _clean_parent_requirement_key(incoming.get("parent_requirement_key"))
+        existing["parent_requirement_key"] = _clean_parent_requirement_key(
+            incoming.get("parent_requirement_key")
+        )
 
     metadata_json = dict(existing.get("metadata_json") or {})
     graph_v2 = dict(metadata_json.get("graph_v2") or {})
@@ -276,13 +318,19 @@ def _infer_document_role(
 def _source_sort_key(source_payload: Mapping[str, Any]) -> tuple[int, float, int, int]:
     return (
         int(source_payload.get("precedence_rank") or 0),
-        float(source_payload.get("confidence") if source_payload.get("confidence") is not None else -1.0),
+        float(
+            source_payload.get("confidence")
+            if source_payload.get("confidence") is not None
+            else -1.0
+        ),
         int(source_payload.get("extraction_run_id") or 0),
         int(source_payload.get("candidate_id") or 0),
     )
 
 
-def _is_better_source(candidate_source: Mapping[str, Any], current_source: Mapping[str, Any] | None) -> bool:
+def _is_better_source(
+    candidate_source: Mapping[str, Any], current_source: Mapping[str, Any] | None
+) -> bool:
     if current_source is None:
         return True
     return _source_sort_key(candidate_source) > _source_sort_key(current_source)
@@ -368,16 +416,22 @@ def _refresh_metadata(existing: dict[str, Any]) -> None:
     metadata_json["source_document_roles"] = document_roles
     metadata_json["source_document_refs"] = document_refs
     metadata_json["cross_document"] = len(document_refs) > 1
-    metadata_json["merge_kind"] = "cross_document_duplicate" if len(document_refs) > 1 else "single_document"
+    metadata_json["merge_kind"] = (
+        "cross_document_duplicate" if len(document_refs) > 1 else "single_document"
+    )
     metadata_json["precedence_policy"] = _PRECEDENCE_POLICY_VERSION
     metadata_json["document_precedence"] = {
         "policy": _PRECEDENCE_POLICY_VERSION,
-        "primary_role": primary_source.get("document_role") if isinstance(primary_source, Mapping) else None,
+        "primary_role": primary_source.get("document_role")
+        if isinstance(primary_source, Mapping)
+        else None,
         "primary_precedence_rank": (
             primary_source.get("precedence_rank") if isinstance(primary_source, Mapping) else None
         ),
         "primary_source_document_ref": (
-            primary_source.get("source_document_ref") if isinstance(primary_source, Mapping) else None
+            primary_source.get("source_document_ref")
+            if isinstance(primary_source, Mapping)
+            else None
         ),
         "ordered_roles": document_roles,
         "superseded_sources": [
@@ -405,7 +459,9 @@ def _refresh_metadata(existing: dict[str, Any]) -> None:
 
 
 def _extract_primary_source(requirement: ConsolidatedRequirement) -> Mapping[str, Any]:
-    metadata_json = requirement.metadata_json if isinstance(requirement.metadata_json, Mapping) else {}
+    metadata_json = (
+        requirement.metadata_json if isinstance(requirement.metadata_json, Mapping) else {}
+    )
     primary_source = metadata_json.get("primary_source") or {}
     return primary_source if isinstance(primary_source, Mapping) else {}
 
@@ -419,7 +475,9 @@ def _extract_primary_document_role(requirement: ConsolidatedRequirement) -> str:
 
 
 def _requirement_relation_text(requirement: ConsolidatedRequirement) -> str:
-    return normalize_requirement_text(requirement.normalized_text or requirement.canonical_text or "")
+    return normalize_requirement_text(
+        requirement.normalized_text or requirement.canonical_text or ""
+    )
 
 
 def _extract_primary_document_ref(requirement: ConsolidatedRequirement) -> str | None:
@@ -436,7 +494,9 @@ def _requirements_are_cross_document(
     right_ref = _extract_primary_document_ref(right_requirement)
     if left_ref and right_ref:
         return left_ref != right_ref
-    return _extract_primary_document_role(left_requirement) != _extract_primary_document_role(right_requirement)
+    return _extract_primary_document_role(left_requirement) != _extract_primary_document_role(
+        right_requirement
+    )
 
 
 def _contains_marker(value: str, markers: Sequence[str]) -> bool:
@@ -465,7 +525,9 @@ def _extract_conflict_signals(
     right_negated = _contains_marker(right_text, _NEGATION_MARKERS)
     left_mandatory = _contains_marker(left_text, _MANDATORY_MARKERS)
     right_mandatory = _contains_marker(right_text, _MANDATORY_MARKERS)
-    if left_negated != right_negated and (left_mandatory or right_mandatory or left_negated or right_negated):
+    if left_negated != right_negated and (
+        left_mandatory or right_mandatory or left_negated or right_negated
+    ):
         signals.append("polarity_mismatch")
 
     return signals
@@ -497,8 +559,12 @@ def _requirement_parent_lookup_keys(requirement: ConsolidatedRequirement) -> set
         normalize_requirement_text(requirement.canonical_text or ""),
         str(requirement.id or "").strip().casefold(),
     }
-    metadata_json = requirement.metadata_json if isinstance(requirement.metadata_json, Mapping) else {}
-    graph_v2 = metadata_json.get("graph_v2") if isinstance(metadata_json.get("graph_v2"), Mapping) else {}
+    metadata_json = (
+        requirement.metadata_json if isinstance(requirement.metadata_json, Mapping) else {}
+    )
+    graph_v2 = (
+        metadata_json.get("graph_v2") if isinstance(metadata_json.get("graph_v2"), Mapping) else {}
+    )
     for key in ("requirement_key", "parent_requirement_key"):
         value = graph_v2.get(key)
         if value:
@@ -513,7 +579,9 @@ def _resolve_parent_requirement_links(requirements: Sequence[ConsolidatedRequire
             lookup.setdefault(key, requirement)
 
     for requirement in requirements:
-        parent_key = _clean_parent_requirement_key(getattr(requirement, "parent_requirement_key", None))
+        parent_key = _clean_parent_requirement_key(
+            getattr(requirement, "parent_requirement_key", None)
+        )
         if not parent_key:
             requirement.parent_requirement_id = None
             continue
@@ -537,8 +605,12 @@ def _relation_overlap(
     left_requirement: ConsolidatedRequirement,
     right_requirement: ConsolidatedRequirement,
 ) -> tuple[float, list[str]]:
-    left_tokens = _tokenize_relation_text(left_requirement.normalized_text or left_requirement.canonical_text)
-    right_tokens = _tokenize_relation_text(right_requirement.normalized_text or right_requirement.canonical_text)
+    left_tokens = _tokenize_relation_text(
+        left_requirement.normalized_text or left_requirement.canonical_text
+    )
+    right_tokens = _tokenize_relation_text(
+        right_requirement.normalized_text or right_requirement.canonical_text
+    )
     if not left_tokens or not right_tokens:
         return 0.0, []
 
@@ -561,15 +633,19 @@ def _extract_dependency_clauses(requirement: ConsolidatedRequirement) -> list[st
     for marker in _DEPENDENCY_MARKERS:
         pattern = re.escape(marker)
         for match in re.finditer(pattern, normalized_text):
-            clause = normalized_text[match.end():].strip(" ,.;:-")
+            clause = normalized_text[match.end() :].strip(" ,.;:-")
             if clause:
                 clauses.append(clause)
     return clauses
 
 
-def _dependency_clause_overlap(clause: str, requirement: ConsolidatedRequirement) -> tuple[float, list[str]]:
+def _dependency_clause_overlap(
+    clause: str, requirement: ConsolidatedRequirement
+) -> tuple[float, list[str]]:
     clause_tokens = _tokenize_relation_text(clause)
-    target_tokens = _tokenize_relation_text(requirement.normalized_text or requirement.canonical_text)
+    target_tokens = _tokenize_relation_text(
+        requirement.normalized_text or requirement.canonical_text
+    )
     if not clause_tokens or not target_tokens:
         return 0.0, []
 
@@ -592,7 +668,11 @@ def build_requirement_relation_payloads(
     for child_requirement in ordered_requirements:
         parent_requirement_id = int(getattr(child_requirement, "parent_requirement_id", None) or 0)
         child_requirement_id = int(getattr(child_requirement, "id", None) or 0)
-        if not parent_requirement_id or not child_requirement_id or parent_requirement_id == child_requirement_id:
+        if (
+            not parent_requirement_id
+            or not child_requirement_id
+            or parent_requirement_id == child_requirement_id
+        ):
             continue
         relation_items.append(
             {
@@ -602,7 +682,9 @@ def build_requirement_relation_payloads(
                 "confidence": 1.0,
                 "metadata_json": {
                     "inference_method": "explicit_parent_requirement_key_v1",
-                    "parent_requirement_key": getattr(child_requirement, "parent_requirement_key", None),
+                    "parent_requirement_key": getattr(
+                        child_requirement, "parent_requirement_key", None
+                    ),
                 },
             }
         )
@@ -616,7 +698,7 @@ def build_requirement_relation_payloads(
         left_role = _extract_primary_document_role(left_requirement)
         left_rank = _DOCUMENT_ROLE_RANK.get(left_role, _DOCUMENT_ROLE_RANK["other"])
 
-        for right_requirement in ordered_requirements[index + 1:]:
+        for right_requirement in ordered_requirements[index + 1 :]:
             right_id = getattr(right_requirement, "id", None)
             right_text = _requirement_relation_text(right_requirement)
             if not right_id or not right_text or left_text == right_text:
@@ -631,7 +713,9 @@ def build_requirement_relation_payloads(
 
             conflict_signals = _extract_conflict_signals(left_requirement, right_requirement)
             if left_rank == right_rank:
-                if conflict_signals and _requirements_are_cross_document(left_requirement, right_requirement):
+                if conflict_signals and _requirements_are_cross_document(
+                    left_requirement, right_requirement
+                ):
                     relation_items.append(
                         {
                             "source_requirement_id": left_requirement.id,
@@ -679,7 +763,9 @@ def build_requirement_relation_payloads(
                     "confidence": round(overlap, 4),
                     "metadata_json": {
                         "inference_method": (
-                            "explicit_precedence_override_v1" if override_markers else "lexical_override_v1"
+                            "explicit_precedence_override_v1"
+                            if override_markers
+                            else "lexical_override_v1"
                         ),
                         "shared_terms": shared_tokens,
                         "conflict_signals": conflict_signals,
@@ -770,7 +856,9 @@ def build_consolidated_requirement_payloads(
         for candidate in ordered_candidates:
             if _candidate_is_rejected_by_verifier(candidate):
                 continue
-            normalized_text = normalize_requirement_text(candidate.normalized_text or candidate.summary_text or "")
+            normalized_text = normalize_requirement_text(
+                candidate.normalized_text or candidate.summary_text or ""
+            )
             canonical_text = str(candidate.summary_text or "").strip()
             if not normalized_text or not canonical_text:
                 continue
@@ -804,12 +892,14 @@ def build_consolidated_requirement_payloads(
 
             existing["source_count"] += 1
             _merge_graph_v2_payload(existing, graph_v2_payload)
-            if (
-                candidate.confidence is not None
-                and (existing["confidence"] is None or candidate.confidence > existing["confidence"])
+            if candidate.confidence is not None and (
+                existing["confidence"] is None or candidate.confidence > existing["confidence"]
             ):
                 existing["confidence"] = candidate.confidence
-            if _PRIORITY_RANK[_normalize_priority(candidate.priority)] > _PRIORITY_RANK[existing["priority"]]:
+            if (
+                _PRIORITY_RANK[_normalize_priority(candidate.priority)]
+                > _PRIORITY_RANK[existing["priority"]]
+            ):
                 existing["priority"] = _normalize_priority(candidate.priority)
 
             metadata_json = dict(existing.get("metadata_json") or {})
@@ -827,7 +917,8 @@ def build_consolidated_requirement_payloads(
             if (
                 isinstance(primary_source, Mapping)
                 and primary_source.get("candidate_id") == source_payload.get("candidate_id")
-                and primary_source.get("extraction_run_id") == source_payload.get("extraction_run_id")
+                and primary_source.get("extraction_run_id")
+                == source_payload.get("extraction_run_id")
             ):
                 existing["canonical_text"] = canonical_text
                 if candidate.category:
@@ -853,7 +944,9 @@ def _build_legacy_source_payload(requirement: TenderRequirement) -> dict[str, An
         "document_role": "other",
         "precedence_rank": _DOCUMENT_ROLE_RANK["other"],
         "summary_text": str(requirement.requirement_text or "").strip(),
-        "compliance_status": getattr(requirement.compliance_status, "value", requirement.compliance_status),
+        "compliance_status": getattr(
+            requirement.compliance_status, "value", requirement.compliance_status
+        ),
     }
 
 
@@ -863,7 +956,7 @@ def build_consolidated_requirement_payloads_from_legacy(
     """Convert legacy tender_requirements rows into graph-ready payloads."""
 
     consolidated_by_text: dict[str, dict[str, Any]] = {}
-    for requirement in sorted(list(requirements or []), key=lambda item: (item.id or 0)):
+    for requirement in sorted(list(requirements or []), key=lambda item: item.id or 0):
         normalized_text = normalize_requirement_text(requirement.requirement_text or "")
         canonical_text = str(requirement.requirement_text or "").strip()
         if not normalized_text or not canonical_text:
@@ -890,7 +983,10 @@ def build_consolidated_requirement_payloads_from_legacy(
             continue
 
         existing["source_count"] += 1
-        if _PRIORITY_RANK[_normalize_priority(requirement.priority)] > _PRIORITY_RANK[existing["priority"]]:
+        if (
+            _PRIORITY_RANK[_normalize_priority(requirement.priority)]
+            > _PRIORITY_RANK[existing["priority"]]
+        ):
             existing["priority"] = _normalize_priority(requirement.priority)
         metadata_json = dict(existing.get("metadata_json") or {})
         sources = list(metadata_json.get("sources") or [])
@@ -962,15 +1058,21 @@ async def replace_consolidated_requirements(
             existing_row.priority = _normalize_priority(item.get("priority"))
             existing_row.confidence = item.get("confidence")
             existing_row.source_count = int(item.get("source_count") or 0)
-            existing_row.consolidation_method = str(item.get("consolidation_method") or consolidation_method)
+            existing_row.consolidation_method = str(
+                item.get("consolidation_method") or consolidation_method
+            )
             existing_row.review_state = str(existing_row.review_state or review_state)
             existing_row.graph_state = _ACTIVE_GRAPH_STATE
-            existing_row.parent_requirement_key = _clean_parent_requirement_key(item.get("parent_requirement_key"))
+            existing_row.parent_requirement_key = _clean_parent_requirement_key(
+                item.get("parent_requirement_key")
+            )
             existing_row.applicability = _clean_applicability(item.get("applicability"))
             existing_row.conditions = _clean_text_list(item.get("conditions"))
             existing_row.exceptions = _clean_text_list(item.get("exceptions"))
             existing_row.metadata_json = _merge_graph_metadata(
-                existing_row.metadata_json if isinstance(existing_row.metadata_json, Mapping) else None,
+                existing_row.metadata_json
+                if isinstance(existing_row.metadata_json, Mapping)
+                else None,
                 fresh_metadata,
                 graph_state=_ACTIVE_GRAPH_STATE,
             )
@@ -988,7 +1090,9 @@ async def replace_consolidated_requirements(
             consolidation_method=str(item.get("consolidation_method") or consolidation_method),
             review_state=review_state,
             graph_state=_ACTIVE_GRAPH_STATE,
-            parent_requirement_key=_clean_parent_requirement_key(item.get("parent_requirement_key")),
+            parent_requirement_key=_clean_parent_requirement_key(
+                item.get("parent_requirement_key")
+            ),
             applicability=_clean_applicability(item.get("applicability")),
             conditions=_clean_text_list(item.get("conditions")),
             exceptions=_clean_text_list(item.get("exceptions")),
@@ -1059,7 +1163,9 @@ async def replace_requirement_relations(
             existing_row.review_state = str(existing_row.review_state or review_state)
             existing_row.graph_state = _ACTIVE_GRAPH_STATE
             existing_row.metadata_json = _merge_graph_metadata(
-                existing_row.metadata_json if isinstance(existing_row.metadata_json, Mapping) else None,
+                existing_row.metadata_json
+                if isinstance(existing_row.metadata_json, Mapping)
+                else None,
                 fresh_metadata,
                 graph_state=_ACTIVE_GRAPH_STATE,
             )
@@ -1208,7 +1314,9 @@ async def list_requirement_relations(
     if normalized_state is not None:
         statement = statement.where(RequirementRelation.graph_state == normalized_state)
     if relation_type:
-        statement = statement.where(RequirementRelation.relation_type == str(relation_type).strip().casefold())
+        statement = statement.where(
+            RequirementRelation.relation_type == str(relation_type).strip().casefold()
+        )
 
     result = await db.execute(statement)
     return list(result.scalars().all())

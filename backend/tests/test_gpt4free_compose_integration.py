@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -16,12 +15,22 @@ class GPT4FreeComposeIntegrationTests(unittest.TestCase):
         self.assertIn("gpt4free:", compose_text)
         self.assertIn("hlohaus789/g4f:latest-slim", compose_text)
         self.assertIn('user: "0:0"', compose_text)
-        self.assertIn('LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://tw-gateway:8080/v1}', compose_text)
-        self.assertIn('GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}', compose_text)
-        self.assertIn('GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-http://llama-tender:8080}', compose_text)
-        self.assertIn('gpt4free:\n        condition: service_healthy', compose_text)
+        self.assertIn(
+            "LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://tw-gateway:8080/v1}", compose_text
+        )
+        self.assertIn(
+            "GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}",
+            compose_text,
+        )
+        self.assertIn(
+            "GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-http://llama-tender:8080}",
+            compose_text,
+        )
+        self.assertIn("gpt4free:\n        condition: service_healthy", compose_text)
 
-    def test_env_templates_route_backend_through_gateway_and_keep_llama_cpp_as_default_gateway_upstream(self) -> None:
+    def test_env_templates_route_backend_through_gateway_and_keep_llama_cpp_as_default_gateway_upstream(
+        self,
+    ) -> None:
         root_env_example = (_REPO_ROOT / ".env.example").read_text(encoding="utf-8")
         backend_env_example = (_REPO_ROOT / "backend" / ".env.example").read_text(encoding="utf-8")
 

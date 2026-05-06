@@ -7,7 +7,6 @@ from typing import Any
 
 from app.config import settings as app_settings
 
-
 _ROLLOUT_SALT = "requirement_extraction_llm_v2"
 
 
@@ -35,7 +34,7 @@ def requirement_rollout_bucket(tender_id: int, *, salt: str = _ROLLOUT_SALT) -> 
     normalized_tender_id = int(tender_id)
     if normalized_tender_id <= 0:
         raise ValueError("tender_id must be a positive integer")
-    digest = hashlib.sha256(f"{salt}:{normalized_tender_id}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{salt}:{normalized_tender_id}".encode()).hexdigest()
     return int(digest[:8], 16) % 100
 
 

@@ -111,7 +111,10 @@ def test_backend_one_off_container_bootstraps_via_alembic_mode() -> None:
         )
 
         assert "bootstrap-ok" in output
-        assert _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;") == REVISION_ID
+        assert (
+            _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;")
+            == REVISION_ID
+        )
         assert {"is_active", "is_verified"} <= _column_names(database_name, "users")
         assert {"connection_method", "api_key"} <= _column_names(
             database_name, "ai_gateway_targets"
@@ -153,7 +156,10 @@ def test_backend_one_off_container_uses_alembic_deploy_default() -> None:
         )
 
         assert "bootstrap-ok" in output
-        assert _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;") == REVISION_ID
+        assert (
+            _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;")
+            == REVISION_ID
+        )
     finally:
         _drop_database(database_name)
 
@@ -193,6 +199,9 @@ def test_backend_one_off_container_keeps_metadata_compat_as_alembic_alias() -> N
         )
 
         assert "bootstrap-ok" in output
-        assert _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;") == REVISION_ID
+        assert (
+            _docker_exec_psql(database_name, "SELECT version_num FROM alembic_version;")
+            == REVISION_ID
+        )
     finally:
         _drop_database(database_name)

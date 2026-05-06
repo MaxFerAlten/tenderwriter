@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import structlog
@@ -14,10 +15,17 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models import (
+    AttendanceRecord,
+    CallSession,
+    ComplianceGate,
+    ContributionRequest,
+    ContributionUnit,
     KpiDomainEvent,
     KpiEventDeliveryStatus,
     Proposal,
     ProposalSection,
+    ReviewCycle,
+    ReworkAction,
     Tender,
     TenderRequirement,
 )
@@ -48,7 +56,9 @@ class KpiReasonEngineClient:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.base_url = (base_url or settings.kpi_reason_engine_base_url or "").rstrip("/")
-        self.service_token = service_token if service_token is not None else settings.kpi_reason_engine_service_token
+        self.service_token = (
+            service_token if service_token is not None else settings.kpi_reason_engine_service_token
+        )
         self.timeout = timeout if timeout is not None else settings.kpi_reason_engine_timeout
         self.transport = transport
 
@@ -109,6 +119,9 @@ class KpiReasonEngineClient:
     async def _post(self, path: str, payload: dict[str, Any]) -> KpiClientResult:
         return await self._request("POST", path, payload)
 
+    async def _put(self, path: str, payload: dict[str, Any]) -> KpiClientResult:
+        return await self._request("PUT", path, payload)
+
     async def _get(self, path: str) -> KpiClientResult:
         return await self._request("GET", path)
 
@@ -152,6 +165,16 @@ class KpiReasonEngineClient:
     async def get_tender_forecast(self, external_tender_id: str) -> KpiClientResult:
         return await self._get(f"/v1/tenders/{external_tender_id}/forecast")
 
+    async def put_rehearsal_summary(
+        self,
+        external_tender_id: str,
+        summary: dict[str, Any],
+    ) -> KpiClientResult:
+        return await self._put(
+            f"/v1/tenders/{external_tender_id}/rehearsal-summary",
+            {"summary": summary},
+        )
+
     async def request_analysis_job(
         self,
         external_tender_id: str,
@@ -179,8 +202,8 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -202,7 +225,7 @@ def select_primary_proposal(proposals: Sequence[Proposal] | None) -> Proposal | 
     if not proposals:
         return None
 
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
     return max(
         proposals,
         key=lambda item: (
@@ -241,7 +264,9 @@ def build_tender_sync_payload(tender: Tender) -> dict[str, Any]:
                     "summary": requirement.requirement_text,
                     "priority": requirement.priority,
                     "compliance_status": _enum_value(requirement.compliance_status),
-                    "mapped_section_id": str(requirement.proposal_section_id) if requirement.proposal_section_id else None,
+                    "mapped_section_id": str(requirement.proposal_section_id)
+                    if requirement.proposal_section_id
+                    else None,
                 }
             )
             for requirement in requirements
@@ -338,7 +363,11 @@ def build_requirements_extracted_event_payload(
             priority = "medium"
         priority_breakdown[priority] = priority_breakdown.get(priority, 0) + 1
 
-        reference = candidate.get("reference") or candidate.get("section") or candidate.get("source_section")
+        reference = (
+            candidate.get("reference")
+            or candidate.get("section")
+            or candidate.get("source_section")
+        )
         if reference is not None:
             references.append(str(reference))
 
@@ -355,7 +384,9 @@ def build_requirements_extracted_event_payload(
             "requirement_count": len(extracted_candidates),
             "new_requirement_count": len(created_requirements),
             "created_requirement_ids": [
-                str(requirement.id) for requirement in created_requirements if getattr(requirement, "id", None) is not None
+                str(requirement.id)
+                for requirement in created_requirements
+                if getattr(requirement, "id", None) is not None
             ],
             "priority_breakdown": priority_breakdown,
             "references": unique_references[:10],
@@ -365,7 +396,9 @@ def build_requirements_extracted_event_payload(
     )
 
 
-def build_proposal_created_event_payload(*, proposal: Proposal, section_count: int) -> dict[str, Any]:
+def build_proposal_created_event_payload(
+    *, proposal: Proposal, section_count: int
+) -> dict[str, Any]:
     return {
         "proposal_id": proposal.id,
         "section_count": section_count,
@@ -400,12 +433,13 @@ def build_tender_submitted_event_payload(*, submitted_at: datetime, channel: str
     }
 
 
-def build_tender_outcome_recorded_event_payload(*, outcome: str, recorded_at: datetime) -> dict[str, Any]:
+def build_tender_outcome_recorded_event_payload(
+    *, outcome: str, recorded_at: datetime
+) -> dict[str, Any]:
     return {
         "outcome": outcome,
         "recorded_at": _datetime_to_iso(recorded_at),
     }
-
 
 
 def build_tender_decision_event_payload(
@@ -739,7 +773,9 @@ def build_contribution_received_event_payload(
     response_time_hours = _duration_hours(request.requested_at, response_received_at)
     lateness_hours = None
     if _as_utc(due_at) is not None and _as_utc(response_received_at) is not None:
-        lateness_hours = round(max(0.0, (_as_utc(response_received_at) - _as_utc(due_at)).total_seconds() / 3600), 2)
+        lateness_hours = round(
+            max(0.0, (_as_utc(response_received_at) - _as_utc(due_at)).total_seconds() / 3600), 2
+        )
     return _compact_dict(
         {
             "external_contribution_id": str(contribution.id),
@@ -750,14 +786,20 @@ def build_contribution_received_event_payload(
             "response_time_hours": response_time_hours,
             "lateness_hours": lateness_hours,
             "within_deadline": lateness_hours is None or lateness_hours <= 0,
-            "within_sla_target": response_time_hours is not None and request.sla_target_hours is not None and response_time_hours <= request.sla_target_hours,
-            "within_sla_max": response_time_hours is not None and request.sla_max_hours is not None and response_time_hours <= request.sla_max_hours,
+            "within_sla_target": response_time_hours is not None
+            and request.sla_target_hours is not None
+            and response_time_hours <= request.sla_target_hours,
+            "within_sla_max": response_time_hours is not None
+            and request.sla_max_hours is not None
+            and response_time_hours <= request.sla_max_hours,
             "response_summary": request.response_summary,
         }
     )
 
 
-def build_review_cycle_started_event_payload(*, review: ReviewCycle, contribution: ContributionUnit) -> dict[str, Any]:
+def build_review_cycle_started_event_payload(
+    *, review: ReviewCycle, contribution: ContributionUnit
+) -> dict[str, Any]:
     return _compact_dict(
         {
             "external_contribution_id": str(contribution.id),
@@ -789,12 +831,16 @@ def build_contribution_review_completed_event_payload(
     )
 
 
-def build_rework_requested_event_payload(*, rework: ReworkAction, contribution: ContributionUnit) -> dict[str, Any]:
+def build_rework_requested_event_payload(
+    *, rework: ReworkAction, contribution: ContributionUnit
+) -> dict[str, Any]:
     return _compact_dict(
         {
             "external_contribution_id": str(contribution.id),
             "external_rework_id": str(rework.id),
-            "external_review_cycle_id": str(rework.review_cycle_id) if rework.review_cycle_id else None,
+            "external_review_cycle_id": str(rework.review_cycle_id)
+            if rework.review_cycle_id
+            else None,
             "assigned_to_user_id": rework.assigned_to_user_id,
             "severity": rework.severity,
             "is_blocking": rework.is_blocking,
@@ -805,7 +851,9 @@ def build_rework_requested_event_payload(*, rework: ReworkAction, contribution: 
     )
 
 
-def build_rework_resolved_event_payload(*, rework: ReworkAction, contribution: ContributionUnit) -> dict[str, Any]:
+def build_rework_resolved_event_payload(
+    *, rework: ReworkAction, contribution: ContributionUnit
+) -> dict[str, Any]:
     return _compact_dict(
         {
             "external_contribution_id": str(contribution.id),
@@ -824,7 +872,9 @@ def build_compliance_gate_opened_event_payload(*, gate: ComplianceGate) -> dict[
     return _compact_dict(
         {
             "external_gate_id": str(gate.id),
-            "external_contribution_id": str(gate.contribution_unit_id) if gate.contribution_unit_id else None,
+            "external_contribution_id": str(gate.contribution_unit_id)
+            if gate.contribution_unit_id
+            else None,
             "gate_name": gate.gate_name,
             "owner_user_id": gate.owner_user_id,
             "due_at": _datetime_to_iso(gate.due_at),
@@ -836,7 +886,9 @@ def build_compliance_gate_decision_event_payload(*, gate: ComplianceGate) -> dic
     return _compact_dict(
         {
             "external_gate_id": str(gate.id),
-            "external_contribution_id": str(gate.contribution_unit_id) if gate.contribution_unit_id else None,
+            "external_contribution_id": str(gate.contribution_unit_id)
+            if gate.contribution_unit_id
+            else None,
             "gate_name": gate.gate_name,
             "status": _enum_value(gate.status),
             "evaluated_at": _datetime_to_iso(gate.evaluated_at),
@@ -855,7 +907,9 @@ def build_call_scheduled_event_payload(*, call: CallSession) -> dict[str, Any]:
     )
 
 
-def build_call_attendance_recorded_event_payload(*, record: AttendanceRecord, call: CallSession) -> dict[str, Any]:
+def build_call_attendance_recorded_event_payload(
+    *, record: AttendanceRecord, call: CallSession
+) -> dict[str, Any]:
     return _compact_dict(
         {
             "external_call_session_id": str(call.id),
@@ -875,12 +929,12 @@ def apply_delivery_result(event: KpiDomainEvent, result: KpiClientResult) -> Kpi
     event.delivery_attempts = (event.delivery_attempts or 0) + 1
     event.response_status_code = result.status_code
     event.response_json = result.response_json
-    event.updated_at = datetime.now(timezone.utc)
+    event.updated_at = datetime.now(UTC)
 
     if result.delivered:
         event.delivery_status = KpiEventDeliveryStatus.DELIVERED
         event.error_message = None
-        event.published_at = datetime.now(timezone.utc)
+        event.published_at = datetime.now(UTC)
         return event
 
     event.delivery_status = KpiEventDeliveryStatus.FAILED
@@ -924,7 +978,7 @@ async def publish_tender_sync(
         event_type="tender_sync",
         source=source,
         external_tender_id=str(tender.id),
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         payload_json=payload,
         delivery_status=KpiEventDeliveryStatus.PENDING,
         response_json={},
@@ -952,7 +1006,7 @@ async def publish_domain_event(
 ) -> KpiDomainEvent:
     """Persist and deliver a canonical domain event to the KPI service."""
 
-    occurred_at = _as_utc(occurred_at) or datetime.now(timezone.utc)
+    occurred_at = _as_utc(occurred_at) or datetime.now(UTC)
     envelope = build_domain_event_payload(
         event_type=event_type,
         occurred_at=occurred_at,
@@ -978,7 +1032,170 @@ async def publish_domain_event(
     result = await client.publish_event(str(tender_id), envelope)
     apply_delivery_result(event, result)
     await db.flush()
+
+    await _project_event_to_requirement_graph(
+        db,
+        tender_id=tender_id,
+        event=event,
+        event_type=event_type,
+        payload=payload,
+        actor_id=actor_id,
+        occurred_at=occurred_at,
+    )
+
     return event
+
+
+async def _project_event_to_requirement_graph(
+    db: AsyncSession,
+    *,
+    tender_id: int,
+    event: KpiDomainEvent,
+    event_type: str,
+    payload: dict[str, Any],
+    actor_id: int | None,
+    occurred_at: datetime,
+) -> None:
+    """Best-effort fan-out of a canonical event onto the requirement graph.
+
+    Resolves the affected requirement ids from the payload (gate-wide,
+    contribution-scoped, or section-scoped) and dispatches to the
+    lifecycle projector. Failures are swallowed — the canonical write
+    has already succeeded.
+    """
+    from app.intelligence.lifecycle_projector import (
+        derive_snapshot_delta,
+        get_active_rag_engine,
+        project_requirement_event,
+    )
+
+    if not derive_snapshot_delta(event_type) and event_type not in {
+        "contribution_request_created",
+        "contribution_received",
+        "contribution_review_started",
+    }:
+        return
+
+    rag_engine = get_active_rag_engine()
+    if rag_engine is None:
+        return
+
+    requirement_ids = await _resolve_requirements_for_event(
+        db, tender_id=tender_id, payload=payload
+    )
+    if not requirement_ids:
+        return
+
+    base_external = (
+        f"event-{event.id}-{event_type}"
+        if getattr(event, "id", None) is not None
+        else f"event-{event_type}-{int(occurred_at.timestamp() * 1000)}"
+    )
+
+    for requirement_id in requirement_ids:
+        try:
+            await project_requirement_event(
+                rag_engine=rag_engine,
+                tender_id=tender_id,
+                requirement_id=requirement_id,
+                event_type=event_type,
+                occurred_at=occurred_at,
+                external_event_id=f"{base_external}-r{requirement_id}",
+                actor_id=actor_id,
+                payload=payload,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to project domain event onto requirement graph",
+                tender_id=tender_id,
+                requirement_id=requirement_id,
+                event_type=event_type,
+                error=str(exc),
+            )
+
+
+async def _resolve_requirements_for_event(
+    db: AsyncSession,
+    *,
+    tender_id: int,
+    payload: dict[str, Any],
+) -> list[int]:
+    """Return the requirement ids affected by a canonical event payload."""
+    from sqlalchemy import select as _select
+
+    contribution_id_raw = payload.get("external_contribution_id") or payload.get(
+        "contribution_unit_id"
+    )
+    section_id_raw = payload.get("proposal_section_id") or payload.get("external_section_id")
+    gate_id_raw = payload.get("external_gate_id")
+
+    section_id: int | None = None
+    if section_id_raw is not None:
+        try:
+            section_id = int(section_id_raw)
+        except (TypeError, ValueError):
+            section_id = None
+
+    if section_id is None and contribution_id_raw is not None:
+        try:
+            contribution_id = int(contribution_id_raw)
+        except (TypeError, ValueError):
+            contribution_id = None
+        if contribution_id is not None:
+            from app.models import ContributionUnit as _ContributionUnit
+
+            row = await db.execute(
+                _select(_ContributionUnit.proposal_section_id).where(
+                    _ContributionUnit.id == contribution_id
+                )
+            )
+            section_id = row.scalar_one_or_none()
+
+    if section_id is None and gate_id_raw is not None:
+        try:
+            gate_id = int(gate_id_raw)
+        except (TypeError, ValueError):
+            gate_id = None
+        if gate_id is not None:
+            from app.models import (
+                ComplianceGate as _ComplianceGate,
+            )
+            from app.models import (
+                ContributionUnit as _ContributionUnit,
+            )
+
+            row = await db.execute(
+                _select(_ComplianceGate.contribution_unit_id).where(_ComplianceGate.id == gate_id)
+            )
+            contribution_id = row.scalar_one_or_none()
+            if contribution_id is not None:
+                row = await db.execute(
+                    _select(_ContributionUnit.proposal_section_id).where(
+                        _ContributionUnit.id == contribution_id
+                    )
+                )
+                section_id = row.scalar_one_or_none()
+
+    if section_id is not None:
+        from app.models import TenderRequirement as _TenderRequirement
+
+        rows = await db.execute(
+            _select(_TenderRequirement.id).where(
+                _TenderRequirement.proposal_section_id == section_id
+            )
+        )
+        return [int(rid) for rid in rows.scalars().all()]
+
+    if gate_id_raw is not None:
+        # Tender-wide auto gate: project to every requirement on the tender.
+        from app.models import TenderRequirement as _TenderRequirement
+
+        rows = await db.execute(
+            _select(_TenderRequirement.id).where(_TenderRequirement.tender_id == tender_id)
+        )
+        return [int(rid) for rid in rows.scalars().all()]
+
+    return []
 
 
 async def sync_tender_and_publish_event(
@@ -1017,7 +1234,3 @@ async def sync_tender_and_publish_event(
         )
 
     return sync_event, domain_event
-
-
-
-

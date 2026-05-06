@@ -1,14 +1,14 @@
 """TenderWriter system APIs backed by the internal privileged ops-agent."""
 
+from typing import Any
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-import structlog
-from typing import Dict, Any, List
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import get_current_user, UserResponse
+from app.api.auth import UserResponse, get_current_user
 from app.config import settings
 from app.db.database import get_db
 from app.models.app_settings import AppSettings
@@ -31,7 +31,7 @@ class NginxConfigUpdate(BaseModel):
     send_timeout: int
 
 
-def _build_capabilities_payload(result: OpsAgentClientResult) -> dict[str, Dict[str, Any]]:
+def _build_capabilities_payload(result: OpsAgentClientResult) -> dict[str, dict[str, Any]]:
     if not result.delivered:
         reason = result.error_message or "Ops agent unavailable."
         return {
@@ -43,10 +43,16 @@ def _build_capabilities_payload(result: OpsAgentClientResult) -> dict[str, Dict[
     payload = result.response_json
     ops_reason = payload.get("reason")
     monitoring_available = bool(payload.get("ops_monitoring"))
-    monitoring_reason = None if monitoring_available else (ops_reason or "Ops monitoring unavailable.")
+    monitoring_reason = (
+        None if monitoring_available else (ops_reason or "Ops monitoring unavailable.")
+    )
     nginx_available = bool(payload.get("nginx_hot_reload"))
-    nginx_reason = None if nginx_available else (
-        payload.get("nginx_hot_reload_reason") or ops_reason or "Nginx hot reload unavailable."
+    nginx_reason = (
+        None
+        if nginx_available
+        else (
+            payload.get("nginx_hot_reload_reason") or ops_reason or "Nginx hot reload unavailable."
+        )
     )
     return {
         "ops_agent": {"available": bool(payload.get("available")), "reason": ops_reason},
@@ -62,14 +68,14 @@ def _raise_for_ops_result(result: OpsAgentClientResult, *, fallback_detail: str)
 
 
 @router.get("/capabilities", dependencies=[Depends(admin_required)])
-async def get_system_capabilities() -> Dict[str, Dict[str, Any]]:
+async def get_system_capabilities() -> dict[str, dict[str, Any]]:
     """Report whether privileged ops features are available in this environment."""
     result = await OpsAgentClient().get_capabilities()
     return _build_capabilities_payload(result)
 
 
 @router.get("/containers", dependencies=[Depends(admin_required)])
-async def list_containers() -> List[Dict[str, Any]]:
+async def list_containers() -> list[dict[str, Any]]:
     """List allowlisted TenderWriter containers via the internal ops-agent."""
     result = await OpsAgentClient().list_containers()
     if not result.delivered:
@@ -100,7 +106,9 @@ async def update_nginx_timeout(config: NginxConfigUpdate):
     """Apply persisted Nginx timeout settings live via the internal ops-agent."""
     result = await OpsAgentClient().reload_frontend_nginx(config.model_dump())
     if not result.delivered:
-        _raise_for_ops_result(result, fallback_detail="Unable to apply frontend Nginx timeout changes.")
+        _raise_for_ops_result(
+            result, fallback_detail="Unable to apply frontend Nginx timeout changes."
+        )
     logger.info("Nginx timeout updated via ops-agent", timeouts=config.model_dump())
     return result.response_json
 
@@ -110,6 +118,7 @@ async def update_nginx_timeout(config: NginxConfigUpdate):
 
 class AppSettingsPayload(BaseModel):
     """Flexible payload — any key-value pair is accepted."""
+
     rag_model: str | None = None
     nginx_read_timeout: int | None = None
     nginx_connect_timeout: int | None = None
@@ -176,11 +185,11 @@ async def rebuild_bm25_index(
     rag_engine = getattr(request.app.state, "rag_engine", None)
     if not rag_engine:
         raise HTTPException(status_code=503, detail="RAG Engine not available")
-    
+
     await rag_engine.ensure_initialized()
     if not rag_engine.sparse_retriever:
         raise HTTPException(status_code=503, detail="Sparse retriever not initialized")
-    
+
     try:
         rag_engine._bootstrap_sparse_retriever()
         size = rag_engine.sparse_retriever.corpus_size
@@ -188,4 +197,4 @@ async def rebuild_bm25_index(
         return {"status": "ok", "message": "BM25 index rebuilt successfully", "corpus_size": size}
     except Exception as e:
         logger.error("Failed to rebuild BM25 index", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
