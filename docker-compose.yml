@@ -184,7 +184,7 @@ services:
   # --- MinIO (Object Storage) ---
   minio:
     image: minio/minio:latest
-    container_name: minio
+    container_name: tw-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
