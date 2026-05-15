@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -202,8 +202,8 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -225,7 +225,7 @@ def select_primary_proposal(proposals: Sequence[Proposal] | None) -> Proposal | 
     if not proposals:
         return None
 
-    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
     return max(
         proposals,
         key=lambda item: (
@@ -929,12 +929,12 @@ def apply_delivery_result(event: KpiDomainEvent, result: KpiClientResult) -> Kpi
     event.delivery_attempts = (event.delivery_attempts or 0) + 1
     event.response_status_code = result.status_code
     event.response_json = result.response_json
-    event.updated_at = datetime.now(UTC)
+    event.updated_at = datetime.now(timezone.utc)
 
     if result.delivered:
         event.delivery_status = KpiEventDeliveryStatus.DELIVERED
         event.error_message = None
-        event.published_at = datetime.now(UTC)
+        event.published_at = datetime.now(timezone.utc)
         return event
 
     event.delivery_status = KpiEventDeliveryStatus.FAILED
@@ -978,7 +978,7 @@ async def publish_tender_sync(
         event_type="tender_sync",
         source=source,
         external_tender_id=str(tender.id),
-        occurred_at=datetime.now(UTC),
+        occurred_at=datetime.now(timezone.utc),
         payload_json=payload,
         delivery_status=KpiEventDeliveryStatus.PENDING,
         response_json={},
@@ -1006,7 +1006,7 @@ async def publish_domain_event(
 ) -> KpiDomainEvent:
     """Persist and deliver a canonical domain event to the KPI service."""
 
-    occurred_at = _as_utc(occurred_at) or datetime.now(UTC)
+    occurred_at = _as_utc(occurred_at) or datetime.now(timezone.utc)
     envelope = build_domain_event_payload(
         event_type=event_type,
         occurred_at=occurred_at,

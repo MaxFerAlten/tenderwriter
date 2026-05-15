@@ -423,6 +423,7 @@ services:
     volumes:
       - ./kpi-reason-engine/app:/app/app
       - ./kpi-reason-engine/docs:/app/docs
+      - ./kpi-reason-engine/migrations:/app/migrations
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8010/health" ]
       interval: 10s
@@ -490,7 +491,7 @@ services:
       GATEWAY_TENDER_UPSTREAM: ${GATEWAY_TENDER_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_UPSTREAM: http://llama-opencode:8080
       GATEWAY_TIMEOUT: ${GATEWAY_TIMEOUT:-1200}
-      GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-}
+      GATEWAY_TENDER_DMZ_UPSTREAM: ${GATEWAY_TENDER_DMZ_UPSTREAM:-http://llama-tender:8080}
       GATEWAY_OPENCODE_DMZ_UPSTREAM: ${GATEWAY_OPENCODE_DMZ_UPSTREAM:-}
       GATEWAY_ANONYMIZER_URL: http://tw-anonymizer:8090
       GATEWAY_TENDER_CLOUD_PROVIDER: ${GATEWAY_TENDER_CLOUD_PROVIDER:-}

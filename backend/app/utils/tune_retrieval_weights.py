@@ -19,7 +19,7 @@ import argparse
 import asyncio
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.services.rag_retrieval_evaluation import (
@@ -150,7 +150,7 @@ async def run_tuning(args: argparse.Namespace) -> dict[str, Any]:
 
     sorted_results = sort_tuning_results(results)
     return {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "case_count": len(cases),
         "candidate_count": len(sorted_results),
         "best": sorted_results[0] if sorted_results else None,

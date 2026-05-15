@@ -16,14 +16,12 @@ import inspect
 import os
 import re
 import unicodedata
+from importlib import import_module
 
 import structlog
 
 from app.config import settings
 from app.ingestion.document_quality import document_quality_metadata
-from app.services.tender_document_requirement_extractor import (
-    extract_tender_participation_requirements,
-)
 
 logger = structlog.get_logger()
 
@@ -342,7 +340,8 @@ class IngestionPipeline:
                 detail="Extracting tender participation requirements.",
             )
             heuristic_candidates = self.extract_requirement_candidates(elements, section_texts)
-            extraction_result = await extract_tender_participation_requirements(
+            extractor_module = import_module("app.services.tender_document_requirement_extractor")
+            extraction_result = await extractor_module.extract_tender_participation_requirements(
                 generator=getattr(self.rag_engine, "generator", None),
                 document_text=full_text,
                 section_texts=section_texts,

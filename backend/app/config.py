@@ -4,7 +4,7 @@ TenderWriter — Application Configuration
 All settings are loaded from environment variables with sensible defaults.
 """
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 UNSAFE_DEFAULTS = [
@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     app_debug: bool = False
     app_secret_key: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+
+    # --- Localization ---
+    # Default language for engine prompts and user-facing guardrail messages.
+    # Read from the TENDERWRITER_LOCALE env var; supports "it" (default) or "en".
+    default_locale: str = Field(default="it", validation_alias="TENDERWRITER_LOCALE")
 
     # --- Auth ---
     auth_provider: str = "legacy"  # "legacy" | "keycloak" | "hybrid"

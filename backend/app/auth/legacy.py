@@ -6,6 +6,8 @@ Wraps the existing jose-based JWT validation as an AuthProvider.
 
 from __future__ import annotations
 
+from inspect import isawaitable
+
 import structlog
 from fastapi import HTTPException, status
 from jose import JWTError, jwt
@@ -51,6 +53,8 @@ class LegacyJWTProvider:
             raise credentials_exception from exc
         result = await db.execute(select(User).where(User.id == uid))
         user = result.scalar_one_or_none()
+        if isawaitable(user):
+            user = await user
         if user is None:
             raise credentials_exception
 

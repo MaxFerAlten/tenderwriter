@@ -7,64 +7,20 @@ from collections.abc import Mapping, Sequence
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.rag.internal_prompting import default_language
+from app.rag.localization import ContextQuality, get_context_quality
+
+# Structural patterns (language-agnostic) stay inline.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
 _WORD_RE = re.compile(r"\b[\w-]{3,}\b", re.UNICODE)
 _DEDUP_TOKEN_RE = re.compile(r"\b[\w-]+\b", re.UNICODE)
-_NUMERIC_OR_LEGAL_RE = re.compile(
-    r"\b\d{1,4}\s+(?:giorni|mesi|anni|days|months|years)\b"
-    r"|\b(?:euro|eur)\s*[\d.,]+"
-    r"|\b\d{1,3}\s*%"
-    r"|\bCIG\s*[:\-]?\s*[A-Z0-9]{8,12}\b"
-    r"|\b[0-9]{5,6}/20[0-9]{2}\b"
-    r"|\bart\.?\s*\d+[^\s,.;)]*(?:\s*c\.c\.)?",
-    re.IGNORECASE,
-)
-_BROAD_TENDER_QUERY_RE = re.compile(
-    r"\b(?:riassum\w*|sintetizza\w*|overview|panoramica|spiega\w*|"
-    r"descriv\w*|analizz\w*|dettagli?\b|elenco|lista)\b"
-    r".*\b(?:gara|bando|capitolato|disciplinare|procedura|lotto|tender|rfp|appalto)\b"
-    r"|\b(?:gara|bando|capitolato|disciplinare|procedura|lotto|tender|rfp|appalto)\b"
-    r".*\b(?:riassum\w*|sintetizza\w*|overview|panoramica|spiega\w*|"
-    r"descriv\w*|analizz\w*|dettagli?\b|elenco|lista)\b",
-    re.IGNORECASE,
-)
-_TENDER_OVERVIEW_TERMS = {
-    "acn",
-    "capitolato",
-    "cctt",
-    "cloud",
-    "contratto",
-    "durata",
-    "fornitore",
-    "fornitura",
-    "infrastruttura",
-    "oggetto",
-    "perimetro",
-    "qualificazione",
-    "requisiti",
-    "servizi",
-    "sistema",
-}
-_QUERY_STOPWORDS = {
-    "che",
-    "chi",
-    "cosa",
-    "come",
-    "con",
-    "dei",
-    "del",
-    "della",
-    "delle",
-    "dimmi",
-    "gara",
-    "gli",
-    "per",
-    "quale",
-    "quali",
-    "richiesta",
-    "sono",
-    "una",
-}
+
+# Locale-bound regex/lexicons compiled from the context-quality asset.
+_CONTEXT_QUALITY: ContextQuality = get_context_quality(default_language())
+_NUMERIC_OR_LEGAL_RE = _CONTEXT_QUALITY.numeric_or_legal
+_BROAD_TENDER_QUERY_RE = _CONTEXT_QUALITY.broad_tender_query
+_TENDER_OVERVIEW_TERMS = _CONTEXT_QUALITY.tender_overview_terms
+_QUERY_STOPWORDS = _CONTEXT_QUALITY.query_stopwords
 
 
 def normalize_context_text(text: str) -> str:

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from statistics import mean, pstdev
 from typing import Any
 
@@ -230,7 +230,7 @@ class TenderRehearsalService:
             return run
 
         run.status = RehearsalRunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
+        run.started_at = datetime.now(timezone.utc)
         run.error_message = None
         await db.commit()
 
@@ -274,7 +274,7 @@ class TenderRehearsalService:
             run.persona_divergence = persona_divergence
             run.health_projection = _map_score_to_health(overall_score)
             run.status = RehearsalRunStatus.COMPLETED
-            run.completed_at = datetime.now(UTC)
+            run.completed_at = datetime.now(timezone.utc)
             run.report_json = {
                 "overall_score": overall_score,
                 "health_projection": run.health_projection,
@@ -305,7 +305,7 @@ class TenderRehearsalService:
             )
             run.status = RehearsalRunStatus.FAILED
             run.error_message = str(exc)[:2000]
-            run.completed_at = datetime.now(UTC)
+            run.completed_at = datetime.now(timezone.utc)
             await db.commit()
             raise
 

@@ -16,55 +16,10 @@ from neo4j import AsyncGraphDatabase
 
 from app.config import settings
 from app.intelligence.ontology import TenderOntologyService
+from app.rag.internal_prompting import default_language
+from app.rag.localization import get_graph_retriever_messages
 
 logger = structlog.get_logger()
-
-GOLD_DOMAIN_TO_ONTOLOGY_DOMAINS = {
-    "AMMINISTRATIVO": {"amministrativo"},
-    "CERTIFICAZIONI": {"compliance"},
-    "CLAUSOLE_CONTRATTUALI": {"contrattuale"},
-    "ECONOMICO_FINANZIARIO": {"economico_finanziario"},
-    "ORGANIZZATIVO": {"organizzativo"},
-    "PENALITA": {"contrattuale"},
-    "SLA_PENALITA": {"tecnico", "contrattuale"},
-    "SUBAPPALTO_RTI": {"amministrativo"},
-    "TECNICO": {"tecnico"},
-}
-
-GRAPH_QUERY_STOPWORDS = {
-    "quali",
-    "quale",
-    "cosa",
-    "come",
-    "sono",
-    "deve",
-    "devono",
-    "fornitore",
-    "fornitura",
-    "gara",
-    "contratto",
-    "durante",
-    "entro",
-    "quanto",
-    "tempi",
-    "richieste",
-    "richiesta",
-    "obbligatorie",
-    "obbligatorio",
-    "previsto",
-    "prevista",
-    "accordo",
-    "quadro",
-}
-
-ONTOLOGY_DOMAIN_QUERY_TERMS = {
-    "amministrativo": ("procedura", "piattaforma", "subappalto", "rti", "consorzio"),
-    "compliance": ("certificazione", "certificazioni", "iso", "gdpr", "audit"),
-    "contrattuale": ("penali", "penale", "risoluzione", "recesso", "danni", "garanzie"),
-    "economico_finanziario": ("fatturato", "garanzia", "cauzione", "polizza", "corrispettivo"),
-    "organizzativo": ("personale", "risorse", "team", "profili", "responsabile"),
-    "tecnico": ("acn", "oscat", "sct", "sla", "integrazione", "infrastruttura", "servizi"),
-}
 
 GRAPH_QUERY_TOKEN_RE = re.compile(r"[\wÀ-ÿ/.-]+", re.UNICODE)
 
@@ -90,6 +45,7 @@ class GraphRetriever:
     def __init__(self):
         self._driver = None
         self._ontology_service = TenderOntologyService()
+        self._msgs = get_graph_retriever_messages(default_language())
 
     async def initialize(self):
         """Connect to Neo4j and ensure schema constraints."""
@@ -103,7 +59,7 @@ class GraphRetriever:
             result = await session.run("RETURN 1 AS ping")
             await result.single()
 
-        logger.info("Connected to Neo4j", uri=settings.neo4j_uri)
+        logger.info(self._msgs.graph_connected, uri=settings.neo4j_uri)
         await self._ensure_schema()
 
     async def _ensure_schema(self):
@@ -140,7 +96,7 @@ class GraphRetriever:
             for stmt in constraints + indexes:
                 await session.run(stmt)
 
-        logger.info("Neo4j schema constraints ensured")
+        logger.info(self._msgs.graph_schema_ensured)
 
     async def upsert_tender(self, tender: dict):
         """Create or update a Tender node in the knowledge graph."""
@@ -164,7 +120,7 @@ class GraphRetriever:
                 deadline=tender.get("deadline"),
             )
 
-        logger.info("Upserted tender in graph", tender_id=tender["id"])
+        logger.info(self._msgs.tender_upserted, tender_id=tender["id"])
 
     async def add_project(self, project: dict):
         """
@@ -199,7 +155,7 @@ class GraphRetriever:
             for cert_name in project["certifications"]:
                 await self._link_certification_to_project(project["id"], cert_name)
 
-        logger.info("Added project to graph", project_id=project["id"])
+        logger.info(self._msgs.project_added, project_id=project["id"])
 
     async def _link_team_member_to_project(self, project_id: str, member: dict):
         """Link a team member to a project with role information."""
@@ -214,7 +170,7 @@ class GraphRetriever:
                 query,
                 project_id=project_id,
                 member_id=member.get("id"),
-                role=member.get("role", "Team Member"),
+                role=member.get("role", self._msgs.default_role_team_member),
             )
 
     async def _link_certification_to_project(self, project_id: str, cert_name: str):
@@ -531,8 +487,9 @@ class GraphRetriever:
         tender_id_filter = self._extract_tender_id_filter(filters)
         ontology_domains = self._ontology_filter_domains(filters)
 
-        evidence_results = await self._search_evidence_chunks(query, top_k, filters)
-        results.extend(evidence_results)
+        if tender_id_filter is not None or ontology_domains:
+            evidence_results = await self._search_evidence_chunks(query, top_k, filters)
+            results.extend(evidence_results)
 
         if tender_id_filter is not None:
             tender_results = await self._search_tenders(query, top_k, filters)
@@ -544,14 +501,15 @@ class GraphRetriever:
             member_results = await self._search_team_members(query, top_k, filters)
             results.extend(member_results)
 
-        requirement_results = await self._search_requirements(query, top_k, filters)
-        results.extend(requirement_results)
+        if tender_id_filter is not None or ontology_domains:
+            requirement_results = await self._search_requirements(query, top_k, filters)
+            results.extend(requirement_results)
 
         # Sort by score and take top_k
         results.sort(key=lambda r: r.score, reverse=True)
         results = results[:top_k]
 
-        logger.debug("Graph search complete", query_len=len(query), results=len(results))
+        logger.debug(self._msgs.graph_search_complete, query_len=len(query), results=len(results))
         return results
 
     def _extract_tender_id_filter(self, filters: dict | None) -> str | None:
@@ -579,7 +537,7 @@ class GraphRetriever:
 
         cypher = """
         MATCH (c:EvidenceChunk)
-        WHERE any(kw IN $keywords WHERE
+        WHERE any(kw IN keywords WHERE
                toLower(coalesce(c.text, "")) CONTAINS kw
                OR toLower(coalesce(c.section_title, "")) CONTAINS kw)
           AND (
@@ -594,9 +552,11 @@ class GraphRetriever:
         async with self._driver.session() as session:
             cursor = await session.run(
                 cypher,
-                keywords=keywords,
-                limit=max(top_k * 3, top_k),
-                tender_id=tender_id_filter,
+                parameters_={
+                    "keywords": keywords,
+                    "limit": max(top_k * 3, top_k),
+                    "tender_id": tender_id_filter,
+                },
             )
             records = await cursor.data()
 
@@ -623,20 +583,9 @@ class GraphRetriever:
             if value in (None, ""):
                 continue
             text = str(value).strip()
-            domains.update(GOLD_DOMAIN_TO_ONTOLOGY_DOMAINS.get(text.upper(), set()))
+            domains.update(self._msgs.gold_domain_mapping.get(text.upper(), set()))
             normalized = text.casefold()
-            if normalized in {
-                "amministrativo",
-                "economico_finanziario",
-                "tecnico",
-                "premiale",
-                "compliance",
-                "contrattuale",
-                "sicurezza",
-                "organizzativo",
-                "documentale",
-                "altro",
-            }:
+            if normalized in self._msgs.allowed_ontology_domains:
                 domains.add(normalized)
         return domains
 
@@ -673,13 +622,13 @@ class GraphRetriever:
         keywords: list[str] = []
         for token in GRAPH_QUERY_TOKEN_RE.findall(str(query or "").casefold()):
             normalized = token.strip(".,;:!?()[]{}")
-            if len(normalized) <= 3 or normalized in GRAPH_QUERY_STOPWORDS:
+            if len(normalized) <= 3 or normalized in self._msgs.query_stopwords:
                 continue
             if normalized not in keywords:
                 keywords.append(normalized)
 
         for domain in sorted(ontology_domains):
-            for term in ONTOLOGY_DOMAIN_QUERY_TERMS.get(domain, ()):
+            for term in self._msgs.query_terms.get(domain, ()):
                 if term not in keywords:
                     keywords.append(term)
 
@@ -711,15 +660,17 @@ class GraphRetriever:
             score += 0.05
 
         text_parts = [
-            f"Requirement: {requirement.get('text', 'N/A')}",
-            f"Category: {requirement.get('category', 'N/A')}",
-            f"Priority: {requirement.get('priority', 'N/A')}",
-            f"Ontology: {ontology_domain}:{ontology_payload.get('ontology_subdomain')}",
+            f"{self._msgs.label_requirement}: {requirement.get('text', self._msgs.na)}",
+            f"{self._msgs.label_category}: {requirement.get('category', self._msgs.na)}",
+            f"{self._msgs.label_priority}: {requirement.get('priority', self._msgs.na)}",
         ]
+        onto = f"{ontology_domain}:{ontology_payload.get('ontology_subdomain')}"
+        text_parts.append(f"{self._msgs.label_ontology}: {onto}")
         if tender:
-            text_parts.append(f"Tender: {tender.get('title', tender.get('id', 'N/A'))}")
+            tender_label = tender.get('title', tender.get('id', self._msgs.unknown))
+            text_parts.append(f"{self._msgs.label_tender}: {tender_label}")
         if page_number:
-            text_parts.append(f"Page: {page_number}")
+            text_parts.append(f"{self._msgs.label_page}: {page_number}")
 
         metadata = {
             "source": "knowledge_graph",
@@ -804,25 +755,26 @@ class GraphRetriever:
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, tender_id=tender_id)
+            cursor = await session.run(cypher, parameters_={"tender_id": tender_id})
             records = await cursor.data()
 
             for record in records:
                 tender = record["t"]
                 requirements = record.get("requirements", [])
 
+                tender_title = tender.get('title', tender.get('id', self._msgs.unknown))
                 text_parts = [
-                    f"Tender: {tender.get('title', tender.get('id', 'Unknown'))}",
+                    f"{self._msgs.label_tender}: {tender_title}",
                 ]
 
                 if tender.get("client"):
-                    text_parts.append(f"Client: {tender.get('client')}")
+                    text_parts.append(f"{self._msgs.label_client}: {tender.get('client')}")
                 if tender.get("category"):
-                    text_parts.append(f"Category: {tender.get('category')}")
+                    text_parts.append(f"{self._msgs.label_category}: {tender.get('category')}")
                 if tender.get("status"):
-                    text_parts.append(f"Status: {tender.get('status')}")
+                    text_parts.append(f"{self._msgs.label_status}: {tender.get('status')}")
                 if tender.get("deadline"):
-                    text_parts.append(f"Deadline: {tender.get('deadline')}")
+                    text_parts.append(f"{self._msgs.label_deadline}: {tender.get('deadline')}")
 
                 requirement_summaries = [
                     str(requirement.get("text") or "").strip()
@@ -830,7 +782,8 @@ class GraphRetriever:
                     if requirement and str(requirement.get("text") or "").strip()
                 ]
                 if requirement_summaries:
-                    text_parts.append("Known requirements: " + "; ".join(requirement_summaries[:5]))
+                    known_reqs = "; ".join(requirement_summaries[:5])
+                    text_parts.append(f"{self._msgs.label_known_requirements}: {known_reqs}")
 
                 results.append(
                     GraphSearchResult(
@@ -858,13 +811,14 @@ class GraphRetriever:
         filters: dict | None,
     ) -> list[GraphSearchResult]:
         """Search for projects matching the query."""
-        keywords = [w.lower() for w in query.split() if len(w) > 3]
-        if not keywords:
-            keywords = [query.lower()]
-
         cypher = """
+        WITH [kw IN split(toLower($query), " ") WHERE size(kw) > 3] AS raw_keywords
+        WITH CASE
+            WHEN size(raw_keywords) = 0 THEN [toLower($query)]
+            ELSE raw_keywords
+        END AS keywords
         MATCH (p:Project)
-        WHERE any(kw IN $keywords WHERE
+        WHERE any(kw IN keywords WHERE
                toLower(p.name) CONTAINS kw
                OR toLower(p.description) CONTAINS kw
                OR toLower(p.category) CONTAINS kw)
@@ -875,12 +829,12 @@ class GraphRetriever:
         RETURN p, c, cat,
                collect(DISTINCT {name: t.name, role: r.role}) AS team,
                collect(DISTINCT cert.name) AS certifications
-        LIMIT $limit
+        LIMIT $top_k
         """
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
+            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
             records = await cursor.data()
 
             for record in records:
@@ -889,23 +843,26 @@ class GraphRetriever:
                 team = record.get("team", [])
                 certs = record.get("certifications", [])
 
-                # Build human-readable text from graph data
+                client_name = client.get('name', self._msgs.na) if client else self._msgs.na
                 text_parts = [
-                    f"Project: {project.get('name', 'Unknown')}",
-                    f"Description: {project.get('description', 'N/A')}",
-                    f"Category: {project.get('category', 'N/A')}",
-                    f"Client: {client.get('name', 'N/A') if client else 'N/A'}",
-                    f"Year: {project.get('year', 'N/A')}",
+                    f"Project: {project.get('name', self._msgs.unknown)}",
+                    f"{self._msgs.label_description}: {project.get('description', self._msgs.na)}",
+                    f"{self._msgs.label_category}: {project.get('category', self._msgs.na)}",
+                    f"{self._msgs.label_client}: {client_name}",
+                    f"{self._msgs.label_year}: {project.get('year', self._msgs.na)}",
                 ]
 
                 if team:
                     team_str = ", ".join(
-                        f"{m['name']} ({m.get('role', 'N/A')})" for m in team if m.get("name")
+                        f"{m['name']} ({m.get('role', self._msgs.na)})"
+                        for m in team
+                        if m.get("name")
                     )
-                    text_parts.append(f"Team: {team_str}")
+                    text_parts.append(f"{self._msgs.label_team}: {team_str}")
 
                 if certs:
-                    text_parts.append(f"Certifications: {', '.join(c for c in certs if c)}")
+                    certs_list = ", ".join(c for c in certs if c)
+                    text_parts.append(f"{self._msgs.label_certifications}: {certs_list}")
 
                 relationships = [
                     {"type": "FOR_CLIENT", "target": client.get("name") if client else None},
@@ -936,11 +893,12 @@ class GraphRetriever:
         filters: dict | None,
     ) -> list[GraphSearchResult]:
         """Search for team members matching the query."""
-        keywords = [w.lower() for w in query.split() if len(w) > 3]
-        if not keywords:
-            keywords = [query.lower()]
-
         cypher = """
+        WITH [kw IN split(toLower($query), " ") WHERE size(kw) > 3] AS raw_keywords
+        WITH CASE
+            WHEN size(raw_keywords) = 0 THEN [toLower($query)]
+            ELSE raw_keywords
+        END AS keywords
         MATCH (t:TeamMember)
         WHERE any(kw IN $keywords WHERE
                toLower(t.name) CONTAINS kw
@@ -951,12 +909,12 @@ class GraphRetriever:
         RETURN t,
                collect(DISTINCT cert.name) AS certifications,
                collect(DISTINCT {name: p.name, role: r.role}) AS projects
-        LIMIT $limit
+        LIMIT $top_k
         """
 
         results: list[GraphSearchResult] = []
         async with self._driver.session() as session:
-            cursor = await session.run(cypher, keywords=keywords, limit=top_k)
+            cursor = await session.run(cypher, parameters_={"query": query, "top_k": top_k})
             records = await cursor.data()
 
             for record in records:
@@ -965,19 +923,23 @@ class GraphRetriever:
                 projects = record.get("projects", [])
 
                 text_parts = [
-                    f"Team Member: {member.get('name', 'Unknown')}",
-                    f"Title: {member.get('title', 'N/A')}",
-                    f"Experience: {member.get('years_experience', 'N/A')} years",
+                    f"{self._msgs.label_team_member}: {member.get('name', self._msgs.unknown)}",
+                    f"{self._msgs.label_title}: {member.get('title', self._msgs.na)}",
                 ]
+                exp_val = member.get('years_experience', self._msgs.na)
+                text_parts.append(f"{self._msgs.label_experience}: {exp_val} years")
 
                 if certs:
-                    text_parts.append(f"Certifications: {', '.join(c for c in certs if c)}")
+                    certs_list = ", ".join(c for c in certs if c)
+                    text_parts.append(f"{self._msgs.label_certifications}: {certs_list}")
 
                 if projects:
                     proj_str = ", ".join(
-                        f"{p['name']} ({p.get('role', 'N/A')})" for p in projects if p.get("name")
+                        f"{p['name']} ({p.get('role', self._msgs.na)})"
+                        for p in projects
+                        if p.get("name")
                     )
-                    text_parts.append(f"Projects: {proj_str}")
+                    text_parts.append(f"{self._msgs.label_projects}: {proj_str}")
 
                 relationships = [
                     *[{"type": "HOLDS_CERT", "target": c} for c in certs if c],
@@ -1029,9 +991,11 @@ class GraphRetriever:
         async with self._driver.session() as session:
             cursor = await session.run(
                 cypher,
-                keywords=keywords,
-                limit=top_k,
-                tender_id=tender_id_filter,
+                parameters_={
+                    "keywords": keywords,
+                    "limit": top_k,
+                    "tender_id": tender_id_filter,
+                },
             )
             records = await cursor.data()
 

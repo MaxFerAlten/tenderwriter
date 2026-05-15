@@ -167,6 +167,10 @@ from app.rag.engine import HybridRAGEngine, QueryMode, RAGQuery
 
 
 class TenderOverviewLongFormTests(unittest.TestCase):
+    LONGFORM_QUERY = (
+        "descrivimi dettagliatamente ogni aspetto della gara della regione toscana in 1500 parole"
+    )
+
     def test_analyze_all_details_query_is_treated_as_detailed_tender_overview(self) -> None:
         engine = HybridRAGEngine()
         query = "analizza tutti i dettagli della gara toscana"
@@ -192,6 +196,66 @@ class TenderOverviewLongFormTests(unittest.TestCase):
         )
 
         self.assertEqual(max_tokens, 1024)
+
+    def test_longform_word_target_keeps_structured_tender_constraints(self) -> None:
+        engine = HybridRAGEngine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text=self.LONGFORM_QUERY,
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("1500 parole", constraints)
+        self.assertIn("Oggetto e perimetro", constraints)
+        self.assertIn("Architettura tecnologica", constraints)
+        self.assertIn("Fasi operative critiche", constraints)
+        self.assertIn("Punti di rischio contrattuale", constraints)
+        self.assertIn("Governance multi-soggetto", constraints)
+        self.assertIn("frammenti OCR", constraints)
+
+    def test_low_frontend_retrieval_top_k_does_not_disable_longform_overview_boost(
+        self,
+    ) -> None:
+        engine = HybridRAGEngine()
+
+        retrieval_top_k = engine._effective_retrieval_top_k(
+            RAGQuery(
+                text=self.LONGFORM_QUERY,
+                mode=QueryMode.QA,
+                retrieval_top_k=14,
+            )
+        )
+
+        self.assertEqual(retrieval_top_k, 30)
+
+    def test_longform_word_target_uses_narrative_synthesis_template(self) -> None:
+        engine = HybridRAGEngine()
+
+        template_name, variables = engine._resolve_template(
+            RAGQuery(
+                text=self.LONGFORM_QUERY,
+                mode=QueryMode.QA,
+            ),
+            context="FACT_SHEET_START\nprocedura: SCT\nFACT_SHEET_END",
+        )
+
+        self.assertEqual(template_name, "tender_longform_synthesis")
+        self.assertIn("Oggetto e perimetro", variables["response_constraints"])
+
+    def test_longform_constraints_consolidate_contractual_guarantees_once(self) -> None:
+        engine = HybridRAGEngine()
+
+        constraints = engine._build_response_constraints(
+            RAGQuery(
+                text=self.LONGFORM_QUERY,
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertIn("garanzie, cauzioni, penali", constraints)
+        self.assertIn("un'unica sezione contrattuale", constraints)
 
 
 if __name__ == "__main__":

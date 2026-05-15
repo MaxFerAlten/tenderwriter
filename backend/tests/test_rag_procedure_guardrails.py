@@ -198,6 +198,144 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
         assert sheet is not None
         self.assertEqual(sheet.amounts, ("€ 1.234,56",))
 
+    def test_fact_sheet_keeps_oscat_amounts_and_excludes_sct_millions(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "Sistema Cloud Toscana SCT con RTPC, CCTT e qualificazione ACN. "
+                        "Valore stimato dell'appalto pari a 150 milioni di euro."
+                    ),
+                    "metadata": {"chunk_index": 10},
+                },
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus. Procedura 012942/2025. "
+                        "L'importo a base di gara e pari a 5.999.723,60 euro. "
+                        "Il valore globale stimato comprensivo di opzioni e pari a "
+                        "11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                },
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        self.assertEqual(sheet.procedure_label, "OSCAT")
+        self.assertEqual(
+            sheet.amounts,
+            ("5.999.723,60 euro", "11.172.582,96 euro"),
+        )
+        self.assertNotIn("150 milioni di euro", sheet.amounts)
+
+    def test_oscat_answer_with_sct_million_amount_is_blocked(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus. Procedura 012942/2025. "
+                        "Importo a base di gara pari a 5.999.723,60 euro. "
+                        "Valore globale stimato pari a 11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        result = validate_guarded_answer(
+            answer="La gara OSCAT ha un valore finale pari a 150 milioni di euro.",
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("unverified_amount:150 milioni di euro", result.failures)
+
+    def test_repair_replaces_unverified_amount_with_verified_oscat_amounts(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus. Procedura 012942/2025. "
+                        "Importo a base di gara pari a 5.999.723,60 euro. "
+                        "Valore globale stimato pari a 11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "Il valore della gara OSCAT e pari a 150.000.000,00 euro.",
+            sheet,
+        )
+
+        self.assertNotIn("150.000.000,00", repaired)
+        self.assertNotIn("importo non verificato0.00", repaired)
+        # Single placeholder collapses to the closest verified amount, not the
+        # full cluster.
+        self.assertTrue(
+            "5.999.723,60 euro" in repaired or "11.172.582,96 euro" in repaired,
+            msg=f"expected at least one verified amount in {repaired!r}",
+        )
+
+    def test_false_missing_claim_for_verified_duration_and_amounts_is_blocked(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus. Procedura 012942/2025. "
+                        "Durata 48 mesi. Importo a base di gara pari a "
+                        "5.999.723,60 euro e valore globale stimato pari a "
+                        "11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        result = validate_guarded_answer(
+            answer=(
+                "Aspetti non coperti: non risultano disponibili durata "
+                "e importi della procedura OSCAT."
+            ),
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("false_missing_duration", result.failures)
+        self.assertIn("false_missing_amounts", result.failures)
+
+    def test_repair_replaces_false_missing_claim_with_verified_facts(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus. Procedura 012942/2025. "
+                        "Durata 48 mesi. Importo a base di gara pari a "
+                        "5.999.723,60 euro e valore globale stimato pari a "
+                        "11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "Aspetti non coperti: non risultano disponibili durata e importi.",
+            sheet,
+        )
+
+        self.assertNotIn("non risultano disponibili durata e importi", repaired)
+        self.assertIn("durata 48 mesi", repaired)
+        self.assertIn("5.999.723,60 euro", repaired)
+        self.assertIn("11.172.582,96 euro", repaired)
+
     def test_answer_with_unverified_number_is_blocked(self) -> None:
         sheet = build_fact_sheet(
             [{"text": "Gara OSCAT con CIG B123456789 e durata 48 mesi.", "metadata": {}}],
@@ -288,6 +426,587 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
 
         self.assertEqual(result.status, "PASS")
 
+    def test_money_regex_does_not_extract_substring_from_long_amount(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Valore globale stimato comprensivo di opzioni pari a "
+                        "11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 7},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        self.assertEqual(sheet.amounts, ("11.172.582,96 euro",))
+        self.assertNotIn("582,96 euro", sheet.amounts)
+
+    def test_month_regex_ignores_digit_or_slash_prefixed_substrings(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Durata 48 mesi prorogabile fino a 60 mesi. "
+                        "Riferimento opzione 48/12 mesi."
+                    ),
+                    "metadata": {"chunk_index": 7},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        self.assertIn("48 mesi", sheet.durations)
+        self.assertIn("60 mesi", sheet.durations)
+        self.assertNotIn("12 mesi", sheet.durations)
+
+    def test_classify_guardrail_failures_separates_critical_and_soft(self) -> None:
+        from app.rag.procedure_guardrails import classify_guardrail_failures
+
+        critical, soft = classify_guardrail_failures(
+            (
+                "unverified_amount:582,96 EUR",
+                "fact_sheet_conflict",
+                "false_missing_duration",
+                "cross_procedure_mixing",
+                "unverified_duration:12 mesi",
+            )
+        )
+
+        self.assertIn("fact_sheet_conflict", critical)
+        self.assertIn("cross_procedure_mixing", critical)
+        self.assertIn("unverified_amount:582,96 EUR", soft)
+        self.assertIn("false_missing_duration", soft)
+        self.assertIn("unverified_duration:12 mesi", soft)
+
+    def test_fact_sheet_missing_critical_slots_flags_incomplete_oscat(self) -> None:
+        from app.rag.procedure_guardrails import fact_sheet_missing_critical_slots
+
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Spese accessorie 582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 7},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        missing = fact_sheet_missing_critical_slots(sheet)
+
+        self.assertIn("duration", missing)
+        self.assertIn("major_amount", missing)
+        self.assertNotIn("procedure_id", missing)
+
+    def test_money_replacement_dedups_canonical_duplicates(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Valore globale 11.172.582,96 euro pari a "
+                        "€ 11.172.582,96 totali."
+                    ),
+                    "metadata": {"chunk_index": 7},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "Il valore della gara e di 999.999,99 euro.",
+            sheet,
+        )
+
+        self.assertNotIn("999.999,99", repaired)
+        self.assertEqual(repaired.count("11.172.582,96"), 1)
+
+    def test_money_replacement_picks_closest_verified_amount(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Importo a base di gara pari a 5.999.723,60 euro. "
+                        "Valore globale stimato pari a 11.172.582,96 euro. "
+                        "Proroga massima 1.573.025,20 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            (
+                "L'importo a base di gara e pari a 6.500.000,00 euro mentre "
+                "il valore globale stimato raggiunge 11.500.000,00 euro."
+            ),
+            sheet,
+        )
+
+        # Each placeholder amount is replaced with the closest verified value,
+        # not with a cluster of all amounts joined by " e ".
+        self.assertIn("5.999.723,60", repaired)
+        self.assertIn("11.172.582,96", repaired)
+        self.assertNotIn("5.999.723,60 euro, 11.172.582,96 euro e 1.573.025,20", repaired)
+        self.assertNotIn("6.500.000,00", repaired)
+        self.assertNotIn("11.500.000,00", repaired)
+
+    def test_repair_replaces_inline_unverified_procedure_id(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. CIG B33988ECF0."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            (
+                "La procedura identificata con il numero ID procedura non verificato "
+                "denominata OSCAT prevede CI/CD."
+            ),
+            sheet,
+        )
+
+        self.assertNotIn("ID procedura non verificato", repaired)
+        self.assertIn("ID procedura 012942/2025", repaired)
+
+    def test_repair_inline_unverified_procedure_id_no_op_on_conflict(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab. Procedura 012942/2025. CIG B11111111.",
+                    "metadata": {"chunk_index": 11},
+                },
+                {
+                    "text": "OSCAT usa GitLab. Procedura 999999/2024. CIG B22222222.",
+                    "metadata": {"chunk_index": 12},
+                },
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "La procedura riporta ID procedura non verificato.",
+            sheet,
+        )
+
+        # Two distinct procedure_ids: cannot safely pick one inline.
+        self.assertIn("ID procedura non verificato", repaired)
+
+    def test_filter_long_form_amounts_drops_sub_threshold_values(self) -> None:
+        from app.rag.procedure_guardrails import filter_long_form_amounts
+
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Spese accessorie 582,96 euro e tariffa 1.000,00 euro. "
+                        "Importo a base di gara 5.999.723,60 euro. "
+                        "Valore globale stimato 11.172.582,96 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        filtered = filter_long_form_amounts(sheet)
+
+        joined = ", ".join(filtered.amounts)
+        self.assertIn("5.999.723,60", joined)
+        self.assertIn("11.172.582,96", joined)
+        self.assertNotIn("582,96 euro", filtered.amounts)
+        self.assertNotIn("1.000,00 euro", filtered.amounts)
+
+    def test_filter_long_form_amounts_falls_back_when_all_below_threshold(self) -> None:
+        from app.rag.procedure_guardrails import filter_long_form_amounts
+
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Tariffa amministrativa 100,00 euro e marca da bollo 16,00 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        filtered = filter_long_form_amounts(sheet)
+
+        # No amount clears the threshold: leave the original list intact so we
+        # still surface what the corpus offers rather than wiping the field.
+        self.assertEqual(filtered.amounts, sheet.amounts)
+
+    def test_semantic_duplicate_garanzie_paragraphs_are_collapsed(self) -> None:
+        from app.rag.procedure_guardrails import _drop_semantically_duplicate_paragraphs
+
+        answer = (
+            "**Garanzie e Svincoli** Il regime delle garanzie prevede che la "
+            "garanzia definitiva sia svincolata solo al termine di ogni rapporto. "
+            "Il garante puo essere liberato dal vincolo solo con consenso "
+            "scritto. La stazione appaltante puo procedere all'escussione.\n\n"
+            "**Garanzie e Responsabilita Contrattuali** La disciplina "
+            "contrattuale prevede una garanzia definitiva che verra svincolata "
+            "al termine di ogni rapporto. Il garante puo essere liberato solo "
+            "tramite consenso espresso. L'escussione e prevista in caso di "
+            "inadempimento e la cauzione resta vincolata fino allo svincolo "
+            "completo della fideiussoria.\n\n"
+            "**Sezione neutra** Questa sezione descrive aspetti tecnici "
+            "neutri e non ha nulla a che vedere con le garanzie."
+        )
+
+        deduped = _drop_semantically_duplicate_paragraphs(answer)
+
+        self.assertEqual(deduped.count("Garanzie"), 1)
+        self.assertIn("Sezione neutra", deduped)
+        self.assertIn("fideiussoria", deduped)
+
+    def test_oscat_sct_contamination_regex_catches_extended_keywords(self) -> None:
+        from app.rag.engine import OSCAT_SCT_CONTAMINATION_RE
+
+        positives = [
+            "Adeguamento data center TIX-SCT alla determina ACN n. 21",
+            "Istituzione del CSIRT Regionale",
+            "Settore Sanita Digitale e Innovazione",
+            "PNRR Missione 1 Componente 1",
+            "Coordinamento con ESTAR",
+        ]
+        for text in positives:
+            self.assertIsNotNone(
+                OSCAT_SCT_CONTAMINATION_RE.search(text),
+                msg=f"contamination regex missed: {text!r}",
+            )
+
+        self.assertIsNone(
+            OSCAT_SCT_CONTAMINATION_RE.search(
+                "OSCAT usa GitLab, Sonar, Nexus per CI/CD."
+            )
+        )
+
+    def test_longform_template_forbids_civil_code_article_hallucination(self) -> None:
+        from app.rag.generator import PROMPT_TEMPLATES
+
+        template = PROMPT_TEMPLATES["tender_longform_synthesis"]
+
+        self.assertIn("articoli del codice civile", template)
+        self.assertIn("citazione esatta non compare nelle fonti", template)
+
+    def test_repair_strips_malformed_civil_code_article_references(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab. Procedura 012942/2025.",
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        answer = (
+            "Risoluzione espressa ai sensi dell'art. 14C56 del codice civile "
+            "oppure secondo l'articolo 14456 c.c.; resta valido l'art. 1456 "
+            "del codice civile come riferimento corretto."
+        )
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertNotIn("14C56", repaired)
+        self.assertNotIn("14456", repaired)
+        self.assertIn("articolo non verificato", repaired)
+        # Real civil code article numbers (≤4 digits, no embedded letters) are
+        # preserved.
+        self.assertIn("art. 1456", repaired)
+
+    def test_repair_collapses_unverified_duration_range(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Durata principale 48 mesi."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "La durata complessiva del rapporto contrattuale puo variare tra i 12 e i 60 mesi.",
+            sheet,
+        )
+
+        self.assertNotIn("tra i 12 e i 60 mesi", repaired)
+        self.assertNotIn("tra 12 e 60 mesi", repaired)
+        self.assertIn("durata non verificata", repaired)
+
+    def test_repair_keeps_duration_range_when_both_endpoints_verified(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Fase transitoria 12 mesi e opzioni 60 mesi."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "La durata varia tra 12 e 60 mesi a seconda delle opzioni.",
+            sheet,
+        )
+
+        self.assertIn("tra 12 e 60 mesi", repaired)
+
+    def test_dedup_repeated_money_clusters(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Importo a base di gara 5.999.723,60 euro. "
+                        "Valore globale stimato 11.172.582,96 euro. "
+                        "Proroga massima 1.573.025,20 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+        answer = (
+            "La fact sheet riporta valori di € 5.999.723,60, € 1.573.025,20 e "
+            "Euro 1.000,00 ricorrenti, € 5.999.723,60, € 1.573.025,20 e Euro "
+            "1.000,00 di nuovo, mentre € 5.999.723,60, € 1.573.025,20 e Euro "
+            "1.000,00 chiudono la sezione."
+        )
+
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertLessEqual(repaired.count("5.999.723,60"), 2)
+
+    def test_repair_strips_corrupt_money_artifacts(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Importo a base di gara 5.999.723,60 euro. "
+                        "Proroga massima 1.573.025,20 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+        answer = (
+            "Quota indicata di € 1.573.025,20.0//25,20 oppure "
+            "€ 1.573.025,20.0_25,20 nelle altre tabelle."
+        )
+
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertNotIn("//", repaired)
+        self.assertNotIn("_25,20", repaired)
+        self.assertNotIn("1.573.025,20.0", repaired)
+
+    def test_repair_normalizes_civil_article_thousand_separator(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab. Procedura 012942/2025.",
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "Risoluzione espressa ai sensi dell'art. 1.456 del codice civile.",
+            sheet,
+        )
+
+        self.assertNotIn("art. 1.456", repaired)
+        self.assertIn("art. 1456", repaired)
+
+    def test_repair_money_range_narrative_when_distinct_amounts(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Importo a base di gara 5.999.723,60 euro. "
+                        "Proroga massima 1.573.025,20 euro."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+        answer = (
+            "L'importo complessivo associato alla procedura oscilla tra "
+            "€ 1.573.025,20 e € 5.999.723,60 a seconda dell'opzione."
+        )
+
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertNotIn("oscilla tra", repaired.lower())
+        self.assertIn("valori distinti", repaired.lower())
+        self.assertIn("1.573.025,20", repaired)
+        self.assertIn("5.999.723,60", repaired)
+
+    def test_false_missing_locations_is_detected(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab. Procedura 012942/2025. "
+                        "Il luogo di svolgimento del servizio e' la "
+                        "Regione Toscana."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        result = validate_guarded_answer(
+            answer=(
+                "Aspetti non coperti: non sono disponibili dettagli sui luoghi "
+                "di esecuzione del servizio."
+            ),
+            fact_sheet=sheet,
+            guarded=True,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("false_missing_locations", result.failures)
+
+    def test_repair_replaces_inline_unverified_cig_with_single_verified(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab, Sonar e Nexus per pipeline CI/CD. "
+                        "Capitolato richiama gara collegata con CIG B33988ECF0. "
+                        "Procedura 012942/2025."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "La procedura collegata e identificata dal CIG non verificato.",
+            sheet,
+        )
+
+        self.assertNotIn("CIG non verificato", repaired)
+        self.assertIn("CIG B33988ECF0", repaired)
+
+    def test_repair_inline_unverified_cig_no_op_on_conflict(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": (
+                        "OSCAT usa GitLab e Sonar. CIG B33988ECF0. Procedura 012942/2025."
+                    ),
+                    "metadata": {"chunk_index": 11},
+                },
+                {
+                    "text": (
+                        "OSCAT usa Nexus e DevSecOps. CIG B99999999. Procedura 012942/2025."
+                    ),
+                    "metadata": {"chunk_index": 12},
+                },
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        repaired = repair_unsupported_protected_facts(
+            "Il CIG non verificato della procedura collegata.",
+            sheet,
+        )
+
+        self.assertIn("CIG non verificato", repaired)
+
+    def test_repair_strips_contamination_sentences(self) -> None:
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab. Procedura 012942/2025.",
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        answer = (
+            "OSCAT prevede pipeline CI/CD su GitLab e vulnerability assessment "
+            "del codice sorgente. L'adeguamento del data center TIX-SCT alla "
+            "determina ACN n. 21 nell'ambito del PNRR Missione 1 prevede "
+            "istituzione del CSIRT Regionale ed ESTAR. La procedura 012942/2025 "
+            "e gestita dal Soggetto Aggregatore."
+        )
+
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertIn("GitLab", repaired)
+        self.assertIn("Soggetto Aggregatore", repaired)
+        self.assertNotIn("CSIRT Regionale", repaired)
+        self.assertNotIn("PNRR Missione 1", repaired)
+        self.assertNotIn("data center TIX-SCT", repaired)
+
+    def test_oscat_contamination_dominance_filter_excludes_non_oscat_chunks(self) -> None:
+        from app.rag.engine import HybridRAGEngine
+
+        engine = HybridRAGEngine()
+        rag_query = RAGQuery(
+            text="descrivimi la gara OSCAT in 1500 parole",
+            mode=QueryMode.QA,
+        )
+        contaminated_item = {
+            "text": (
+                "Adeguamento del data center TIX-SCT alla determina ACN n. 21 "
+                "nell'ambito del PNRR Missione 1, con istituzione del CSIRT "
+                "Regionale e coordinamento ESTAR per gli impianti industriali."
+            ),
+            "metadata": {"chunk_index": 17},
+        }
+        oscat_item = {
+            "text": (
+                "OSCAT usa GitLab, Sonar, Nexus per pipeline CI/CD e "
+                "vulnerability assessment del codice sorgente."
+            ),
+            "metadata": {"chunk_index": 18},
+        }
+
+        self.assertTrue(
+            engine._should_exclude_longform_context_item(contaminated_item, rag_query)
+        )
+        self.assertFalse(
+            engine._should_exclude_longform_context_item(oscat_item, rag_query)
+        )
+
 
 class RagGuardrailConfigTests(unittest.TestCase):
     def test_default_config_blocks_only_tender_overviews(self) -> None:
@@ -309,13 +1028,27 @@ class RagEngineGuardrailContextTests(unittest.IsolatedAsyncioTestCase):
 
         template_name, variables = engine._resolve_template(
             RAGQuery(
-                text="descrivimi la gara OSCAT evidenzia punti critici in 1000 parole",
+                text="descrivimi la gara OSCAT evidenzia punti critici",
                 mode=QueryMode.QA,
             ),
             context="FACT_SHEET_START\nprocedura: OSCAT\nFACT_SHEET_END",
         )
 
         self.assertEqual(template_name, "tender_overview")
+        self.assertIn("punti critici", variables["query"])
+
+    async def test_longform_tender_query_uses_narrative_synthesis_template(self) -> None:
+        engine = HybridRAGEngine()
+
+        template_name, variables = engine._resolve_template(
+            RAGQuery(
+                text="descrivimi la gara OSCAT evidenzia punti critici in 1000 parole",
+                mode=QueryMode.QA,
+            ),
+            context="FACT_SHEET_START\nprocedura: OSCAT\nFACT_SHEET_END",
+        )
+
+        self.assertEqual(template_name, "tender_longform_synthesis")
         self.assertIn("punti critici", variables["query"])
 
     async def test_retrieved_context_contains_fact_sheet_for_tender_overview(self) -> None:
@@ -740,8 +1473,68 @@ class RagEngineGuardrailValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("entro giorni", guarded)
         self.assertNotIn("CIG:", guarded)
         self.assertIn("termine non verificato", guarded)
-        self.assertIn("CIG non verificato", guarded)
+        # The CIG placeholder is hydrated from the single verified CIG in the
+        # fact sheet, not left as "non verificato".
+        self.assertIn("CIG B33988ECF0", guarded)
         self.assertIn("GitLab", guarded)
+
+    def test_guardrail_regression_oscat_polluted_fact_sheet_preserves_narrative(self) -> None:
+        engine = HybridRAGEngine()
+        context = (
+            "FACT_SHEET_START\n"
+            "procedura: OSCAT\n"
+            "stato_verifica: verificato\n"
+            "procedure_id: 012942/2025\n"
+            "cig: CIG B33988ECF0\n"
+            "giorni_critici: non_rilevato\n"
+            "durata: 12 mesi, 60 mesi\n"
+            "importi: 582,96 EUR, € 5.999.723,60, € 1.573.025,20, Euro 1.000,00\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:1, chunk:2\n"
+            "conflitti: nessuno\n"
+            "FACT_SHEET_END\n"
+            "SOURCE_START id=1 page=1 procedure=OSCAT\n"
+            "OSCAT riguarda GitLab, Sonar, Nexus e Vulnerability Assessment.\n"
+            "SOURCE_END"
+        )
+        answer = (
+            "La gara OSCAT 012942/2025 ha durata pari a 48 mesi e un valore "
+            "globale stimato di 11.172.582,96 EUR. Il perimetro tecnico "
+            "comprende GitLab, Sonar, Nexus e attivita di Vulnerability "
+            "Assessment per il presidio DevSecOps."
+        )
+
+        guarded = engine._apply_generation_guardrails(
+            RAGQuery(
+                text="descrivimi la gara OSCAT in 1500 parole",
+                mode=QueryMode.QA,
+            ),
+            context=context,
+            answer=answer,
+        )
+
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, guarded)
+        self.assertNotIn("Risposta generata scartata", guarded)
+        self.assertIn("GitLab", guarded)
+        self.assertIn("Vulnerability Assessment", guarded)
+        self.assertIn("OSCAT 012942/2025", guarded)
+        self.assertNotIn("11.172.582,96", guarded)
+        self.assertNotIn("48 mesi", guarded)
+
+    def test_guardrail_soft_warning_footer_appended_when_only_soft_failures(self) -> None:
+        engine = HybridRAGEngine()
+        warning_marker = "Nota:"
+
+        cleaned = engine._append_guardrail_soft_warning("La gara OSCAT include GitLab.")
+        self.assertIn(warning_marker, cleaned)
+        self.assertIn("GitLab", cleaned)
+
+        repeated = engine._append_guardrail_soft_warning(cleaned)
+        self.assertEqual(repeated.count(warning_marker), 1)
+
+        empty = engine._append_guardrail_soft_warning("")
+        self.assertIn(warning_marker, empty)
 
     async def test_query_repairs_answer_with_unverified_number_after_generation(self) -> None:
         engine = HybridRAGEngine()
@@ -926,7 +1719,7 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("RTPC", response.answer)
         self.assertNotIn("qualificazione ACN", response.answer)
 
-    async def test_severe_duplicate_paragraph_is_blocked(self) -> None:
+    async def test_severe_duplicate_paragraph_is_collapsed_by_repair(self) -> None:
         context = (
             "FACT_SHEET_START\n"
             "procedura: OSCAT\n"
@@ -945,8 +1738,8 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
             "OSCAT usa GitLab. CIG B123456789. Durata 48 mesi.\n"
             "SOURCE_END"
         )
-        # ≥80 chars per block, two identical blocks → triggers
-        # ``_duplicate_paragraph_failures``.
+        # ≥80 chars per block, two identical blocks. The semantic dedup repair
+        # collapses them rather than blocking the entire answer.
         repeated_block = (
             "La gara OSCAT è strutturata su servizi DevSecOps con CIG "
             "B123456789 e durata complessiva di 48 mesi."
@@ -961,8 +1754,8 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
                 mode=QueryMode.QA,
             )
         )
-        self.assertIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
-        self.assertIn("Fatti verificati disponibili", response.answer)
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
+        self.assertEqual(response.answer.count("DevSecOps"), 1)
         self.assertIn("CIG B123456789", response.answer)
 
     async def test_blocked_fallback_masks_procedure_id_conflict(self) -> None:
@@ -1014,6 +1807,48 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
         self.assertIn("CIG B123456789", response.answer)
         self.assertIn("48 mesi", response.answer)
+
+    async def test_false_missing_final_note_is_repaired_with_verified_values(self) -> None:
+        context = (
+            "FACT_SHEET_START\n"
+            "procedura: OSCAT\n"
+            "stato_verifica: verificato\n"
+            "procedure_id: 012942/2025\n"
+            "cig: CIG B123456789\n"
+            "giorni_critici: non_rilevato\n"
+            "durata: 48 mesi\n"
+            "importi: 5.999.723,60 euro, 11.172.582,96 euro\n"
+            "sedi_luoghi: non_rilevato\n"
+            "percentuali: non_rilevato\n"
+            "fonti: chunk:1\n"
+            "conflitti: nessuno\n"
+            "FACT_SHEET_END\n"
+            "SOURCE_START id=1 page=1 procedure=OSCAT\n"
+            "OSCAT usa GitLab. Procedura 012942/2025. CIG B123456789. "
+            "Durata 48 mesi. Importo a base di gara pari a 5.999.723,60 euro. "
+            "Valore globale stimato pari a 11.172.582,96 euro.\n"
+            "SOURCE_END"
+        )
+        engine = self._stub_pipeline(
+            context=context,
+            generated=(
+                "La gara OSCAT riguarda servizi DevSecOps. Aspetti non coperti: "
+                "non risultano disponibili durata e importi."
+            ),
+        )
+
+        response = await engine.query(
+            RAGQuery(
+                text="descrivimi dettagliatamente ogni aspetto della gara OSCAT in 1500 parole",
+                mode=QueryMode.QA,
+            )
+        )
+
+        self.assertNotIn(BLOCKED_OUTPUT_MESSAGE, response.answer)
+        self.assertNotIn("non risultano disponibili durata e importi", response.answer)
+        self.assertIn("durata 48 mesi", response.answer)
+        self.assertIn("5.999.723,60 euro", response.answer)
+        self.assertIn("11.172.582,96 euro", response.answer)
 
 
 class RagGuardrailObservabilityTests(unittest.TestCase):
@@ -1141,7 +1976,9 @@ class RagGuardrailBranchCoverageTests(unittest.TestCase):
 
         self.assertEqual(result.status, "BLOCK")
         self.assertIn("masked_cig_value", result.failures)
-        self.assertEqual(repaired, "Fatti verificati: CIG non verificato.")
+        # Repair strips the wrong raw CIG and restores the single verified CIG
+        # from the fact sheet via the inline-CIG rewriter.
+        self.assertEqual(repaired, "Fatti verificati: CIG B33988ECF0.")
         self.assertEqual(repaired_result.status, "PASS")
 
     def test_short_procedure_id_year_is_blocked_and_repaired(self) -> None:

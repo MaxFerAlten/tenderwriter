@@ -6,7 +6,7 @@ Background tasks for long-running operations.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from html import escape
 
 from sqlalchemy import delete, select
@@ -576,7 +576,7 @@ def cleanup_expired_otp():
             from app.models import OTPToken
 
             result = await session.execute(
-                delete(OTPToken).where(OTPToken.expires_at < datetime.now(UTC))
+                delete(OTPToken).where(OTPToken.expires_at < datetime.now(timezone.utc))
             )
             await session.commit()
 
@@ -591,7 +591,7 @@ def cleanup_expired_otp():
 @celery_app.task
 def health_check():
     """Simple health check task."""
-    return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @celery_app.task(bind=True, max_retries=0)

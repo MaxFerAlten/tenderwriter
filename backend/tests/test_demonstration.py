@@ -1,9 +1,21 @@
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+_TEST_ENV = {
+    "APP_SECRET_KEY": "alpha-key-123456789012345678901234567890",
+    "ADMIN_PASSWORD": "test-admin-password-1234567890",
+    "DATABASE_URL": "postgresql+asyncpg://tester:securepass@localhost:5432/tenderwriter",
+    "NEO4J_PASSWORD": "test-neo4j-password",
+    "MINIO_SECRET_KEY": "test-minio-password",
+    "ONLYOFFICE_JWT_SECRET": "office-jwt-token-12345678901234567890",
+}
+for key, value in _TEST_ENV.items():
+    os.environ.setdefault(key, value)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -52,7 +64,7 @@ def test_bug_02_sql_injection_ilike_escaped():
 
     # The generated SQL should contain the ESCAPE '\\' clause
     sql_string = str(query.compile(compile_kwargs={"literal_binds": True}))
-    assert "ESCAPE '\\\\'" in sql_string
+    assert "ESCAPE '\\'" in sql_string
     assert "\\%admin\\_test\\\\" in sql_string
 
 

@@ -372,6 +372,13 @@ def load_service_test_module(module_name: str):
         return cached
 
     load_models_test_module()
+    for dependency_name in ("pydantic", "pydantic_settings"):
+        dependency = sys.modules.get(dependency_name)
+        if dependency is not None and not getattr(dependency, "__file__", None):
+            sys.modules.pop(dependency_name, None)
+    existing = sys.modules.get(module_name)
+    if existing is not None and not getattr(existing, "__file__", None):
+        sys.modules.pop(module_name, None)
     with patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=Mock(name="engine")):
         module = import_module(module_name)
     _SERVICE_MODULES[module_name] = module

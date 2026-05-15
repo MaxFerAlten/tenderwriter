@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import traceback
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -1135,7 +1135,7 @@ async def update_tender(
             event_type="tender_outcome_recorded",
             event_payload=build_tender_outcome_recorded_event_payload(
                 outcome=tender.status.value,
-                recorded_at=datetime.now(UTC),
+                recorded_at=datetime.now(timezone.utc),
             ),
         )
     else:
@@ -1501,7 +1501,7 @@ _ALLOWED_OUTCOMES = {"won", "lost", "excluded", "withdrawn", "stopped", "cancell
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
-    return value or datetime.now(UTC)
+    return value or datetime.now(timezone.utc)
 
 
 def _clone_tender_metadata(tender: Tender) -> dict:

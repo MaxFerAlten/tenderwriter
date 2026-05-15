@@ -6,7 +6,7 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -184,7 +184,7 @@ async def sync_tender_requirements_to_graph(
             tender_id=tender_id,
             requirement_id=requirement_id,
             event_type="requirements_extracted",
-            occurred_at=datetime.now(UTC),
+            occurred_at=datetime.now(timezone.utc),
             external_event_id=f"extract-t{tender_id}-r{requirement_id}",
             payload={"category": str(getattr(requirement, "category", None) or "general")},
         )

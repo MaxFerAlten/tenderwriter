@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import (
@@ -384,7 +384,7 @@ async def send_chat_message(
         db, tender_id=tender_id, actor_id=current_user.id
     )
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     preview = text[:280]
 
     message = ChatMessage(
@@ -463,7 +463,7 @@ async def upload_chat_attachment(
         db, tender_id=tender_id, actor_id=current_user.id
     )
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     safe_filename = sanitize_attachment_filename(file.filename)
     caption = (text or "").strip()
     preview_text = caption if caption else f"[file] {safe_filename}"
@@ -671,7 +671,7 @@ async def get_chat_retrospective(
     )
     events = list(reversed(events_result.scalars().all()))
 
-    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
     timeline: list[ChatRetrospectiveTimelineItem] = []
 
     for message in messages:
@@ -718,7 +718,7 @@ async def get_chat_retrospective(
         event_count=event_count,
         first_message_at=first_message_at,
         last_message_at=last_message_at,
-        generated_at=datetime.now(UTC),
+        generated_at=datetime.now(timezone.utc),
         timeline=timeline,
     )
 
@@ -769,7 +769,7 @@ async def export_chat_retrospective(
     events = events_result.scalars().all()
 
     payload = {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "tender_id": tender_id,
         "room": {
             "id": room.id,
@@ -844,7 +844,7 @@ async def export_chat_retrospective(
 
     raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     filename = f"tender_{tender_id}_chat_retrospective_{now:%Y%m%d_%H%M%S}.json"
     content_disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
 

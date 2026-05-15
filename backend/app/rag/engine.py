@@ -13,7 +13,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from enum import Enum
 from typing import Any
@@ -29,15 +29,33 @@ from app.rag.embedder import Embedder, get_embedder
 from app.rag.fusion import RankFusion
 from app.rag.generator import GenerationResult, Generator
 from app.rag.graph_retriever import GraphRetriever
-from app.rag.internal_prompting import load_retrieval_query_variants
-from app.rag.planningcoverage import run_planning_coverage
+from app.rag.internal_prompting import (
+    default_language,
+    load_retrieval_query_variants,
+)
+from app.rag.localization import (
+    get_engine_cleanup_patterns,
+    get_engine_language_markers,
+    get_engine_messages,
+    get_engine_response_constraints,
+    get_guardrail_messages,
+    get_intent_regexes,
+    get_prompt_leakage_regexes,
+    get_prompt_template_text,
+)
+from app.rag.planningcoverage import normalize_planning_coverage_config, run_planning_coverage
 from app.rag.procedure_guardrails import (
     BLOCKED_OUTPUT_MESSAGE,
+    OSCAT_IDENTITY_KEYWORD_RE,
+    OSCAT_SCT_CONTAMINATION_RE,
     PROCEDURE_ANCHORS,
     FactSheet,
     build_fact_sheet,
     classify_chunk_procedure,
+    classify_guardrail_failures,
     fact_sheet_from_guarded_context,
+    fact_sheet_missing_critical_slots,
+    filter_long_form_amounts,
     guardrail_issue_snippets,
     normalize_guardrail_config,
     repair_unsupported_protected_facts,
@@ -49,245 +67,40 @@ from app.rag.sparse_retriever import SparseRetriever
 
 logger = structlog.get_logger()
 
-WORD_COUNT_REQUEST_RE = re.compile(
-    r"\b(\d{2,5})\s+(?:parole|words|palabras)\b",
-    re.IGNORECASE,
-)
-LINE_COUNT_REQUEST_RE = re.compile(
-    r"\b(\d{2,5})\s+(?:righe|lines|lineas)\b",
-    re.IGNORECASE,
-)
+_INTENT_REGEXES = get_intent_regexes(default_language())
+
+WORD_COUNT_REQUEST_RE = _INTENT_REGEXES.word_count_request
+LINE_COUNT_REQUEST_RE = _INTENT_REGEXES.line_count_request
 WORD_RE = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
-CONTINUATION_HEADING_RE = re.compile(
-    r"^\s*(?:#{1,6}\s*)?(?:continuazione|continuation|proseguimento)\b.*$",
-    re.IGNORECASE,
-)
-PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = r"(?:draft ending|(?:task|compito)(?=\s*:|$)|retrieved context|user question|response constraints|istruzioni importanti|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?)"
-PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN = r"(?:own answer|your answer)"
-PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = r"(?:answer(?:\s*\([^)]*\))?|own answer|your answer)"
-PROMPT_LEAKAGE_LOOP_RE = re.compile(
-    r"^\s*(?:(?:[A-Za-z]\s+)?(?:own answer|your answer|answer|user question|retrieved context|response constraints|draft ending|task|compito)\s*){3,}\s*$",
-    re.IGNORECASE,
-)
-PROMPT_OWN_TOKEN_LOOP_RE = re.compile(
-    r"^\s*(?:s\s+)?(?:own\s*){3,}\s*$",
-    re.IGNORECASE,
-)
-PROMPT_OWN_TOKEN_PREFIX_RE = re.compile(
-    r"^\s*(?:s\s+)?(?:own\s*){3,}",
-    re.IGNORECASE,
-)
-PROMPT_LEAKAGE_SUFFIX_RE = re.compile(
-    r"\s+(?:(?:[A-Za-z]{1,3}\s+)?(?:own answer|your answer|answer|user question|retrieved context|response constraints|draft ending|task|compito)\s*){3,}$",
-    re.IGNORECASE,
-)
+CONTINUATION_HEADING_RE = _INTENT_REGEXES.continuation_heading
+_LEAK_REGEXES = get_prompt_leakage_regexes(default_language())
+
+PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN = _LEAK_REGEXES.plain_label_pattern
+PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN = _LEAK_REGEXES.plain_answer_label_pattern
+PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN = _LEAK_REGEXES.heading_only_label_pattern
+PROMPT_LEAKAGE_LOOP_RE = _LEAK_REGEXES.loop
+PROMPT_OWN_TOKEN_LOOP_RE = _LEAK_REGEXES.own_token_loop
+PROMPT_OWN_TOKEN_PREFIX_RE = _LEAK_REGEXES.own_token_prefix
+PROMPT_LEAKAGE_SUFFIX_RE = _LEAK_REGEXES.suffix
 DANGLING_CLOSING_BRACE_SUFFIX_RE = re.compile(r"(?<=\w)\s*[}\])]{1,}\s*$")
 BRACE_ONLY_LINE_RE = re.compile(r"^\s*[}\])]+\s*$")
-LIKELY_USER_QUERY_START_RE = re.compile(
-    r"^(?:fai\b|fammi\b|dammi\b|dimmi\b|spiega\b|descrivi\b|analizza\b|riassumi\b|elenca\b|fornisci\b|scrivi\b|prepara\b|genera\b|trova\b|cerca\b|indica\b|mostra\b|confronta\b|valuta\b)",
-    re.IGNORECASE,
-)
-PROMPT_LEAKAGE_HEADING_RE = re.compile(
-    rf"^\s*(?:(?:#{{1,6}}\s*)(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_HEADING_ONLY_LABEL_PATTERN})(?:\s|:|$)|(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|{PROMPT_LEAKAGE_PLAIN_ANSWER_LABEL_PATTERN})(?:\s|:|$)).*$",
-    re.IGNORECASE,
-)
-PROMPT_LEAKAGE_INLINE_RE = re.compile(
-    rf"\s+(?:#{{1,6}}\s*(?:{PROMPT_LEAKAGE_PLAIN_LABEL_PATTERN}|own answer|your answer|(?<!own )(?<!your )answer(?:\s*\([^)]*\))?)(?:\s|:|$)|(?:compito|task|domanda utente|contesto recuperato|parte finale gia scritta(?:\s*\([^)]*\))?|retrieved context|user question|response constraints|istruzioni importanti)\s*:).*$",
-    re.IGNORECASE,
-)
-PROMPT_LEAKAGE_INSTRUCTION_RES = (
-    re.compile(
-        r"^scrivi solo il seguito naturale della risposta, iniziando direttamente dal contenuto mancante\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^continua solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto\. inizia direttamente con il testo mancante\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^provide a helpful, accurate answer based on the available context\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^respond in the same language as the user(?:'s)? question\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^always respond in the same language as the user(?:'s)? question\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^use only the retrieved context\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^output only the answer text, no labels, no meta-commentary\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^if the context doesn't contain enough information, say so clearly\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^ricorda: rispondi nella stessa lingua della domanda sopra!?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^inizia direttamente con la risposta finale, senza copiare intestazioni o sezioni del prompt\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^ora continua direttamente dal punto in cui la risposta si e interrotta\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^ora completa solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^inizia direttamente con il testo mancante\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- devi rispondere nella stessa lingua della domanda dell'utente\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- stai continuando una risposta gia iniziata\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- devi completare solo la frase o il concetto finale rimasto interrotto\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- non ricominciare dall'inizio\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- non ripetere (?:sezioni o frasi gia scritte|il testo gia scritto)\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- non commentare il numero di parole\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r'^- non scrivere titoli o frasi come "continuazione della risposta"\.?$',
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- non citare o copiare etichette interne del prompt\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- aggiungi solo contenuto nuovo, sostanziale e coerente con quanto gia scritto\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- non iniziare un nuovo paragrafo, una nuova sezione o un nuovo argomento\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- scrivi al massimo 60 parole\.?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^- chiudi con una frase completa e coerente\.?$",
-        re.IGNORECASE,
-    ),
-)
-EXPANDED_EXPLANATION_QUERY_RE = re.compile(
-    r"\b(?:riassum\w*|spiega\w*|descriv\w*|sintetizza\w*|summari[sz]\w*|explain\w*|describe\w*|analizz\w*|approfond\w*)\b",
-    re.IGNORECASE,
-)
-SUMMARY_INTENT_QUERY_RE = re.compile(
-    r"\b(?:riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|analizz\w*|approfond\w*|esaustiv\w*|dettagli?\b)\b",
-    re.IGNORECASE,
-)
-STRUCTURED_OVERVIEW_QUERY_RE = re.compile(
-    r"\b(?:elenco|lista|punti?\s+chiave|dettagli?\b|dettagliat\w*|complet\w*|strutturat\w*|esaustiv\w*|approfondit\w*)\b",
-    re.IGNORECASE,
-)
-TENDER_DOCUMENT_QUERY_RE = re.compile(
-    r"\b(?:gara|bando|capitolato|disciplinare|documentazione|procedura|lotto|tender|rfp|avviso)\b",
-    re.IGNORECASE,
-)
-GENERIC_TENDER_DEFINITION_QUERY_RE = re.compile(
-    r"\b(?:cos\s*['’`]?\s*[eè]|che\s+cosa\s+(?:e|è)|what\s+is|what's|"
-    r"definisci|definizione|come\s+funziona)\b",
-    re.IGNORECASE,
-)
-GENERIC_TENDER_INDEFINITE_RE = re.compile(
-    r"\b(?:un|una|uno|a|an)\s+"
-    r"(?:gara|bando|capitolato|disciplinare|procedura|lotto|tender|rfp|avviso|appalto)\b",
-    re.IGNORECASE,
-)
-GENERIC_TENDER_CONCEPT_RE = re.compile(
-    r"\b(?:procedura\s+aperta|criteri?o\s+di\s+aggiudicazione|gara\s+pubblica|"
-    r"appalto\s+pubblico|codice\s+(?:dei\s+)?appalti)\b",
-    re.IGNORECASE,
-)
-RETRIEVAL_INTENT_STRIP_RE = re.compile(
-    r"\b(?:fai|fammi|dammi|fornisci|scrivi|prepara|genera|riassum\w*|sintetizza\w*|summari[sz]\w*|overview|panoramica|spiega\w*|descriv\w*|analizz\w*|approfond\w*|elenco|lista|punti?\s+chiave|dettagli?\b|dettagliat\w*|complet\w*|strutturat\w*|esaustiv\w*|tutti?\b)\b",
-    re.IGNORECASE,
-)
-RETRIEVAL_STOPWORD_STRIP_RE = re.compile(
-    r"\b(?:un|una|uno|i|gli|del|della|delle|dei|degli|dello|di|da|dei|della)\b",
-    re.IGNORECASE,
-)
+LIKELY_USER_QUERY_START_RE = _LEAK_REGEXES.likely_user_query_start
+PROMPT_LEAKAGE_HEADING_RE = _LEAK_REGEXES.heading
+PROMPT_LEAKAGE_INLINE_RE = _LEAK_REGEXES.inline
+PROMPT_LEAKAGE_INSTRUCTION_RES = _LEAK_REGEXES.instruction_lines
+EXPANDED_EXPLANATION_QUERY_RE = _INTENT_REGEXES.expanded_explanation
+SUMMARY_INTENT_QUERY_RE = _INTENT_REGEXES.summary_intent
+STRUCTURED_OVERVIEW_QUERY_RE = _INTENT_REGEXES.structured_overview
+TENDER_DOCUMENT_QUERY_RE = _INTENT_REGEXES.tender_document
+GENERIC_TENDER_DEFINITION_QUERY_RE = _INTENT_REGEXES.generic_tender_definition
+GENERIC_TENDER_INDEFINITE_RE = _INTENT_REGEXES.generic_tender_indefinite
+GENERIC_TENDER_CONCEPT_RE = _INTENT_REGEXES.generic_tender_concept
+RETRIEVAL_INTENT_STRIP_RE = _INTENT_REGEXES.retrieval_intent_strip
+RETRIEVAL_STOPWORD_STRIP_RE = _INTENT_REGEXES.retrieval_stopword_strip
 TERMINAL_SENTENCE_CHARS = {".", "!", "?", ";", '"', "'", ")", "]", "}", "»"}
-INCOMPLETE_SENTENCE_END_TOKENS = {
-    "a",
-    "ad",
-    "al",
-    "alla",
-    "allo",
-    "an",
-    "and",
-    "as",
-    "con",
-    "da",
-    "de",
-    "del",
-    "della",
-    "di",
-    "e",
-    "for",
-    "fra",
-    "from",
-    "il",
-    "in",
-    "into",
-    "la",
-    "le",
-    "lo",
-    "nel",
-    "nella",
-    "of",
-    "o",
-    "on",
-    "or",
-    "per",
-    "su",
-    "the",
-    "to",
-    "tra",
-    "un",
-    "una",
-    "uno",
-    "verso",
-    "with",
-    "y",
-}
-MATH_RENDERING_REQUEST_RE = re.compile(
-    r"\b(?:latex|la\s*tex|formula|formule|equation|equazioni|matematica|matematiche|simboli matematici|math)\b",
-    re.IGNORECASE,
-)
-LENGTH_META_PARAGRAPH_RE = re.compile(
-    r"\b(?:parole|words|righe|lines)\b.*\b(?:sufficienti|insufficienti|troppo pochi|troppo poche|too few|enough|conteggio|numero di parole)\b",
-    re.IGNORECASE,
-)
+INCOMPLETE_SENTENCE_END_TOKENS = set(_INTENT_REGEXES.incomplete_sentence_end_tokens)
+MATH_RENDERING_REQUEST_RE = _INTENT_REGEXES.math_rendering_request
+LENGTH_META_PARAGRAPH_RE = _INTENT_REGEXES.length_meta_paragraph
 APPROX_WORDS_PER_LINE = 8
 LONG_FORM_INTERNAL_INITIAL_TOKEN_CAP = 1536
 LONG_FORM_INTERNAL_PASS_TOKEN_CAP = 512
@@ -296,6 +109,10 @@ SUMMARY_LOCAL_CONTEXT_CHAR_BUDGET = 12000
 BROAD_SUMMARY_TOP_K_FINAL = 10
 DETAILED_OVERVIEW_TOP_K_FINAL = 12
 DETAILED_OVERVIEW_RETRIEVAL_TOP_K = 30
+LONGFORM_TENDER_SYNTHESIS_MIN_WORDS = 800
+LONGFORM_TENDER_REQUIRED_COVERAGE_SLOTS = frozenset(
+    {"identification", "cig_lots", "amounts", "duration"}
+)
 BROAD_SUMMARY_DEFAULT_MAX_TOKENS = 768
 DETAILED_OVERVIEW_DEFAULT_MAX_TOKENS = 1024
 DEANONYMIZED_STREAM_FLUSH_CHARS = 96
@@ -305,87 +122,70 @@ INLINE_MARKDOWN_SECTION_HEADING_RE = re.compile(r"(\S)(\*\*[A-ZÀ-ÖØ-Þ][^*\n]
 INLINE_MARKDOWN_SECTION_AFTER_PUNCT_RE = re.compile(r"([.!?;])\s+(\*\*[A-ZÀ-ÖØ-Þ][^*\n]{2,90}\*\*)")
 BOLD_SECTION_HEADING_RE = re.compile(r"^\s*\*\*([^*\n]{2,90})\*\*")
 NON_LATIN_SCRIPT_NOISE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
-GENERATED_FACT_SHEET_HEADING_RE = re.compile(
-    r"^\s*(?:Fatti verificati|FACT_SHEET_START)\s*$",
-    re.IGNORECASE,
-)
-GENERATED_FACT_SHEET_FIELD_RE = re.compile(
-    r"^\s*(?:procedura|stato_verifica|procedure_id|cig|giorni_critici|durata|"
-    r"importi|sedi_luoghi|percentuali|fonti|conflitti)\s*:",
-    re.IGNORECASE,
-)
-GENERATED_FACT_SHEET_END_RE = re.compile(r"^\s*FACT_SHEET_END\s*$", re.IGNORECASE)
-PLURAL_DAY_RE = re.compile(r"\b([2-9][0-9]*)\s+giorno\b", re.IGNORECASE)
-PROMPT_GARBAGE_PREFIX_TOKENS = frozenset(
-    {
-        "a",
-        "answer",
-        "as",
-        "assistant",
-        "context",
-        "constraints",
-        "language",
-        "only",
-        "output",
-        "own",
-        "question",
-        "response",
-        "retrieved",
-        "s",
-        "same",
-        "system",
-        "the",
-        "user",
-        "users",
-    }
-)
+_ENGINE_MESSAGES = get_engine_messages(default_language())
+_ENGINE_CONSTRAINTS = get_engine_response_constraints(default_language())
+_ENGINE_CLEANUP = get_engine_cleanup_patterns(default_language())
+_ENGINE_LANG_MARKERS = get_engine_language_markers(default_language())
+
+
+def _fact_sheet_protocol_fields(messages) -> tuple[str, ...]:
+    return (
+        messages.fact_sheet_label_procedure,
+        messages.fact_sheet_label_status,
+        messages.fact_sheet_label_procedure_id,
+        messages.fact_sheet_label_cig,
+        messages.fact_sheet_label_critical_days,
+        messages.fact_sheet_label_duration,
+        messages.fact_sheet_label_amounts,
+        messages.fact_sheet_label_locations,
+        messages.fact_sheet_label_percentages,
+        messages.fact_sheet_label_sources,
+        messages.fact_sheet_label_conflicts,
+    )
+
+
+def _build_fact_sheet_field_regex(messages) -> re.Pattern[str]:
+    alternation = "|".join(
+        re.escape(field) for field in _fact_sheet_protocol_fields(messages)
+    )
+    return re.compile(rf"^\s*(?:{alternation})\s*:", re.IGNORECASE)
+
+
+def _build_fact_sheet_heading_regex(messages) -> re.Pattern[str]:
+    heading = re.escape(messages.fact_sheet_heading_text)
+    start = re.escape(messages.fact_sheet_start_marker)
+    return re.compile(rf"^\s*(?:{heading}|{start})\s*$", re.IGNORECASE)
+
+
+def _build_fact_sheet_end_regex(messages) -> re.Pattern[str]:
+    end = re.escape(messages.fact_sheet_end_marker)
+    return re.compile(rf"^\s*{end}\s*$", re.IGNORECASE)
+
+
+GENERATED_FACT_SHEET_HEADING_RE = _build_fact_sheet_heading_regex(_ENGINE_MESSAGES)
+GENERATED_FACT_SHEET_FIELD_RE = _build_fact_sheet_field_regex(_ENGINE_MESSAGES)
+GENERATED_FACT_SHEET_END_RE = _build_fact_sheet_end_regex(_ENGINE_MESSAGES)
+INTEGRITY_PACT_CONTEXT_RE = _INTENT_REGEXES.integrity_pact_context
+INTEGRITY_PACT_QUERY_RE = _INTENT_REGEXES.integrity_pact_query
+PLURAL_DAY_RE = _INTENT_REGEXES.plural_day
+PROMPT_GARBAGE_PREFIX_TOKENS = _INTENT_REGEXES.prompt_garbage_prefix_tokens
 PROMPT_GARBAGE_PREFIX_STRIP_CHARS = " \t\r\n:/\\\\|#[](){}<>,.;'\"`*-_!?="
 
-QA_CONTINUATION_PROMPT = """ISTRUZIONI IMPORTANTI:
-- Devi rispondere nella STESSA LINGUA della domanda dell'utente.
-- Stai continuando una risposta gia iniziata.
-- Non ricominciare dall'inizio.
-- Non ripetere sezioni o frasi gia scritte.
-- Non commentare il numero di parole.
-- Non scrivere titoli o frasi come "Continuazione della risposta".
-- Non citare o copiare etichette interne del prompt.
-- Se nel draft trovi formule OCR rovinate o simboli incompleti, non copiarli alla cieca: riscrivi il passaggio in forma corretta oppure spiegalo in prosa accurata.
-- Aggiungi solo contenuto nuovo, sostanziale e coerente con quanto gia scritto.
 
-DOMANDA UTENTE:
-{query}
+def _resolve_query_language(rag_query: RAGQuery | None) -> str:
+    """Pick the localization language for a request.
 
-CONTESTO RECUPERATO:
-{context}
+    Returns the per-request override on ``rag_query.language`` when set and
+    supported, otherwise falls back to :func:`default_language`.
+    """
 
-PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
-{current_answer_tail}
-
-Ora continua direttamente dal punto in cui la risposta si e interrotta.
-Scrivi solo il seguito naturale della risposta, iniziando direttamente dal contenuto mancante.
-"""
-
-QA_SENTENCE_CLOSURE_PROMPT = """ISTRUZIONI IMPORTANTI:
-- Devi rispondere nella STESSA LINGUA della domanda dell'utente.
-- Devi completare solo la frase o il concetto finale rimasto interrotto.
-- Non iniziare un nuovo paragrafo, una nuova sezione o un nuovo argomento.
-- Non ripetere il testo gia scritto.
-- Scrivi al massimo 60 parole.
-- Chiudi con una frase completa e coerente.
-- Non citare o copiare etichette interne del prompt.
-
-DOMANDA UTENTE:
-{query}
-
-CONTESTO RECUPERATO:
-{context}
-
-PARTE FINALE GIA SCRITTA (solo riferimento, non copiarla):
-{current_answer_tail}
-
-Ora completa solo quanto basta per chiudere in modo naturale l'ultima frase o l'ultimo concetto rimasto interrotto.
-Inizia direttamente con il testo mancante.
-"""
+    if rag_query is not None:
+        candidate = getattr(rag_query, "language", None)
+        if candidate:
+            normalized = str(candidate).lower().strip()
+            if normalized in {"it", "en"}:
+                return normalized
+    return default_language()
 
 
 class QueryMode(str, Enum):
@@ -443,6 +243,9 @@ class RAGQuery:
     sampler_overrides: dict | None = None
     planning_coverage_config: dict | None = None
     guardrail_config: dict | None = None
+    # Per-request localization override. ``None`` falls back to the
+    # process-wide default (``settings.default_locale`` or ``"it"``).
+    language: str | None = None
 
 
 @dataclass
@@ -643,6 +446,7 @@ class HybridRAGEngine:
         dense_results = []
         sparse_results = []
         graph_results = []
+        coverage_fact_sheet_items: list[dict[str, Any]] = []
 
         if retriever_selection["dense"] and self.dense_retriever:
             try:
@@ -746,7 +550,7 @@ class HybridRAGEngine:
         if rag_query.mode in {QueryMode.QA, QueryMode.SEARCH}:
             coverage = await run_planning_coverage(
                 query=rag_query.text,
-                config=rag_query.planning_coverage_config,
+                config=self._planning_coverage_config_for_query(rag_query),
                 filters=vector_filters,
                 graph_filters=graph_filters,
                 sparse_retriever=(self.sparse_retriever if retriever_selection["sparse"] else None),
@@ -761,6 +565,8 @@ class HybridRAGEngine:
                         "score": item.get("score", 0),
                         "metadata": item.get("metadata", {}),
                     }
+                    if payload["metadata"].get("coverage_slot") in LONGFORM_TENDER_REQUIRED_COVERAGE_SLOTS:
+                        coverage_fact_sheet_items.append(payload)
                     if retriever == "sparse":
                         sparse_results.append(payload)
                     elif retriever == "graph":
@@ -830,7 +636,16 @@ class HybridRAGEngine:
                 }
             )
 
-        fact_sheet_context_items = list(context_items)
+        fact_sheet_context_items = [
+            item
+            for item in [*coverage_fact_sheet_items, *context_items]
+            if not self._should_exclude_longform_context_item(item, rag_query)
+        ]
+        context_items = [
+            item
+            for item in context_items
+            if not self._should_exclude_longform_context_item(item, rag_query)
+        ]
         context_items, _dedup_stats = deduplicate_context_items(context_items)
         context_items = self._select_final_reranked_results(
             context_items,
@@ -864,6 +679,8 @@ class HybridRAGEngine:
 
         if self._query_uses_procedure_guardrails(rag_query):
             fact_sheet = build_fact_sheet(fact_sheet_context_items, query=rag_query.text)
+            if self._query_requests_longform_tender_synthesis(rag_query):
+                fact_sheet = filter_long_form_amounts(fact_sheet)
             for source, context_text in zip(sources, context_texts, strict=False):
                 source_procedure = classify_chunk_procedure(context_text)
                 source["metadata"] = {
@@ -915,6 +732,7 @@ class HybridRAGEngine:
         return "\n".join(parts)
 
     def _format_fact_sheet(self, fact_sheet: FactSheet) -> str:
+        messages = _ENGINE_MESSAGES
         procedure_ids = self._format_fact_sheet_values(
             fact_sheet.procedure_ids,
             conflict_key="procedure_id",
@@ -926,21 +744,30 @@ class HybridRAGEngine:
             conflicts=fact_sheet.conflicts,
             prefix="CIG ",
         )
+        not_detected = messages.fact_sheet_value_not_detected
+        no_conflicts = messages.fact_sheet_value_no_conflicts
         return "\n".join(
             [
-                "FACT_SHEET_START",
-                f"procedura: {fact_sheet.procedure_label}",
-                f"stato_verifica: {fact_sheet.status.value}",
-                f"procedure_id: {procedure_ids}",
-                f"cig: {cigs}",
-                f"giorni_critici: {', '.join(fact_sheet.critical_days) or 'non_rilevato'}",
-                f"durata: {', '.join(fact_sheet.durations) or 'non_rilevato'}",
-                f"importi: {', '.join(fact_sheet.amounts) or 'non_rilevato'}",
-                f"sedi_luoghi: {', '.join(fact_sheet.locations) or 'non_rilevato'}",
-                f"percentuali: {', '.join(fact_sheet.percentages) or 'non_rilevato'}",
-                f"fonti: {', '.join(fact_sheet.source_ids) or 'non_rilevato'}",
-                f"conflitti: {', '.join(fact_sheet.conflicts) or 'nessuno'}",
-                "FACT_SHEET_END",
+                messages.fact_sheet_start_marker,
+                f"{messages.fact_sheet_label_procedure}: {fact_sheet.procedure_label}",
+                f"{messages.fact_sheet_label_status}: {fact_sheet.status.value}",
+                f"{messages.fact_sheet_label_procedure_id}: {procedure_ids}",
+                f"{messages.fact_sheet_label_cig}: {cigs}",
+                f"{messages.fact_sheet_label_critical_days}: "
+                f"{', '.join(fact_sheet.critical_days) or not_detected}",
+                f"{messages.fact_sheet_label_duration}: "
+                f"{', '.join(fact_sheet.durations) or not_detected}",
+                f"{messages.fact_sheet_label_amounts}: "
+                f"{', '.join(fact_sheet.amounts) or not_detected}",
+                f"{messages.fact_sheet_label_locations}: "
+                f"{', '.join(fact_sheet.locations) or not_detected}",
+                f"{messages.fact_sheet_label_percentages}: "
+                f"{', '.join(fact_sheet.percentages) or not_detected}",
+                f"{messages.fact_sheet_label_sources}: "
+                f"{', '.join(fact_sheet.source_ids) or not_detected}",
+                f"{messages.fact_sheet_label_conflicts}: "
+                f"{', '.join(fact_sheet.conflicts) or no_conflicts}",
+                messages.fact_sheet_end_marker,
             ]
         )
 
@@ -957,7 +784,10 @@ class HybridRAGEngine:
             metadata = source.get("metadata", {})
             doc_id = metadata.get("chunk_index", index)
             page = metadata.get("page_number", "?")
-            procedure = metadata.get("procedure_label") or "non_attribuibile"
+            procedure = (
+                metadata.get("procedure_label")
+                or _ENGINE_MESSAGES.procedure_label_unattributed
+            )
             cleaned = str(text or "").strip()
             cleaned = re.sub(r"^#{1,4}\s+.+\n", "", cleaned, flags=re.MULTILINE)
             cleaned = re.sub(r"^#{1,4}\s+", "", cleaned)
@@ -1020,6 +850,67 @@ class HybridRAGEngine:
                 resolved[key] = default_value
 
         return resolved
+
+    def _planning_coverage_config_for_query(self, rag_query: RAGQuery) -> dict[str, Any]:
+        config = normalize_planning_coverage_config(rag_query.planning_coverage_config)
+        if not self._query_requests_longform_tender_synthesis(rag_query):
+            return config
+
+        config["enabled"] = True
+        config["mode"] = "always_on"
+        config["alwaysRunPlanner"] = True
+        slots = dict(config["slots"])
+        for slot_key in LONGFORM_TENDER_REQUIRED_COVERAGE_SLOTS:
+            slots[slot_key] = True
+        config["slots"] = slots
+        config["topkPerSlot"] = max(int(config["topkPerSlot"]), 2)
+        config["maxSourcesPerSlot"] = max(int(config["maxSourcesPerSlot"]), 2)
+        config["globalMaxCoverageChunks"] = max(
+            int(config["globalMaxCoverageChunks"]),
+            len(LONGFORM_TENDER_REQUIRED_COVERAGE_SLOTS) * 2,
+        )
+        return config
+
+    def _query_primary_procedure_label(self, query_text: str) -> str:
+        requested = self._requested_procedure_labels_for_retrieval(query_text)
+        if len(requested) == 1:
+            return next(iter(requested))
+        return classify_chunk_procedure(query_text)
+
+    def _query_explicitly_requests_integrity_pact(self, query_text: str) -> bool:
+        return bool(INTEGRITY_PACT_QUERY_RE.search(query_text or ""))
+
+    def _should_exclude_longform_context_item(
+        self,
+        item: dict[str, Any],
+        rag_query: RAGQuery,
+    ) -> bool:
+        if not self._query_requests_longform_tender_synthesis(rag_query):
+            return False
+
+        text = str(item.get("text") or "")
+        if not text:
+            return False
+
+        if (
+            INTEGRITY_PACT_CONTEXT_RE.search(text)
+            and not self._query_explicitly_requests_integrity_pact(rag_query.text)
+        ):
+            return True
+
+        if self._query_primary_procedure_label(rag_query.text) != "OSCAT":
+            return False
+
+        normalized = text.casefold()
+        contamination_hits = len(OSCAT_SCT_CONTAMINATION_RE.findall(text))
+        identity_hits = len(OSCAT_IDENTITY_KEYWORD_RE.findall(text))
+        if contamination_hits >= 2 and identity_hits < 2:
+            return True
+        return (
+            classify_chunk_procedure(text) == "SCT"
+            and "oscat" not in normalized
+            and bool(OSCAT_SCT_CONTAMINATION_RE.search(text))
+        )
 
     def _build_rank_fusion_for_query(self, rag_query: RAGQuery) -> RankFusion:
         weights = self._resolve_fusion_weights(rag_query)
@@ -1188,9 +1079,9 @@ class HybridRAGEngine:
                 error=str(e),
             )
             if rag_query.mode == QueryMode.QA:
-                fallback_answer = (
-                    "Il modello e temporaneamente non disponibile. Mostro solo le fonti recuperate."
-                )
+                fallback_answer = get_engine_messages(
+                    _resolve_query_language(rag_query)
+                ).model_unavailable_fallback
                 generation_result = GenerationResult(
                     text=fallback_answer,
                     model=self.generator.model if self.generator else "unknown",
@@ -1368,6 +1259,7 @@ class HybridRAGEngine:
         current_text = ""
         active_template = template
         active_variables = stream_variables
+        using_continuation_template = False
         pass_attempts = (
             self._continuation_attempt_budget(length_target.target_words)
             if rag_query.mode == QueryMode.QA and length_target
@@ -1407,6 +1299,7 @@ class HybridRAGEngine:
                 variables=active_variables,
                 temperature=rag_query.temperature,
                 max_tokens=max_tokens,
+                language=_resolve_query_language(rag_query),
             ):
                 raw_pass_text += token
                 if not deanonymize_session_id:
@@ -1480,7 +1373,11 @@ class HybridRAGEngine:
             if current_words >= target_goal_words:
                 break
 
-            active_template = QA_CONTINUATION_PROMPT
+            active_template = get_prompt_template_text(
+                "qa-continuation",
+                _resolve_query_language(rag_query),
+            )
+            using_continuation_template = True
             active_variables = {
                 "query": stream_variables.get(
                     "query",
@@ -1497,7 +1394,7 @@ class HybridRAGEngine:
             context=context,
             variables=(
                 active_variables
-                if current_text and active_template == QA_CONTINUATION_PROMPT
+                if current_text and using_continuation_template
                 else stream_variables
             ),
             current_text=current_text,
@@ -1639,7 +1536,7 @@ class HybridRAGEngine:
                 if isinstance(value, str) and value.strip()
             }
         self._last_privacy_debug_trace = {
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "mode": rag_query.mode.value,
             "route_key": rag_query.route_key,
             "tender_id": rag_query.tender_id,
@@ -1925,6 +1822,7 @@ class HybridRAGEngine:
             temperature=rag_query.temperature,
             max_tokens=max_tokens,
             sampler_overrides=rag_query.sampler_overrides,
+            language=_resolve_query_language(rag_query),
         )
 
     def _extract_requested_length_target(self, query_text: str) -> ResponseLengthTarget | None:
@@ -2291,14 +2189,8 @@ class HybridRAGEngine:
     def _clean_generation_artifacts(self, text: str) -> str:
         cleaned = NON_LATIN_SCRIPT_NOISE_RE.sub("", text or "")
         cleaned = PLURAL_DAY_RE.sub(r"\1 giorni", cleaned)
-        replacements = (
-            (r"\bulter\s+ulteriore\b", "ulteriore"),
-            (r"\bMigliore\s+\(MAM\)", "Migliorativa (MAM)"),
-            (r"\bInfrastruttura\s+Digitali\b", "Infrastrutture Digitali"),
-            (r"\bCIG\s*:?\s*B33988ECF[A-Z0-9]?\b", "CIG B33988ECF2"),
-        )
-        for pattern, replacement in replacements:
-            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+        for pattern, replacement in _ENGINE_CLEANUP.ocr_replacements:
+            cleaned = pattern.sub(replacement, cleaned)
         return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
 
     def _deduplicate_repeated_paragraphs(self, text: str) -> str:
@@ -2377,9 +2269,10 @@ class HybridRAGEngine:
                 continue
             if skipping_meta and CONTINUATION_HEADING_RE.match(stripped):
                 continue
-            if skipping_meta and stripped.lower().startswith("ecco la continuazione"):
-                continue
-            if skipping_meta and stripped.lower().startswith("continuo la risposta"):
+            if skipping_meta and any(
+                stripped.lower().startswith(prefix)
+                for prefix in _ENGINE_CLEANUP.continuation_skip_prefixes
+            ):
                 continue
             skipping_meta = False
             cleaned_lines.append(line)
@@ -2515,7 +2408,10 @@ class HybridRAGEngine:
         )
 
         completion_result = await generator.generate(
-            template=QA_SENTENCE_CLOSURE_PROMPT,
+            template=get_prompt_template_text(
+                "qa-sentence-closure",
+                _resolve_query_language(rag_query),
+            ),
             variables={
                 "query": variables.get(
                     "query", self._query_text_without_length_request(rag_query.text)
@@ -2526,6 +2422,7 @@ class HybridRAGEngine:
             temperature=min(rag_query.temperature, 0.2),
             max_tokens=96,
             sampler_overrides=rag_query.sampler_overrides,
+            language=_resolve_query_language(rag_query),
         )
 
         cleaned_text = self._clean_sentence_completion_text(completion_result.text)
@@ -2560,6 +2457,14 @@ class HybridRAGEngine:
             and TENDER_DOCUMENT_QUERY_RE.search(normalized_query)
         )
 
+    def _query_requests_longform_tender_synthesis(self, rag_query: RAGQuery) -> bool:
+        if rag_query.mode != QueryMode.QA:
+            return False
+        length_target = self._extract_requested_length_target(rag_query.text)
+        if not length_target or length_target.target_words < LONGFORM_TENDER_SYNTHESIS_MIN_WORDS:
+            return False
+        return self._query_requests_broad_summary(rag_query.text)
+
     def _query_uses_procedure_guardrails(self, rag_query: RAGQuery) -> bool:
         cfg = normalize_guardrail_config(rag_query.guardrail_config)
         if not cfg["enabled"]:
@@ -2583,6 +2488,14 @@ class HybridRAGEngine:
         fact_sheet = fact_sheet_from_guarded_context(context)
         if fact_sheet is None:
             return answer
+
+        missing_slots = fact_sheet_missing_critical_slots(fact_sheet)
+        if missing_slots:
+            logger.warning(
+                "RAG fact sheet missing critical slots",
+                missing_slots=missing_slots,
+                procedure_label=fact_sheet.procedure_label,
+            )
 
         result = validate_guarded_answer(
             answer=answer,
@@ -2618,6 +2531,18 @@ class HybridRAGEngine:
                         procedure_label=fact_sheet.procedure_label,
                     )
                     return repaired_result.safe_answer
+                critical, soft = classify_guardrail_failures(repaired_result.failures)
+                if not critical and soft:
+                    logger.warning(
+                        "RAG guarded answer soft-failure fallback",
+                        original_failures=result.failures,
+                        repaired_failures=repaired_result.failures,
+                        procedure_label=fact_sheet.procedure_label,
+                    )
+                    return self._append_guardrail_soft_warning(
+                        repaired_answer,
+                        language=_resolve_query_language(rag_query),
+                    )
                 logger.warning(
                     "RAG guarded answer repair still failed",
                     original_failures=result.failures,
@@ -2626,16 +2551,51 @@ class HybridRAGEngine:
                     procedure_label=fact_sheet.procedure_label,
                 )
             else:
+                critical, soft = classify_guardrail_failures(result.failures)
+                if not critical and soft:
+                    logger.warning(
+                        "RAG guarded answer soft-failure fallback (no repair changes)",
+                        failures=result.failures,
+                        procedure_label=fact_sheet.procedure_label,
+                    )
+                    return self._append_guardrail_soft_warning(
+                        answer,
+                        language=_resolve_query_language(rag_query),
+                    )
                 logger.warning(
                     "RAG guarded answer repair made no changes",
                     failures=result.failures,
                     issue_snippets=guardrail_issue_snippets(answer),
                     procedure_label=fact_sheet.procedure_label,
                 )
-            return self._build_guardrail_blocked_answer(fact_sheet)
+            return self._build_guardrail_blocked_answer(
+                fact_sheet,
+                language=_resolve_query_language(rag_query),
+            )
         return result.safe_answer
 
-    def _build_guardrail_blocked_answer(self, fact_sheet: FactSheet) -> str:
+    @staticmethod
+    def _append_guardrail_soft_warning(
+        answer: str,
+        *,
+        language: str | None = None,
+    ) -> str:
+        warning = get_guardrail_messages(language).soft_warning
+        text = (answer or "").rstrip()
+        if not text:
+            return warning
+        if warning in text:
+            return text
+        return f"{text}\n\n{warning}"
+
+    def _build_guardrail_blocked_answer(
+        self,
+        fact_sheet: FactSheet,
+        *,
+        language: str | None = None,
+    ) -> str:
+        messages = get_guardrail_messages(language)
+
         def values_or_missing(
             values: tuple[str, ...],
             *,
@@ -2643,29 +2603,36 @@ class HybridRAGEngine:
             prefix: str = "",
         ) -> str:
             if conflict_key and conflict_key in fact_sheet.conflicts:
-                return "conflitto rilevato"
+                return messages.conflict_detected
             if not values:
-                return "non rilevato"
+                return messages.not_detected
             return ", ".join(f"{prefix}{value}" for value in values)
 
         return "\n".join(
             [
                 BLOCKED_OUTPUT_MESSAGE,
                 "",
-                "Risposta generata scartata: conteneva dati non verificati rispetto "
-                "alle fonti recuperate.",
+                messages.blocked_intro,
                 "",
-                "Fatti verificati disponibili:",
-                f"- Procedura: {fact_sheet.procedure_label or 'non rilevato'}",
-                "- ID procedura: "
+                messages.fact_sheet_heading,
+                f"- {messages.procedure_label}: "
+                f"{fact_sheet.procedure_label or messages.not_detected}",
+                f"- {messages.procedure_id_label}: "
                 f"{values_or_missing(fact_sheet.procedure_ids, conflict_key='procedure_id')}",
-                f"- CIG: {values_or_missing(fact_sheet.cigs, conflict_key='cig', prefix='CIG ')}",
-                f"- Giorni critici: {values_or_missing(fact_sheet.critical_days)}",
-                f"- Durata: {values_or_missing(fact_sheet.durations)}",
-                f"- Importi: {values_or_missing(fact_sheet.amounts)}",
-                f"- Sedi/luoghi: {values_or_missing(fact_sheet.locations)}",
-                f"- Percentuali: {values_or_missing(fact_sheet.percentages)}",
-                f"- Fonti: {values_or_missing(fact_sheet.source_ids)}",
+                f"- {messages.cig_label}: "
+                f"{values_or_missing(fact_sheet.cigs, conflict_key='cig', prefix='CIG ')}",
+                f"- {messages.critical_days_label}: "
+                f"{values_or_missing(fact_sheet.critical_days)}",
+                f"- {messages.duration_label}: "
+                f"{values_or_missing(fact_sheet.durations)}",
+                f"- {messages.amounts_label}: "
+                f"{values_or_missing(fact_sheet.amounts)}",
+                f"- {messages.locations_label}: "
+                f"{values_or_missing(fact_sheet.locations)}",
+                f"- {messages.percentages_label}: "
+                f"{values_or_missing(fact_sheet.percentages)}",
+                f"- {messages.sources_label}: "
+                f"{values_or_missing(fact_sheet.source_ids)}",
             ]
         )
 
@@ -2678,9 +2645,9 @@ class HybridRAGEngine:
         prefix: str = "",
     ) -> str:
         if conflict_key and conflict_key in conflicts:
-            return "conflitto_rilevato"
+            return _ENGINE_MESSAGES.fact_sheet_value_conflict_detected
         if not values:
-            return "non_rilevato"
+            return _ENGINE_MESSAGES.fact_sheet_value_not_detected
         return ", ".join(f"{prefix}{value}" for value in values)
 
     def _effective_final_top_k(self, rag_query: RAGQuery) -> int:
@@ -2699,13 +2666,14 @@ class HybridRAGEngine:
 
     def _effective_retrieval_top_k(self, rag_query: RAGQuery) -> int | None:
         requested_retrieval_top_k = rag_query.retrieval_top_k
-        if requested_retrieval_top_k is not None:
-            return requested_retrieval_top_k
         if rag_query.mode in {
             QueryMode.QA,
             QueryMode.SEARCH,
         } and self._query_requests_structured_tender_overview(rag_query.text):
-            return max(settings.rag_top_k_dense, DETAILED_OVERVIEW_RETRIEVAL_TOP_K)
+            base_top_k = requested_retrieval_top_k or settings.rag_top_k_dense
+            return max(base_top_k, DETAILED_OVERVIEW_RETRIEVAL_TOP_K)
+        if requested_retrieval_top_k is not None:
+            return requested_retrieval_top_k
         return None
 
     def _query_text_for_retrieval(self, query_text: str) -> str:
@@ -2720,34 +2688,13 @@ class HybridRAGEngine:
 
     def _retrieval_variant_language_for(self, query_text: str) -> str:
         normalized_query = self._query_text_without_length_request(query_text or "").casefold()
-        english_markers = (
-            "tender",
-            "overview",
-            "summary",
-            "summarise",
-            "summarize",
-            "explain",
-            "describe",
-            "complete",
-            "key point",
-            "rfp",
+        markers = _ENGINE_LANG_MARKERS
+        english_score = sum(
+            1 for marker in markers.english_markers if marker in normalized_query
         )
-        italian_markers = (
-            "gara",
-            "bando",
-            "capitolato",
-            "disciplinare",
-            "procedura",
-            "panoramica",
-            "riassum",
-            "sintetizz",
-            "spiega",
-            "descriv",
-            "analizz",
-            "punti chiave",
+        italian_score = sum(
+            1 for marker in markers.italian_markers if marker in normalized_query
         )
-        english_score = sum(1 for marker in english_markers if marker in normalized_query)
-        italian_score = sum(1 for marker in italian_markers if marker in normalized_query)
         return "en" if english_score > italian_score else "it"
 
     def _requested_procedure_labels_for_retrieval(self, query_text: str) -> set[str]:
@@ -2801,14 +2748,10 @@ class HybridRAGEngine:
 
     def _build_response_constraints(self, rag_query: RAGQuery) -> str:
         length_target = self._extract_requested_length_target(rag_query.text)
-        constraints = [
-            "Rispondi direttamente alla domanda dell'utente senza preamboli meta.",
-            "Non limitarti a contare o commentare il numero di parole della tua risposta.",
-            "Se percepisci di essere vicino al limite di output, chiudi sempre la frase o il concetto in corso prima di terminare.",
-            "Non riprodurre mai tag <doc>, titoli di sezione ### o intestazioni presenti nel contesto.",
-            "Se lo stesso concetto appare in più fonti, citalo una sola volta nella posizione più appropriata.",
-            "Non ripetere blocchi di testo già scritti nella risposta.",
-        ]
+        language = _resolve_query_language(rag_query)
+        templates = get_engine_response_constraints(language)
+        unit_messages = get_engine_messages(language)
+        constraints: list[str] = list(templates.general)
 
         if length_target:
             min_words = self._minimum_acceptable_word_count(
@@ -2819,65 +2762,37 @@ class HybridRAGEngine:
                 length_target.target_words + 100,
                 int(length_target.target_words * 1.1),
             )
-            requested_label = (
-                f"{length_target.requested_value} righe"
+            unit_label = (
+                unit_messages.length_unit_lines
                 if length_target.requested_unit == "lines"
-                else f"{length_target.requested_value} parole"
+                else unit_messages.length_unit_words
             )
+            requested_label = f"{length_target.requested_value} {unit_label}"
             constraints.extend(
-                [
-                    f"L'utente ha richiesto circa {requested_label}.",
-                    f"Scrivi una risposta completa compresa tra {min_words} e {max_words} parole circa.",
-                    f"Avvicinati il piu possibile al target di {length_target.target_words} parole senza fermarti molto prima.",
-                    "Se serve, amplia con spiegazioni, esempi e passaggi logici utili, senza riempitivi o ripetizioni.",
-                ]
+                template.format(
+                    requested_label=requested_label,
+                    min_words=min_words,
+                    max_words=max_words,
+                    target_words=length_target.target_words,
+                )
+                for template in templates.length_target_templates
             )
             if length_target.requested_unit == "lines":
-                constraints.append(
-                    "Interpreta la richiesta in righe come una risposta molto estesa e dettagliata, senza discutere la fattibilita del numero richiesto."
-                )
+                constraints.extend(templates.lines_mode)
         else:
-            constraints.append("Mantieni la risposta proporzionata alla richiesta.")
-            if self._query_requests_expanded_explanation(rag_query.text):
-                constraints.append(
-                    "Se il contesto lo consente, sviluppa una risposta un po' piu completa del minimo, coprendo definizione, contesto e punti chiave invece di fermarti a una sola frase breve."
-                )
-            if self._query_requests_broad_summary(rag_query.text):
-                constraints.append(
-                    "Se il contesto recuperato copre solo una parte della gara, fornisci comunque la migliore sintesi possibile dei punti emersi e aggiungi solo alla fine una breve nota sugli aspetti non coperti, invece di fermarti a dire soltanto che il contesto e insufficiente."
-                )
-            if self._query_requests_structured_tender_overview(rag_query.text):
-                constraints.extend(
-                    [
-                        "Organizza la risposta in queste sezioni esatte:\n"
-                        "1. Oggetto e perimetro\n"
-                        "2. Architettura tecnologica\n"
-                        "3. Fasi operative critiche\n"
-                        "4. Punti di rischio contrattuale\n"
-                        "5. Governance multi-soggetto",
-                        "Scrivi ogni sezione in prosa narrativa coesa, con frasi complete "
-                        "e transizioni logiche tra i dettagli.",
-                        "Non ricominciare dall'introduzione quando passi a una nuova sezione.",
-                        "Non ripetere lo stesso paragrafo o lo stesso concetto in piu sezioni.",
-                        "Ogni valore numerico deve apparire esattamente come trovato nel contesto.",
-                        "Se un soggetto, organizzazione, piattaforma, penale o scadenza non e "
-                        "nel contesto, scrivi: non disponibile nei documenti forniti.",
-                        "Non introdurre nomi assenti dal contesto recuperato.",
-                        "Non copiare segnaposto, slash isolati, date incomplete o frammenti "
-                        "OCR palesemente rotti.",
-                        "Se un dettaglio non e abbastanza chiaro nel contesto, omettilo oppure "
-                        "segnalalo in modo breve come dato non chiaramente emerso, senza inventarlo.",
-                    ]
-                )
+            constraints.extend(templates.no_length_target)
+        if self._query_requests_expanded_explanation(rag_query.text):
+            constraints.extend(templates.expanded_explanation)
+        if self._query_requests_broad_summary(rag_query.text):
+            constraints.extend(templates.broad_summary)
+        if self._query_requests_structured_tender_overview(rag_query.text):
+            heading = templates.structured_overview_heading[0]
+            sections_block = "\n".join(templates.structured_overview_sections)
+            constraints.append(f"{heading}\n{sections_block}")
+            constraints.extend(templates.structured_overview)
 
         if self._query_requests_math_rendering(rag_query.text):
-            constraints.extend(
-                [
-                    "Quando riporti formule o simboli matematici, riscrivili in notazione matematica leggibile e coerente.",
-                    "Non copiare frammenti OCR corrotti, pseudo-LaTeX incompleto o formule palesemente spezzate dal contesto.",
-                    "Se il contesto contiene una formula danneggiata, spiega il significato matematico corretto invece di inventare simboli.",
-                ]
-            )
+            constraints.extend(templates.math_rendering)
 
         return "\n".join(f"- {constraint}" for constraint in constraints)
 
@@ -2929,7 +2844,10 @@ class HybridRAGEngine:
                 break
 
             continuation_result = await generator.generate(
-                template=QA_CONTINUATION_PROMPT,
+                template=get_prompt_template_text(
+                    "qa-continuation",
+                    _resolve_query_language(rag_query),
+                ),
                 variables={
                     "query": variables.get("query", rag_query.text),
                     "context": variables.get("context", context),
@@ -2943,6 +2861,7 @@ class HybridRAGEngine:
                     current_words=current_words,
                 ),
                 sampler_overrides=rag_query.sampler_overrides,
+                language=_resolve_query_language(rag_query),
             )
 
             continuation_text = self._sanitize_continuation_text(
@@ -2983,6 +2902,12 @@ class HybridRAGEngine:
 
         if mode == QueryMode.QA:
             query_text = self._query_text_without_length_request(rag_query.text)
+            if self._query_requests_longform_tender_synthesis(rag_query):
+                return "tender_longform_synthesis", {
+                    "context": context,
+                    "query": query_text,
+                    "response_constraints": self._build_response_constraints(rag_query),
+                }
             if self._query_uses_procedure_guardrails(rag_query):
                 return "tender_overview", {
                     "context": context,
@@ -3072,20 +2997,8 @@ class HybridRAGEngine:
         self._initialized = False
         logger.info("HybridRAG Engine shut down")
 
-    BROKEN_NUMERIC_PATTERNS = [
-        r"\bentro\s+giorni\b",
-        r"\bfino\s+a\s+giorni\b",
-        r"\bID:\s*CH\b(?!\d)",
-    ]
-
-    CRITICAL_NUMERIC_PATTERNS = [
-        r"\b\d+\s*giorni\b",
-        r"\b\d+[\.,]\d+[\.,]\d+\b",
-        r"\beuro\s*\d",
-        r"\bCIG\s+[A-Z0-9]+",
-        r"\bSLA\b",
-        r"\bpenale\b",
-    ]
+    BROKEN_NUMERIC_PATTERNS = _ENGINE_CLEANUP.broken_numeric_patterns
+    CRITICAL_NUMERIC_PATTERNS = _ENGINE_CLEANUP.critical_numeric_patterns
 
     def _pin_critical_chunks(
         self,
@@ -3096,7 +3009,7 @@ class HybridRAGEngine:
         for chunk in chunks:
             text = chunk.get("text", "")
             is_critical = any(
-                re.search(p, text, re.IGNORECASE) for p in self.CRITICAL_NUMERIC_PATTERNS
+                pattern.search(text) for pattern in self.CRITICAL_NUMERIC_PATTERNS
             )
             if is_critical:
                 pinned.append(chunk)
@@ -3127,4 +3040,4 @@ class HybridRAGEngine:
         return "\n\n".join(unique)
 
     def _has_broken_numeric_patterns(self, text: str) -> bool:
-        return any(re.search(p, text, re.IGNORECASE) for p in self.BROKEN_NUMERIC_PATTERNS)
+        return any(pattern.search(text) for pattern in self.BROKEN_NUMERIC_PATTERNS)

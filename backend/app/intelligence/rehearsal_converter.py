@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -173,7 +173,7 @@ async def accept_recommendation(
         is_blocking=is_blocking,
         reason=reason,
         due_at=overrides.due_at,
-        requested_at=datetime.now(UTC),
+        requested_at=datetime.now(timezone.utc),
         status=ReworkStatus.OPEN,
     )
     db.add(rework)

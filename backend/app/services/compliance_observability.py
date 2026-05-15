@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -47,7 +47,7 @@ class ComplianceRequirementCoverage:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def derive_requirement_compliance_status(section_status: SectionStatus | None) -> ComplianceStatus:
@@ -227,7 +227,7 @@ def determine_auto_gate_target_status(
         return ComplianceGateStatus.PASSED
 
     if tender_due_at is not None:
-        due_at = tender_due_at if tender_due_at.tzinfo else tender_due_at.replace(tzinfo=UTC)
+        due_at = tender_due_at if tender_due_at.tzinfo else tender_due_at.replace(tzinfo=timezone.utc)
         if due_at <= now and (review_or_completion_started or any_progress):
             return ComplianceGateStatus.FAILED
 

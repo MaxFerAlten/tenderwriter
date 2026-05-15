@@ -13,7 +13,7 @@ import io
 import json
 import secrets
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
@@ -30,11 +30,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import app.models as app_models
 from app.api.auth import UserResponse, get_current_user
 from app.config import settings
 from app.db.database import get_db
 from app.db.redis import redis_client
-from app.models import ContentBlock, Document, Proposal, ProposalSection
 from app.services.compliance_observability import sync_requirement_compliance_and_gate
 from app.services.kpi_reason_engine import (
     build_proposal_section_updated_event_payload,
@@ -46,6 +46,11 @@ from app.utils.naming import get_structured_minio_path
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+ContentBlock = app_models.ContentBlock
+Document = getattr(app_models, "Document", None)
+Proposal = app_models.Proposal
+ProposalSection = app_models.ProposalSection
 
 
 class MinioDocumentStore:
@@ -139,11 +144,11 @@ class MinioDocumentStore:
         def _cleanup_sync():
             objects = self.client.list_objects(self.bucket_name)
             deleted_count = 0
-            cutoff_time = datetime.now(UTC) - timedelta(hours=max_age_hours)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
 
             for obj in objects:
                 last_modified = obj.last_modified
-                if last_modified and last_modified.astimezone(UTC) < cutoff_time:
+                if last_modified and last_modified.astimezone(timezone.utc) < cutoff_time:
                     self.client.remove_object(self.bucket_name, obj.object_name)
                     deleted_count += 1
                     logger.info(
@@ -292,7 +297,7 @@ def _build_download_token(*, doc_key: str, user_id: int | str) -> str:
         {
             "sub": str(user_id),
             "doc_key": doc_key,
-            "exp": datetime.now(UTC)
+            "exp": datetime.now(timezone.utc)
             + timedelta(seconds=settings.onlyoffice_file_token_ttl_seconds),
         },
         settings.onlyoffice_jwt_secret,

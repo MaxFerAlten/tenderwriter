@@ -5,7 +5,7 @@ Stores general application settings as key-value pairs in a JSONB column.
 Only one row is expected (singleton pattern).
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Integer
 from sqlalchemy.dialects.postgresql import JSONB
@@ -20,6 +20,6 @@ class AppSettings(Base):
     data = Column(JSONB, default=dict, nullable=False)
     updated_at = Column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

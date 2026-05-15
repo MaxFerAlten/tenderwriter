@@ -7,7 +7,7 @@ All endpoints are protected with JWT auth. Access is checked via the associated 
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -371,7 +371,7 @@ async def update_proposal(
             actor_id=current_user.id,
             event_type="tender_submitted",
             event_payload=build_tender_submitted_event_payload(
-                submitted_at=datetime.now(UTC),
+                submitted_at=datetime.now(timezone.utc),
                 channel="proposal_status_update",
             ),
         )
@@ -727,7 +727,7 @@ _ALLOWED_SUBMISSION_STATUSES = {"acknowledged", "failed"}
 
 
 def _utc_or_now(value: datetime | None) -> datetime:
-    return value or datetime.now(UTC)
+    return value or datetime.now(timezone.utc)
 
 
 def _clone_tender_metadata(tender: Tender) -> dict:

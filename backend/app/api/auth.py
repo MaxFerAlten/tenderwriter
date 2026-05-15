@@ -10,7 +10,7 @@ import hmac
 import secrets
 import smtplib
 import string
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -106,7 +106,7 @@ class TokenResponse(BaseModel):
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.app_secret_key, algorithm=ALGORITHM)
 
@@ -132,7 +132,7 @@ def create_password_reset_token(user: User) -> str:
         "email": user.email,
         "purpose": "password_reset",
         "pwd_sig": password_reset_signature(user.hashed_password),
-        "exp": datetime.now(UTC) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
     }
     return jwt.encode(payload, settings.app_secret_key, algorithm=ALGORITHM)
 
@@ -297,7 +297,7 @@ async def register(request: Request, data: UserRegister, db: AsyncSession = Depe
 
     # Generate OTP
     otp = generate_otp()
-    expires = datetime.now(UTC) + timedelta(minutes=15)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=15)
 
     otp_token = OTPToken(user_id=user.id, token=otp, expires_at=expires)
     db.add(otp_token)
@@ -355,7 +355,7 @@ async def verify_otp(
         )
 
     # Check expiration
-    if otp_record.expires_at < datetime.now(UTC):
+    if otp_record.expires_at < datetime.now(timezone.utc):
         await db.execute(delete(OTPToken).where(OTPToken.user_id == user.id))
         await db.commit()
         raise HTTPException(status_code=400, detail="Expired OTP")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 INGESTION_STAGE_ORDER = (
@@ -62,10 +62,10 @@ INGESTION_STAGE_CONFIG: dict[str, dict[str, float | str]] = {
 
 
 def _timestamp(value: datetime | None = None) -> str:
-    current = value or datetime.now(UTC)
+    current = value or datetime.now(timezone.utc)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=UTC)
-    return current.astimezone(UTC).isoformat()
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).isoformat()
 
 
 def _json_safe(value: Any) -> Any:

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -108,7 +108,7 @@ def _datetime_to_iso(value: datetime | str | None) -> str | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
+            value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
     return str(value)
 
@@ -183,7 +183,7 @@ async def project_requirement_event(
             error=str(exc),
         )
 
-    occurred_iso = _datetime_to_iso(occurred_at) or _datetime_to_iso(datetime.now(UTC))
+    occurred_iso = _datetime_to_iso(occurred_at) or _datetime_to_iso(datetime.now(timezone.utc))
     try:
         await graph.append_requirement_lifecycle_event(
             node_id,
@@ -606,7 +606,7 @@ async def reconcile_tender_lifecycle_projection(
     block the rest of the tender from converging.
     """
     engine = rag_engine if rag_engine is not None else get_active_rag_engine()
-    started_at = datetime.now(UTC)
+    started_at = datetime.now(timezone.utc)
 
     if engine is None:
         return {
@@ -665,7 +665,7 @@ async def reconcile_tender_lifecycle_projection(
                 }
             )
 
-    finished_at = datetime.now(UTC)
+    finished_at = datetime.now(timezone.utc)
     summary = {
         "tender_id": tender_id,
         "requirements_seen": seen,

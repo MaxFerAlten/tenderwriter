@@ -8,6 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from app.rag.internal_prompting import default_language
+from app.rag.localization import get_planning_coverage_messages
+
+_PC_MSGS = get_planning_coverage_messages(default_language())
+
 PLANNING_COVERAGE_SETTINGS_KEY = "planningcoverage"
 
 
@@ -40,232 +45,21 @@ class PlanningCoverageResult:
     latency_ms: float
 
 
-TENDER_QUERY_TERMS = (
-    "gara",
-    "appalto",
-    "procedura",
-    "disciplinare",
-    "capitolato",
-    "lotto",
-    "lotti",
-    "cig",
-    "rup",
-    "offerta",
-    "stazione appaltante",
-)
+def _build_coverage_slots() -> dict[str, PlanningCoverageSlot]:
+    msgs = _PC_MSGS
+    slots: dict[str, PlanningCoverageSlot] = {}
+    for key in msgs.slot_labels:
+        slots[key] = PlanningCoverageSlot(
+            key=key,
+            label=msgs.slot_labels[key],
+            trigger_terms=msgs.slot_triggers[key],
+            queries=msgs.slot_queries[key],
+            evidence_terms=msgs.slot_evidence[key],
+        )
+    return slots
 
-PLANNING_COVERAGE_SLOTS: dict[str, PlanningCoverageSlot] = {
-    "identification": PlanningCoverageSlot(
-        key="identification",
-        label="Identificazione procedura",
-        trigger_terms=("determina", "determinazione", "rup", "stazione appaltante", "procedura"),
-        queries=(
-            '"determinazione" "rep." "prot." "indice" "indetta"',
-            '"responsabile unico del progetto" "RUP" "ing." "dott."',
-            '"stazione appaltante" "procedura" "numero gara"',
-        ),
-        evidence_terms=(
-            "determinazione",
-            "responsabile unico",
-            "rup",
-            "stazione appaltante",
-            "indetta",
-            "rep.",
-            "prot.",
-        ),
-    ),
-    "cig_lots": PlanningCoverageSlot(
-        key="cig_lots",
-        label="CIG e lotti",
-        trigger_terms=("cig", "lotto", "lotti", "simog"),
-        queries=(
-            '"CIG" "lotto 1" "lotto 2" "lotto 3" "lotto 4"',
-            '"codice CIG" "lotto" "gara"',
-            '"SIMOG" "CIG" "lotti"',
-        ),
-        evidence_terms=("cig", "lotto", "lotti", "simog"),
-    ),
-    "amounts": PlanningCoverageSlot(
-        key="amounts",
-        label="Importi e massimali",
-        trigger_terms=(
-            "importo",
-            "base d'asta",
-            "base asta",
-            "valore",
-            "euro",
-            "oneri",
-            "massimale",
-        ),
-        queries=(
-            '"base d\'asta" "IVA esclusa" "importo" "€"',
-            '"massimale" "accordo quadro" "quinto d\'obbligo" "20%"',
-            '"oneri sicurezza" "importo" "euro"',
-        ),
-        evidence_terms=(
-            "base d'asta",
-            "base asta",
-            "iva esclusa",
-            "importo",
-            "euro",
-            "€",
-            "massimale",
-            "oneri",
-            "quinto",
-        ),
-    ),
-    "duration": PlanningCoverageSlot(
-        key="duration",
-        label="Durata",
-        trigger_terms=("durata", "mesi", "giorni", "proroga", "decorrenza", "stipula"),
-        queries=(
-            '"durata" "36 mesi" "mesi dalla stipula" "proroga"',
-            '"decorrenza" "contratti attuativi" "mesi"',
-        ),
-        evidence_terms=("durata", "mesi", "giorni", "proroga", "decorrenza", "stipula"),
-    ),
-    "deadlines": PlanningCoverageSlot(
-        key="deadlines",
-        label="Scadenze",
-        trigger_terms=("scadenza", "termine", "presentazione", "offerte", "ore", "deadline"),
-        queries=(
-            '"termine" "presentazione" "offerte" "ore"',
-            '"scadenza" "presentazione offerte" "data"',
-        ),
-        evidence_terms=("termine", "presentazione", "offerte", "ore", "scadenza", "deadline"),
-    ),
-    "platform": PlanningCoverageSlot(
-        key="platform",
-        label="Piattaforma e accesso",
-        trigger_terms=(
-            "piattaforma",
-            "sardegnacat",
-            "start",
-            "sintel",
-            "mepa",
-            "spid",
-            "cie",
-            "cns",
-            "url",
-        ),
-        queries=(
-            '"https://" "sardegnacat" "URL" "piattaforma"',
-            '"SPID" "CIE" "CNS" "eIDAS" "autenticazione"',
-            '"portale" "piattaforma telematica" "gara"',
-        ),
-        evidence_terms=(
-            "https://",
-            "piattaforma",
-            "sardegnacat",
-            "start",
-            "sintel",
-            "mepa",
-            "spid",
-            "cie",
-            "cns",
-            "eidas",
-        ),
-    ),
-    "scoring": PlanningCoverageSlot(
-        key="scoring",
-        label="Punteggi e criteri",
-        trigger_terms=(
-            "punteggio",
-            "offerta tecnica",
-            "offerta economica",
-            "criterio",
-            "valutazione",
-        ),
-        queries=(
-            '"punteggio" "offerta tecnica" "offerta economica" "70" "80"',
-            '"criteri di valutazione" "punteggio tecnico" "punteggio economico"',
-        ),
-        evidence_terms=(
-            "punteggio",
-            "offerta tecnica",
-            "offerta economica",
-            "criteri",
-            "valutazione",
-        ),
-    ),
-    "certifications": PlanningCoverageSlot(
-        key="certifications",
-        label="Certificazioni",
-        trigger_terms=(
-            "certificazione",
-            "certificazioni",
-            "iso",
-            "acn",
-            "qualificazione",
-            "uni/pdr",
-        ),
-        queries=(
-            '"ISO/IEC 27001" "ISO/IEC 27017" "ISO/IEC 27018" "punti"',
-            '"UNI/PdR 125:2022" "SA 8000" "ISO 26000"',
-            '"qualificazione ACN" "certificazione" "obbligatoria"',
-        ),
-        evidence_terms=(
-            "iso/iec",
-            "iso ",
-            "uni/pdr",
-            "sa 8000",
-            "acn",
-            "certificazione",
-            "qualificazione",
-        ),
-    ),
-    "sla_penalties": PlanningCoverageSlot(
-        key="sla_penalties",
-        label="SLA e penali",
-        trigger_terms=(
-            "sla",
-            "penale",
-            "penali",
-            "livello di servizio",
-            "disponibilita",
-            "disponibilità",
-        ),
-        queries=(
-            '"penale" "%" "livello di servizio" "SLA" "disponibilità"',
-            '"penali" "livelli di servizio" "risoluzione"',
-        ),
-        evidence_terms=(
-            "sla",
-            "penale",
-            "penali",
-            "livello di servizio",
-            "disponibilità",
-            "risoluzione",
-        ),
-    ),
-    "documents": PlanningCoverageSlot(
-        key="documents",
-        label="Documenti e vincoli",
-        trigger_terms=(
-            "passoe",
-            "avcpass",
-            "dgue",
-            "garanzia",
-            "cauzione",
-            "documenti",
-            "vincolo",
-        ),
-        queries=(
-            '"PASSOE" "AVCpass" "DGUE" "garanzia" "cauzione"',
-            '"max" "lotti" "aggiudicabili" "partecipare" "vincolo"',
-            '"documentazione amministrativa" "disciplinare" "allegati"',
-        ),
-        evidence_terms=(
-            "passoe",
-            "avcpass",
-            "dgue",
-            "garanzia",
-            "cauzione",
-            "vincolo",
-            "allegati",
-        ),
-    ),
-}
+
+PLANNING_COVERAGE_SLOTS: dict[str, PlanningCoverageSlot] = _build_coverage_slots()
 
 DEFAULT_PLANNING_COVERAGE_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -370,7 +164,7 @@ def _normalized_text(value: str) -> str:
 
 def query_is_tender_like(query: str) -> bool:
     normalized = _normalized_text(query)
-    return any(term in normalized for term in TENDER_QUERY_TERMS)
+    return any(term in normalized for term in _PC_MSGS.tender_query_terms)
 
 
 def _slot_triggered_by_query(slot: PlanningCoverageSlot, normalized_query: str) -> bool:
@@ -395,7 +189,7 @@ def classify_query_for_coverage(
             activated=False,
             slots_triggered=[],
             generated_queries={},
-            notes=["Planning coverage disabilitato da configurazione."],
+            notes=[_PC_MSGS.note_disabled],
         )
 
     if cfg["onlyTenderQueries"] and not tender_like:
@@ -404,7 +198,7 @@ def classify_query_for_coverage(
             activated=False,
             slots_triggered=[],
             generated_queries={},
-            notes=["Query non classificata come gara; coverage non eseguito."],
+            notes=[_PC_MSGS.note_not_tender],
         )
 
     enabled_slots = [
@@ -419,12 +213,12 @@ def classify_query_for_coverage(
 
     generated_queries = {slot.key: list(slot.queries) for slot in selected_slots}
     notes = [
-        "Coverage planner attivato su query tender-like."
+        _PC_MSGS.note_activated_tender
         if tender_like
-        else "Coverage planner attivato da configurazione always_on."
+        else _PC_MSGS.note_activated_always,
     ]
     if not selected_slots:
-        notes.append("Nessuno slot specifico attivato.")
+        notes.append(_PC_MSGS.note_no_slot_activated)
 
     return PlanningCoveragePlan(
         query_class="tender_structured" if tender_like else "forced",
@@ -591,7 +385,9 @@ async def run_planning_coverage(
                         coverage_query=coverage_query,
                     )
                 except Exception as exc:  # pragma: no cover - defensive branch
-                    notes.append(f"Sparse retrieval fallito per slot {slot.key}: {exc}")
+                    notes.append(
+                        _PC_MSGS.error_sparse_retrieval.format(slot=slot.key, error=exc)
+                    )
             if retrievers.get("dense") and dense_retriever is not None:
                 try:
                     await collect(
@@ -605,7 +401,9 @@ async def run_planning_coverage(
                         coverage_query=coverage_query,
                     )
                 except Exception as exc:  # pragma: no cover - defensive branch
-                    notes.append(f"Dense retrieval fallito per slot {slot.key}: {exc}")
+                    notes.append(
+                        _PC_MSGS.error_dense_retrieval.format(slot=slot.key, error=exc)
+                    )
             if retrievers.get("graph") and graph_retriever is not None:
                 try:
                     await collect(
@@ -619,7 +417,9 @@ async def run_planning_coverage(
                         coverage_query=coverage_query,
                     )
                 except Exception as exc:  # pragma: no cover - defensive branch
-                    notes.append(f"Graph retrieval fallito per slot {slot.key}: {exc}")
+                    notes.append(
+                        _PC_MSGS.error_graph_retrieval.format(slot=slot.key, error=exc)
+                    )
 
     return PlanningCoverageResult(
         activated=True,

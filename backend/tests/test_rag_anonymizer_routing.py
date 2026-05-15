@@ -532,16 +532,16 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
     def test_general_qa_prompt_keeps_grounding_and_best_effort_rules(self) -> None:
         template = PROMPT_TEMPLATES["general_qa"]
 
-        self.assertIn("Use ONLY the retrieved context", template)
-        self.assertIn("partial but relevant", template)
-        self.assertIn("Output ONLY the answer text", template)
+        self.assertIn("Usa SOLO il contesto recuperato", template)
+        self.assertIn("parziale ma rilevante", template)
+        self.assertIn("Stampa SOLO il testo della risposta", template)
 
     def test_tender_overview_prompt_is_fact_sheet_first(self) -> None:
         template = PROMPT_TEMPLATES["tender_overview"]
 
         # Contract heading + the two ordered sections the model must
         # emit in this exact order.
-        self.assertIn("FACT-SHEET-FIRST CONTRACT", template)
+        self.assertIn("CONTRATTO FACT-SHEET-FIRST", template)
         self.assertIn('"Fatti verificati"', template)
         self.assertIn('"Analisi"', template)
         self.assertLess(
@@ -600,6 +600,27 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
             "Percentuali:",
         ):
             self.assertIn(f"- {label}", template)
+
+    def test_tender_longform_synthesis_prompt_is_narrative_not_fact_sheet_first(self) -> None:
+        template = PROMPT_TEMPLATES["tender_longform_synthesis"]
+
+        self.assertIn("LONG-FORM TENDER SYNTHESIS", template)
+        self.assertIn("fact sheet come vincolo di verita", template)
+        self.assertIn("Non aprire obbligatoriamente con", template)
+        self.assertNotIn('Apri SEMPRE con la sezione "Fatti verificati"', template)
+
+    def test_tender_longform_prompt_limits_oscat_sct_relationship(self) -> None:
+        template = PROMPT_TEMPLATES["tender_longform_synthesis"]
+
+        self.assertIn("dipendenza contrattuale o operativa", template)
+        self.assertIn("dettagli economici o tecnici propri di SCT", template)
+        self.assertIn("senza evidenza puntuale", template)
+
+    def test_tender_longform_prompt_forbids_missing_claims_for_fact_sheet_values(self) -> None:
+        template = PROMPT_TEMPLATES["tender_longform_synthesis"]
+
+        self.assertIn("non trattare come aspetti non coperti", template)
+        self.assertIn("procedure_id, CIG, importi o durate presenti nella fact sheet", template)
 
     def test_tender_overview_prompt_does_not_drop_fact_sheet_envelope(self) -> None:
         # The retrieval-to-context wiring still ships FACT_SHEET_START /

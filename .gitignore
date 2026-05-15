@@ -20,7 +20,7 @@ log/
 .agents/
 .codex-plugins/
 .github/
-
+docs/superpowers/plans/
 .claude/
 .codex/
 venv/
@@ -65,6 +65,8 @@ htmlcov/
 # --- Local config / secrets ---
 .env
 .env.*
+!.env.example
+!backend/.env.example
 *.local
 secrets.* 
 *.key

@@ -24,7 +24,7 @@ The agent never mutates ``contribution_units``, ``review_cycles``,
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -426,7 +426,7 @@ class ProposalWriterAgent:
         audit = {
             "agent": _AGENT_VERSION,
             "mode": request.mode,
-            "applied_at": datetime.now(UTC).isoformat(),
+            "applied_at": datetime.now(timezone.utc).isoformat(),
             "instruction": (request.instruction or "")[:1000],
         }
         section.content = _text_to_tiptap_doc(draft_text, audit=audit)

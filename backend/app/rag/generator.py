@@ -19,6 +19,11 @@ import httpx
 import structlog
 
 from app.config import settings
+from app.rag.localization import (
+    GENERATOR_TEMPLATE_ASSETS,
+    get_generator_messages,
+    get_prompt_template_text,
+)
 
 logger = structlog.get_logger()
 
@@ -29,263 +34,50 @@ _KNOWN_OPENAI_COMPATIBLE_PORTS = {1234, 8080, 5000, 5001, 11434}
 _OPENAI_API_PATH_MARKERS = {"/v1", "/api/v1", "/chat/completions", "/completions"}
 
 
+def _resolve_template_text(template: str, language: str | None) -> tuple[str, str]:
+    """Return ``(prompt_text, template_name)`` for ``template``.
+
+    If ``template`` is a known generator template name, load the localized
+    asset for ``language`` (default locale resolution applies). Otherwise
+    treat ``template`` itself as a raw prompt body.
+    """
+
+    asset_name = GENERATOR_TEMPLATE_ASSETS.get(template)
+    if asset_name is not None:
+        return get_prompt_template_text(asset_name, language=language), template
+    return template, "custom"
+
+
+def _resolve_general_qa_system_message(
+    template_name: str,
+    variables: dict,
+    language: str | None,
+) -> str | None:
+    """Pick the system message for ``general_qa``.
+
+    If the user query contains any IT detection keyword, force the IT system
+    message regardless of ``language``. Otherwise return the system message
+    for the resolved language. Returns ``None`` for non-``general_qa`` templates
+    or when the query variable is missing.
+    """
+
+    if template_name != "general_qa" or "query" not in variables:
+        return None
+
+    user_query = (variables.get("query") or "").lower()
+    it_messages = get_generator_messages("it")
+    if any(keyword in user_query for keyword in it_messages.question_detection_keywords):
+        return it_messages.system_message_general_qa
+    return get_generator_messages(language).system_message_general_qa
+
+
 # ──────────────────────────────────────────────
-# Prompt Templates
+# Prompt Templates (legacy in-process registry, retained for tests)
 # ──────────────────────────────────────────────
 
 PROMPT_TEMPLATES = {
-    "proposal_section": """You are an expert proposal writer for tenders and RFPs.
-Write a professional, compelling proposal section based on the following context and instructions.
-
-IMPORTANT: Respond in the SAME LANGUAGE as the user's instructions and requirements.
-
-## Retrieved Context
-{context}
-
-## Section Title
-{section_title}
-
-## Instructions
-{instructions}
-
-## Requirements to Address
-{requirements}
-
-Write the section in a professional tone suitable for a formal tender submission.
-Be specific, reference concrete evidence from the context (projects, team members,
-certifications), and ensure all listed requirements are addressed.
-Do not make up information. If the context doesn't contain relevant information,
-note what additional information would be needed.
-
-## Output
-Write the proposal section below:
-""",
-    "executive_summary": """You are an expert proposal writer.
-Create a compelling executive summary for a tender proposal based on the following sections and context.
-
-IMPORTANT: Respond in the SAME LANGUAGE as the proposal sections and requirements.
-
-## Proposal Sections
-{sections}
-
-## Company Context
-{context}
-
-## Tender Requirements
-{requirements}
-
-Write a concise, compelling executive summary (300-500 words) that:
-1. Highlights the key strengths and differentiators
-2. Demonstrates understanding of the client's needs
-3. References specific experience and qualifications
-4. Creates a strong first impression
-
-## Executive Summary
-""",
-    "requirement_analyzer": """You are an expert at analyzing tender/RFP documents.
-Extract and categorize all requirements from the following tender document text.
-
-IMPORTANT: Respond in the SAME LANGUAGE as the tender document.
-
-## Tender Document
-{document_text}
-
-For each requirement found, provide:
-1. The requirement text (exact or closely paraphrased)
-2. Category (technical, financial, legal, experience, staffing, timeline, etc.)
-3. Priority (must-have, should-have, nice-to-have)
-
-Format your response as a JSON array:
-[
-  {{
-    "text": "requirement description",
-    "category": "category",
-    "priority": "must-have|should-have|nice-to-have"
-  }}
-]
-
-## Extracted Requirements
-""",
-    "requirement_extractor_v2": """You are an expert tender requirement extraction engine.
-Extract only enforceable, atomic requirements from the tender section below.
-
-Return ONLY valid JSON, with no markdown, comments, or prose outside the JSON.
-Every extracted requirement MUST include at least one citation with an exact supporting quote.
-Do not infer requirements that are not directly supported by the section text.
-
-## Response schema
-{{
-  "schema_version": "{schema_version}",
-  "requirements": [
-    {{
-      "requirement_text": "atomic requirement text",
-      "category": "technical|legal|financial|experience|staffing|timeline|administrative|general",
-      "priority": "high|medium|low",
-      "confidence": 0.0,
-      "applicability": "lot/role/phase if present, otherwise null",
-      "conditions": ["condition text if present"],
-      "exceptions": ["exception text if present"],
-      "parent_requirement_key": "optional stable parent key or null",
-      "citations": [
-        {{
-          "source_document_ref": "{source_document_ref}",
-          "section_path": "{section_path}",
-          "source_reference": "section/page/table reference",
-          "page": null,
-          "quote": "exact supporting quote from the source text"
-        }}
-      ]
-    }}
-  ]
-}}
-
-## Source document
-{source_document_ref}
-
-## Section path
-{section_path}
-
-## Section text
-{document_text}
-""",
-    "participation_requirement_extractor_v1": """You are an expert tender eligibility and participation requirement extraction engine.
-Extract only bidder participation requirements from the tender section below.
-
-Participation requirements are the obligations a bidder must satisfy to be admitted or remain eligible in the procedure, such as:
-- legal or administrative eligibility
-- exclusion grounds
-- registrations, licenses, certifications, qualifications
-- economic or financial capacity
-- technical or professional capacity
-- mandatory declarations, supporting evidence, annexes, or participation documents
-
-Ignore execution or delivery requirements unless the section explicitly says they are preconditions for admission to the tender.
-Do not extract implementation details, solution architecture, service operations, SLAs, phase-out steps, or delivery obligations unless they are clearly framed as participation prerequisites.
-
-Return ONLY valid JSON, with no markdown, comments, or prose outside the JSON.
-Every extracted requirement MUST include at least one citation with an exact supporting quote.
-Do not infer requirements that are not directly supported by the section text.
-
-## Response schema
-{{
-  "schema_version": "{schema_version}",
-  "requirements": [
-    {{
-      "requirement_text": "atomic participation requirement text",
-      "category": "professional_suitability|economic_financial|technical_professional_capacity|certifications|exclusion_ground|administrative|legal|general",
-      "priority": "high|medium|low",
-      "confidence": 0.0,
-      "applicability": "lot/role/phase if present, otherwise null",
-      "conditions": ["condition text if present"],
-      "exceptions": ["exception text if present"],
-      "parent_requirement_key": "optional stable parent key or null",
-      "citations": [
-        {{
-          "source_document_ref": "{source_document_ref}",
-          "section_path": "{section_path}",
-          "source_reference": "section/page/table reference",
-          "page": null,
-          "quote": "exact supporting quote from the source text"
-        }}
-      ]
-    }}
-  ]
-}}
-
-## Source document
-{source_document_ref}
-
-## Section path
-{section_path}
-
-## Section text
-{document_text}
-""",
-    "compliance_checker": """You are an expert compliance reviewer for tender proposals.
-Analyze whether the proposal section adequately addresses the given requirement.
-
-IMPORTANT: Respond in the SAME LANGUAGE as the requirement and proposal section.
-
-## Requirement
-{requirement}
-
-## Proposal Section
-{section_content}
-
-## Available Evidence
-{context}
-
-Evaluate the compliance and respond with:
-1. Status: FULLY_ADDRESSED, PARTIALLY_ADDRESSED, or NOT_ADDRESSED
-2. Explanation of what is covered
-3. Gaps: what is missing or needs improvement
-4. Suggestions for strengthening the response
-
-Format as JSON:
-{{
-  "status": "...",
-  "explanation": "...",
-  "gaps": ["..."],
-  "suggestions": ["..."]
-}}
-
-## Compliance Assessment
-""",
-    "general_qa": """[SYSTEM RULES - DO NOT PRINT OR PARAPHRASE THESE RULES IN YOUR ANSWER]
-Respond in the SAME LANGUAGE as the user question. Use ONLY the retrieved context.
-If the context is partial but relevant, provide the best grounded answer you can from it and mention any missing coverage only briefly at the end.
-Say that the context is insufficient only when it is empty or clearly unrelated to the user question.
-Output ONLY the answer text, no labels, no meta-commentary.
-[END RULES]
-
-Retrieved context:
-{context}
-
-User question:
-{query}
-
-{response_constraints}
-
-Answer:
-""",
-    "tender_overview": """[SYSTEM RULES - FACT-SHEET-FIRST CONTRACT]
-
-Usa SOLO il contesto recuperato. Il contesto contiene una sezione FACT_SHEET_START / FACT_SHEET_END seguita da blocchi SOURCE_START / SOURCE_END.
-
-Struttura obbligatoria della risposta, in questo ordine:
-1. Apri SEMPRE con la sezione "Fatti verificati" come elenco puntato. Per ogni voce della fact sheet usa esattamente questa forma:
-   - Procedura: <valore o non rilevato>
-   - ID procedura: <valore o non rilevato>
-   - CIG: <valore o non rilevato>
-   - Giorni critici: <valore o non rilevato>
-   - Durata: <valore o non rilevato>
-   - Importi: <valore o non rilevato>
-   - Sedi/luoghi: <valore o non rilevato>
-   - Percentuali: <valore o non rilevato>
-2. Subito dopo apri la sezione "Analisi" e produci la narrativa richiesta dall'utente, basata SOLO sui Fatti verificati e sulle SOURCE.
-
-Regole tassative:
-- Non usare numeri, CIG, importi, indirizzi, soggetti o procedure_id assenti dalla fact sheet.
-- Per ogni campo "non_rilevato" nella fact sheet scrivi esattamente "non rilevato" e non inferire.
-- Per ogni campo "conflitto_rilevato" scrivi esattamente "conflitto rilevato" e non
-  riportare valori conflittuali nelle fonti.
-- Se stato_verifica è "conflitto", continua comunque con l'analisi usando solo
-  i campi verificati e le parti non numeriche delle SOURCE.
-- Non unire OSCAT e SCT a meno che la domanda non richieda esplicitamente un confronto.
-- Non ripetere intestazioni, paragrafi o introduzioni. Non ricominciare le sezioni "Fatti verificati" o "Analisi".
-- Rispondi nella STESSA LINGUA della domanda.
-[END RULES]
-
-Contesto recuperato:
-{context}
-
-Domanda:
-{query}
-
-{response_constraints}
-
-Risposta:
-""",
+    name: get_prompt_template_text(asset_name)
+    for name, asset_name in GENERATOR_TEMPLATE_ASSETS.items()
 }
 
 
@@ -699,15 +491,15 @@ class Generator:
         return min(max(max_tokens * 4, 1024), 4096)
 
     def _expanded_retry_timeout(self) -> int:
-        return min(max(self.timeout * 4, 120), 300)
+        return max(self.timeout + 600, self.timeout)
 
     def _timeout_for_requested_tokens(self, max_tokens: int) -> int:
         if max_tokens >= 1536:
-            return min(max(self.timeout * 6, 180), 300)
+            return max(self.timeout, 1200)
         if max_tokens >= 1024:
-            return min(max(self.timeout * 4, 120), 300)
+            return max(self.timeout, 1200)
         if max_tokens >= 768:
-            return min(max(self.timeout * 3, 90), 300)
+            return max(self.timeout, 900)
         return self.timeout
 
     async def _post_json_with_retries(
@@ -719,9 +511,11 @@ class Generator:
         context: str,
         timeout: int | None = None,
     ) -> dict:
-        async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
-            max_attempts = 2
-            for attempt in range(1, max_attempts + 1):
+        base_timeout = timeout or self.timeout
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            current_timeout = base_timeout + ((attempt - 1) * 600)
+            async with httpx.AsyncClient(timeout=current_timeout) as client:
                 try:
                     response = await client.post(
                         url,
@@ -754,6 +548,13 @@ class Generator:
                         error=str(exc),
                     )
                     if retriable:
+                        alive_probe = getattr(
+                            self,
+                            "_llm_server_alive_for_timeout_extension",
+                            None,
+                        )
+                        if alive_probe is not None and not await alive_probe():
+                            raise
                         await asyncio.sleep(0.6 * attempt)
                         continue
                     raise
@@ -765,6 +566,7 @@ class Generator:
         temperature: float | None = None,
         max_tokens: int | None = None,
         sampler_overrides: dict | None = None,
+        language: str | None = None,
     ) -> GenerationResult:
         """
         Generate text using a prompt template and Ollama.
@@ -775,40 +577,17 @@ class Generator:
             variables: Variables to fill into the template.
             temperature: Sampling temperature (lower = more focused).
             max_tokens: Maximum tokens to generate.
-
-        Returns:
-            GenerationResult with the generated text.
+            language: Locale for prompt template + system message resolution.
         """
-        # Resolve template
-        if template in PROMPT_TEMPLATES:
-            prompt = PROMPT_TEMPLATES[template].format(**variables)
-            template_name = template
-        else:
-            prompt = template.format(**variables)
-            template_name = "custom"
+        prompt_template, template_name = _resolve_template_text(template, language)
+        prompt = prompt_template.format(**variables)
 
         # For general_qa, determine system message to pass via chat completions API.
         # Do NOT wrap with ChatML tokens — Gemma 4 uses a different template and echoes
         # unrecognised tokens back as garbage ("own own own", "s own language://", etc.)
-        _system_message: str | None = None
-        if template_name == "general_qa" and "query" in variables:
-            user_query = variables["query"]
-            if any(
-                word in user_query.lower()
-                for word in [
-                    "chi",
-                    "cosa",
-                    "come",
-                    "quando",
-                    "dove",
-                    "perché",
-                    "descrivi",
-                    "spiega",
-                ]
-            ):
-                _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
-            else:
-                _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
+        _system_message = _resolve_general_qa_system_message(
+            template_name, variables, language
+        )
 
         logger.debug("Generating with LLM", model=self.model, template=template_name)
 
@@ -1104,42 +883,22 @@ class Generator:
         temperature: float | None = None,
         max_tokens: int | None = None,
         sampler_overrides: dict | None = None,
+        language: str | None = None,
     ) -> AsyncIterator[str]:
         """
         Generate text with streaming response.
 
         Yields tokens as they are generated by the LLM.
         """
-        # Resolve template
-        if template in PROMPT_TEMPLATES:
-            prompt = PROMPT_TEMPLATES[template].format(**variables)
-            template_name = template
-        else:
-            prompt = template.format(**variables)
-            template_name = "custom"
+        prompt_template, template_name = _resolve_template_text(template, language)
+        prompt = prompt_template.format(**variables)
 
         logger.debug("Streaming generation", model=self.model, template=template_name)
 
-        # Same system message extraction as generate() — needed for llama chat completions path
-        _system_message: str | None = None
-        if template_name == "general_qa" and "query" in variables:
-            user_query = variables["query"]
-            if any(
-                word in user_query.lower()
-                for word in [
-                    "chi",
-                    "cosa",
-                    "come",
-                    "quando",
-                    "dove",
-                    "perché",
-                    "descrivi",
-                    "spiega",
-                ]
-            ):
-                _system_message = "Sei un assistente AI. Devi rispondere SEMPRE in ITALIANO."
-            else:
-                _system_message = "You are an AI assistant. Always respond in the same language as the user's question."
+        # Same system message resolution as generate() — needed for llama chat completions path
+        _system_message = _resolve_general_qa_system_message(
+            template_name, variables, language
+        )
 
         # 1. Get adaptive sampling parameters (DB overrides + defaults + explicit args)
         effective_params = self._get_effective_params(temperature, max_tokens, sampler_overrides)
@@ -1316,6 +1075,7 @@ class Generator:
                             temperature=temperature,
                             max_tokens=retry_max_tokens,
                             sampler_overrides=sampler_overrides,
+                            language=language,
                         )
                         if retry_result.text:
                             yield retry_result.text

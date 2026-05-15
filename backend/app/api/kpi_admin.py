@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -635,7 +635,7 @@ def _analysis_job_fallback(tender_id: int, detail: str) -> dict[str, Any]:
         "created_at": None,
         "started_at": None,
         "completed_at": None,
-        "updated_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "latest_snapshot_generated_at": None,
         "error_message": detail,
     }
@@ -809,7 +809,7 @@ async def get_kpi_service_status(
     return {
         "status": "degraded" if degraded else "ready",
         "degraded": degraded,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "health": health_payload,
         "readiness": readiness_payload,
         "version_manifest": manifest_payload,
@@ -870,7 +870,7 @@ async def resync_kpi_portfolio(
 
     response_payload = {
         "status": "completed",
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_tenders": len(tender_ids),
         "synced_tenders": synced_tenders,
         "failed_tenders": failed_tenders,

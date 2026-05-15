@@ -59,6 +59,76 @@ class _RecordingRetriever:
         ][: top_k or 1]
 
 
+class _LongformCoverageRetriever:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def search(self, query: str, top_k: int | None = None, filters: dict | None = None):
+        del top_k, filters
+        self.queries.append(query)
+        normalized = query.casefold()
+        if "stazione appaltante" in normalized or "procedura" in normalized:
+            return [
+                SimpleNamespace(
+                    text=(
+                        "OSCAT per servizi CI/CD. Stazione appaltante Regione Toscana. "
+                        "Procedura 012942/2025."
+                    ),
+                    score=2.8,
+                    metadata={"chunk_index": 101, "page_number": 1},
+                )
+            ]
+        if "cig" in normalized:
+            return [
+                SimpleNamespace(
+                    text="OSCAT servizi GitLab, Sonar e Nexus. CIG B123456789.",
+                    score=2.7,
+                    metadata={"chunk_index": 102, "page_number": 2},
+                )
+            ]
+        if "importo" in normalized or "base d'asta" in normalized or "euro" in normalized:
+            return [
+                SimpleNamespace(
+                    text=(
+                        "OSCAT importo a base di gara pari a 5.999.723,60 euro. "
+                        "Valore globale stimato pari a 11.172.582,96 euro."
+                    ),
+                    score=2.6,
+                    metadata={"chunk_index": 103, "page_number": 3},
+                )
+            ]
+        if "durata" in normalized or "mesi" in normalized:
+            return [
+                SimpleNamespace(
+                    text="OSCAT durata dell'accordo quadro pari a 48 mesi.",
+                    score=2.5,
+                    metadata={"chunk_index": 104, "page_number": 4},
+                )
+            ]
+        return [
+            SimpleNamespace(
+                text="OSCAT usa GitLab, Sonar, Nexus e Vulnerability Assessment.",
+                score=3.0,
+                metadata={"chunk_index": 100, "page_number": 1},
+            )
+        ]
+
+
+class _FirstOnlyReranker:
+    def rerank(self, *, query, results, top_k):
+        del query, top_k
+        return results[:1]
+
+
+class _StaticRetriever:
+    def __init__(self, results: list[SimpleNamespace]) -> None:
+        self.results = results
+
+    def search(self, query: str, top_k: int | None = None, filters: dict | None = None):
+        del query, filters
+        return self.results[: top_k or len(self.results)]
+
+
 class PlanningCoverageTests(unittest.IsolatedAsyncioTestCase):
     def _enabled_config(self) -> dict:
         config = {
@@ -178,6 +248,121 @@ class PlanningCoverageTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(source["metadata"].get("coverage_slot") == "cig_lots" for source in enabled.sources)
         )
+
+    async def test_longform_tender_forces_critical_coverage_into_fact_sheet(self) -> None:
+        engine = HybridRAGEngine()
+        retriever = _LongformCoverageRetriever()
+        engine.dense_retriever = retriever
+        engine.sparse_retriever = retriever
+        engine.graph_retriever = None
+        engine.reranker = _FirstOnlyReranker()
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text=(
+                    "descrivimi dettagliatamente ogni aspetto della gara OSCAT "
+                    "della regione toscana in 1500 parole"
+                ),
+                mode=QueryMode.QA,
+                top_k=1,
+                retrievers={"dense": True, "sparse": True, "graph": False},
+                planning_coverage_config=DEFAULT_PLANNING_COVERAGE_CONFIG,
+            )
+        )
+
+        self.assertIn("procedure_id: 012942/2025", retrieved.context)
+        self.assertIn("durata: 48 mesi", retrieved.context)
+        self.assertIn("5.999.723,60 euro", retrieved.context)
+        self.assertIn("11.172.582,96 euro", retrieved.context)
+        self.assertTrue(any("base d'asta" in query.casefold() for query in retriever.queries))
+
+    async def test_longform_tender_filters_unrequested_integrity_pact_noise(self) -> None:
+        engine = HybridRAGEngine()
+        engine.dense_retriever = _StaticRetriever(
+            [
+                SimpleNamespace(
+                    text=(
+                        "OSCAT usa GitLab, Sonar, Nexus e Vulnerability Assessment. "
+                        "Procedura 012942/2025."
+                    ),
+                    score=3.0,
+                    metadata={"chunk_index": 201, "page_number": 1},
+                ),
+                SimpleNamespace(
+                    text=(
+                        "Patto di Integrità: soglie economiche, obblighi anticorruzione "
+                        "e importi amministrativi eterogenei."
+                    ),
+                    score=2.9,
+                    metadata={"chunk_index": 202, "page_number": 12},
+                ),
+                SimpleNamespace(
+                    text=(
+                        "SCT-Tix CCTT ESTAR monitoraggio impianti industriali per il "
+                        "Sistema Cloud Toscana."
+                    ),
+                    score=2.8,
+                    metadata={"chunk_index": 203, "page_number": 13},
+                ),
+            ]
+        )
+        engine.sparse_retriever = None
+        engine.graph_retriever = None
+        engine.reranker = _FakeReranker()
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text=(
+                    "descrivimi dettagliatamente ogni aspetto della gara OSCAT "
+                    "della regione toscana in 1500 parole"
+                ),
+                mode=QueryMode.QA,
+                retrievers={"dense": True, "sparse": False, "graph": False},
+                planning_coverage_config=DEFAULT_PLANNING_COVERAGE_CONFIG,
+            )
+        )
+
+        self.assertIn("procedura: OSCAT", retrieved.context)
+        self.assertNotIn("Patto di Integrità", retrieved.context)
+        self.assertNotIn("SCT-Tix", retrieved.context)
+        self.assertNotIn("ESTAR", retrieved.context)
+
+    async def test_longform_tender_keeps_integrity_pact_when_requested(self) -> None:
+        engine = HybridRAGEngine()
+        engine.dense_retriever = _StaticRetriever(
+            [
+                SimpleNamespace(
+                    text="OSCAT usa GitLab, Sonar, Nexus. Procedura 012942/2025.",
+                    score=3.0,
+                    metadata={"chunk_index": 301, "page_number": 1},
+                ),
+                SimpleNamespace(
+                    text=(
+                        "Patto di Integrità: obblighi anticorruzione applicabili alla "
+                        "documentazione amministrativa della gara."
+                    ),
+                    score=2.9,
+                    metadata={"chunk_index": 302, "page_number": 12},
+                ),
+            ]
+        )
+        engine.sparse_retriever = None
+        engine.graph_retriever = None
+        engine.reranker = _FakeReranker()
+
+        retrieved = await engine._retrieve_context_and_sources(
+            RAGQuery(
+                text=(
+                    "descrivimi il Patto di Integrità della gara OSCAT "
+                    "della regione toscana in 1000 parole"
+                ),
+                mode=QueryMode.QA,
+                retrievers={"dense": True, "sparse": False, "graph": False},
+                planning_coverage_config=DEFAULT_PLANNING_COVERAGE_CONFIG,
+            )
+        )
+
+        self.assertIn("Patto di Integrità", retrieved.context)
 
 
 if __name__ == "__main__":

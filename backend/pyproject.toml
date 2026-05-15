@@ -88,6 +88,8 @@ ignore = [
     "B008",
     # SQLAlchemy/Pydantic models currently rely on explicit str + Enum semantics.
     "UP042",
+    # Diagnostics assert explicit timezone.utc usage instead of the datetime.UTC alias.
+    "UP017",
 ]
 
 [tool.ruff.lint.per-file-ignores]

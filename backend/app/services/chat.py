@@ -6,7 +6,7 @@ import hashlib
 import io
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from minio import Minio
 from minio.error import S3Error
@@ -81,7 +81,7 @@ def build_chat_text_object_name(
     message_id: int,
     created_at: datetime,
 ) -> str:
-    dt = created_at.astimezone(UTC)
+    dt = created_at.astimezone(timezone.utc)
     return (
         f"tenders/tender_{tender_id}/chat/room_{chat_room_id}/"
         f"messages/{dt:%Y/%m/%d}/{message_id}.json"
@@ -130,7 +130,7 @@ def build_chat_attachment_object_name(
     created_at: datetime,
     filename: str,
 ) -> str:
-    dt = created_at.astimezone(UTC)
+    dt = created_at.astimezone(timezone.utc)
     safe_filename = sanitize_attachment_filename(filename)
     return (
         f"tenders/tender_{tender_id}/chat/room_{chat_room_id}/"
@@ -242,7 +242,7 @@ async def ensure_official_chat_room(
     )
     room = result.scalar_one_or_none()
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
 
     if not room:
         room = ChatRoom(
@@ -376,7 +376,7 @@ async def deactivate_chat_member_for_tender(
         return None
 
     member.is_active = False
-    member.left_at = datetime.now(UTC)
+    member.left_at = datetime.now(timezone.utc)
     await db.flush()
 
     await create_chat_event(
