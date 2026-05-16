@@ -11,34 +11,6 @@ identical between `it/` and `en/` (only the header prose differs). The
 procedure labels (OSCAT/SCT) and theme keys (garanzie/manleva/integrita)
 remain canonical in code: only the members are externalized here.
 
-## Procedure Anchors OSCAT
-
-- gitlab
-- sonar
-- nexus
-- vulnerability assessment
-- dpa
-- gpa
-- gva
-- sme
-- mam
-- sts
-- devsecops
-- oscat
-
-## Procedure Anchors SCT
-
-- cctt
-- rtpc
-- presa in carico
-- fase transitoria
-- qualificazione acn
-- tix
-- via san piero a quaracchi
-- sistema cloud toscana
-- sistema cloud toscano
-- sct
-
 ## Semantic Theme garanzie
 
 - garanzia

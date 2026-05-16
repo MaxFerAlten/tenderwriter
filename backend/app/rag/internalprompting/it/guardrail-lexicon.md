@@ -12,34 +12,6 @@ intestazione). Le etichette di procedura (OSCAT/SCT) e le chiavi di tema
 (garanzie/manleva/integrita) restano canoniche nel codice: qui si
 esternalizzano solo i membri.
 
-## Procedure Anchors OSCAT
-
-- gitlab
-- sonar
-- nexus
-- vulnerability assessment
-- dpa
-- gpa
-- gva
-- sme
-- mam
-- sts
-- devsecops
-- oscat
-
-## Procedure Anchors SCT
-
-- cctt
-- rtpc
-- presa in carico
-- fase transitoria
-- qualificazione acn
-- tix
-- via san piero a quaracchi
-- sistema cloud toscana
-- sistema cloud toscano
-- sct
-
 ## Semantic Theme garanzie
 
 - garanzia

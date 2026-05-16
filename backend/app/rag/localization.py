@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from app.rag.internal_prompting import (
     default_language,
@@ -18,6 +19,9 @@ from app.rag.internal_prompting import (
     load_localized_messages,
     load_prompt_template,
 )
+
+if TYPE_CHECKING:
+    from app.rag.procedure_profiles import ProcedureProfile
 
 _INTENT_ASSET = "query-intent"
 _PROMPT_LEAKAGE_ASSET = "prompt-leakage"
@@ -217,7 +221,9 @@ class GuardrailRepairMessages:
     conjunction_and: str
 
 
-_GUARDRAIL_PROCEDURE_LABELS: tuple[str, ...] = ("OSCAT", "SCT")
+# Base RAG knows no tender-specific procedure labels. Labels are supplied by
+# the active profile layer (app.rag.procedure_profiles).
+_GUARDRAIL_PROCEDURE_LABELS: tuple[str, ...] = ()
 _GUARDRAIL_SEMANTIC_THEMES: tuple[str, ...] = ("garanzie", "manleva", "integrita")
 
 
@@ -565,6 +571,20 @@ def get_guardrail_lexicon(language: str | None = None) -> GuardrailLexicon:
         semantic_theme_keywords=semantic_theme_keywords,
         comparison_markers=comparison_markers,
     )
+
+
+def procedure_anchors_for_profiles(
+    profiles: tuple[ProcedureProfile, ...],
+    *,
+    language: str | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Base anchors (currently empty) merged with the active profiles' anchors."""
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    base = dict(get_guardrail_lexicon(_resolve_language(language)).procedure_anchors)
+    for label, anchors in active_procedure_anchors(profiles).items():
+        base[label] = (*base.get(label, ()), *anchors)
+    return base
 
 
 @lru_cache(maxsize=4)

@@ -59,3 +59,19 @@ def test_oscat_profile_exposes_expected_labels_and_queries() -> None:
 def test_base_profile_default_flag() -> None:
     assert BASE_PROCUREMENT_PROFILE.enabled_by_default is True
     assert OSCAT_SCT_TOSCANA_PROFILE.enabled_by_default is False
+
+
+def test_base_guardrail_lexicon_has_empty_procedure_anchors() -> None:
+    from app.rag.localization import get_guardrail_lexicon
+
+    lex = get_guardrail_lexicon("it")
+    assert lex.procedure_anchors == {}
+
+
+def test_localization_overlay_merges_profile_anchors() -> None:
+    from app.rag.localization import procedure_anchors_for_profiles
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    anchors = procedure_anchors_for_profiles((OSCAT_SCT_TOSCANA_PROFILE,), language="it")
+    assert "oscat" in {a.casefold() for a in anchors["OSCAT"]}
+    assert "cctt" in {a.casefold() for a in anchors["SCT"]}
