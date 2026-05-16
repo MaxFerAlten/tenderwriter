@@ -75,3 +75,32 @@ def test_localization_overlay_merges_profile_anchors() -> None:
     anchors = procedure_anchors_for_profiles((OSCAT_SCT_TOSCANA_PROFILE,), language="it")
     assert "oscat" in {a.casefold() for a in anchors["OSCAT"]}
     assert "cctt" in {a.casefold() for a in anchors["SCT"]}
+
+
+def test_classify_chunk_is_unattributed_without_profile() -> None:
+    from app.rag.procedure_guardrails import classify_chunk_procedure
+
+    label = classify_chunk_procedure("Servizi GitLab, Sonar, Nexus, Vulnerability Assessment")
+    # No profile -> engine 'unattributed' sentinel, never "OSCAT".
+    assert label != "OSCAT"
+
+
+def test_classify_chunk_uses_profile_when_active() -> None:
+    from app.rag.procedure_guardrails import classify_chunk_procedure
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    profiles = (OSCAT_SCT_TOSCANA_PROFILE,)
+    assert (
+        classify_chunk_procedure(
+            "Servizi GitLab, Sonar, Nexus, Vulnerability Assessment",
+            active_profiles=profiles,
+        )
+        == "OSCAT"
+    )
+    assert (
+        classify_chunk_procedure(
+            "RTPC, CCTT, qualificazione ACN, Sistema Cloud Toscana",
+            active_profiles=profiles,
+        )
+        == "SCT"
+    )

@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.rag.internal_prompting import default_language
 from app.rag.localization import (
@@ -21,6 +21,9 @@ from app.rag.localization import (
     get_guardrail_patterns,
     get_guardrail_repair_messages,
 )
+
+if TYPE_CHECKING:
+    from app.rag.procedure_profiles import ProcedureProfile
 
 _GUARDRAIL_LEXICON: GuardrailLexicon = get_guardrail_lexicon(default_language())
 _GUARDRAIL_PATTERNS: GuardrailPatterns = get_guardrail_patterns(default_language())
@@ -53,7 +56,7 @@ class FactStatus(StrEnum):
 
 ProcedureLabel = str
 
-PROCEDURE_ANCHORS: dict[ProcedureLabel, tuple[str, ...]] = (
+PROCEDURE_ANCHORS: dict[ProcedureLabel, tuple[str, ...]] = dict(
     _GUARDRAIL_LEXICON.procedure_anchors
 )
 
@@ -243,11 +246,23 @@ def _canonical_money_value(value: str) -> str:
     return format(amount, "f")
 
 
-def classify_chunk_procedure(text: str) -> ProcedureLabel:
+def classify_chunk_procedure(
+    text: str,
+    *,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
+) -> ProcedureLabel:
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    anchors_by_label = dict(PROCEDURE_ANCHORS)
+    if active_profiles:
+        for label, anchors in active_procedure_anchors(active_profiles).items():
+            anchors_by_label[label] = (*anchors_by_label.get(label, ()), *anchors)
+    if not anchors_by_label:
+        return _engine_messages().procedure_label_unattributed
     normalized = _normalize(text)
     scores = {
         label: sum(1 for anchor in anchors if anchor in normalized)
-        for label, anchors in PROCEDURE_ANCHORS.items()
+        for label, anchors in anchors_by_label.items()
     }
     best_label, best_score = max(scores.items(), key=lambda item: item[1])
     if best_score <= 0:
@@ -342,14 +357,20 @@ def build_fact_sheet(
     context_items: Sequence[Mapping[str, Any]],
     *,
     query: str,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
 ) -> FactSheet:
     unattributed = _engine_messages().procedure_label_unattributed
     labels = [
         label
         for item in context_items
-        if (label := classify_chunk_procedure(str(item.get("text") or ""))) != unattributed
+        if (
+            label := classify_chunk_procedure(
+                str(item.get("text") or ""), active_profiles=active_profiles
+            )
+        )
+        != unattributed
     ]
-    query_label = classify_chunk_procedure(query)
+    query_label = classify_chunk_procedure(query, active_profiles=active_profiles)
     if query_label != unattributed:
         labels.insert(0, query_label)
 
@@ -367,14 +388,19 @@ def build_fact_sheet(
     procedure_link_values: set[tuple[str, str]] = set()
     if procedure_label in PROCEDURE_ANCHORS:
         for item in context_items:
-            if classify_chunk_procedure(str(item.get("text") or "")) == procedure_label:
+            if (
+                classify_chunk_procedure(
+                    str(item.get("text") or ""), active_profiles=active_profiles
+                )
+                == procedure_label
+            ):
                 procedure_link_values.update(_metadata_link_values(item))
 
     for index, item in enumerate(context_items):
         text = str(item.get("text") or "")
         if not text:
             continue
-        item_label = classify_chunk_procedure(text)
+        item_label = classify_chunk_procedure(text, active_profiles=active_profiles)
         if (
             procedure_label in PROCEDURE_ANCHORS
             and item_label != procedure_label
