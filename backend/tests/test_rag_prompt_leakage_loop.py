@@ -54,7 +54,16 @@ if "pydantic" not in sys.modules:
 
         return decorator
 
+    def _field(*args, default=None, **kwargs):
+        # app.config uses Field(default=..., validation_alias=...) for a
+        # plain class attribute; the fake BaseSettings reads that default
+        # via getattr(cls, name) and applies env overrides itself, so
+        # returning the declared default is sufficient for the stub.
+        del args, kwargs
+        return default
+
     fake_pydantic.model_validator = _model_validator
+    fake_pydantic.Field = _field
     sys.modules["pydantic"] = fake_pydantic
 
 if "httpx" not in sys.modules:
@@ -306,19 +315,48 @@ class PromptLeakageLoopTests(unittest.TestCase):
             "La procedura SCT riguarda il Sistema Cloud Toscana.",
         )
 
-    def test_clean_final_answer_text_normalizes_known_tender_cig(self) -> None:
+    def test_clean_final_answer_text_generic_cig_cleanup(self) -> None:
+        # Decontamination: the tender-specific OCR rule that force-rewrote
+        # any B33988ECF* token to "CIG B33988ECF2" was removed. The generic
+        # cleanup path must still repair generic OCR artifacts, but must NOT
+        # apply the removed tender-specific CIG normalization.
         engine = HybridRAGEngine()
 
-        cleaned = engine._clean_final_answer_text(
+        # Generic, retained cleanup still works (OCR replacements +
+        # plural-day repair from engine-cleanup-patterns.md).
+        cleaned_generic = engine._clean_final_answer_text(
+            "Un ulter ulteriore focus sulla Manutenzione Migliore (MAM) "
+            "presso Infrastruttura Digitali, con termine entro 180 giorni, "
+            "270 giorno."
+        )
+        self.assertNotIn("ulter ulteriore", cleaned_generic)
+        self.assertIn("ulteriore", cleaned_generic)
+        self.assertNotIn("Migliore (MAM)", cleaned_generic)
+        self.assertIn("Migliorativa (MAM)", cleaned_generic)
+        self.assertNotIn("Infrastruttura Digitali", cleaned_generic)
+        self.assertIn("Infrastrutture Digitali", cleaned_generic)
+        self.assertNotIn("270 giorno.", cleaned_generic)
+        self.assertIn("270 giorni", cleaned_generic)
+
+        # The removed tender-specific normalization must NOT be applied:
+        # previously-mangled B33988ECF* tokens are left exactly as-is and
+        # are NOT force-rewritten to "CIG B33988ECF2".
+        cleaned_cig = engine._clean_final_answer_text(
             "Il capitolato indica il CIG B33988ECF1. "
             "In un altro passaggio il CIG B33988ECF3 viene richiamato in forma errata. "
             "La sintesi finale cita anche CIG B33988ECF."
         )
+        self.assertEqual(cleaned_cig.count("CIG B33988ECF2"), 0)
+        self.assertIn("CIG B33988ECF1", cleaned_cig)
+        self.assertIn("CIG B33988ECF3", cleaned_cig)
+        self.assertIn("CIG B33988ECF.", cleaned_cig)
 
-        self.assertEqual(cleaned.count("CIG B33988ECF2"), 3)
-        self.assertNotIn("CIG B33988ECF1", cleaned)
-        self.assertNotIn("CIG B33988ECF3", cleaned)
-        self.assertNotRegex(cleaned, r"CIG\s+B33988ECF\b")
+        # A well-formed generic CIG is preserved intact (no spurious
+        # rewrite by the generic cleanup path).
+        cleaned_ok = engine._clean_final_answer_text(
+            "Il bando riporta il CIG 9A1B2C3D4E come riferimento."
+        )
+        self.assertIn("CIG 9A1B2C3D4E", cleaned_ok)
 
     def test_structured_tender_overview_stream_uses_clean_full_answer(self) -> None:
         engine = HybridRAGEngine()
