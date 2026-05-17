@@ -18,6 +18,8 @@ BASE_ASSETS = (
     "guardrail-lexicon",
     "guardrail-patterns",
     "engine-cleanup-patterns",
+    "graph-retriever-messages",
+    "context-quality",
 )
 
 
