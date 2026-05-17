@@ -7,9 +7,9 @@ comparison requests (`_allows_comparison`).
 
 These lists are matched against Italian tender text and the generated
 answer, so they are intrinsically lexical and the section bodies stay
-identical between `it/` and `en/` (only the header prose differs). The
-procedure labels (OSCAT/SCT) and theme keys (garanzie/manleva/integrita)
-remain canonical in code: only the members are externalized here.
+identical between `it/` and `en/` (only the header prose differs).
+Canonical procedure labels and theme keys remain defined in code (via the
+active procedure profiles); only the lexical members are externalized here.
 
 ## Semantic Theme garanzie
 

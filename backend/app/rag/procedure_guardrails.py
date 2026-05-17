@@ -1358,6 +1358,7 @@ def validate_guarded_answer(
     query: str = "",
     config: Mapping[str, Any] | None = None,
     allowed_procedure_labels: Sequence[ProcedureLabel] | None = None,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
 ) -> GuardrailValidationResult:
     cfg = normalize_guardrail_config(config)
     if not guarded or not cfg["enabled"]:
@@ -1385,7 +1386,10 @@ def validate_guarded_answer(
         unsupported_labels = labels - allowed_labels
         if len(labels) > 1 and unsupported_labels and not comparison_allowed:
             failures.append("cross_procedure_mixing")
-        if fact_sheet.procedure_label in {"OSCAT", "SCT"}:
+        tender_instance_labels: set[ProcedureLabel] = set()
+        for profile in active_profiles or ():
+            tender_instance_labels |= set(profile.procedure_anchors)
+        if fact_sheet.procedure_label in tender_instance_labels:
             other_labels = (labels - {fact_sheet.procedure_label}) - allowed_labels
             if other_labels and not comparison_allowed:
                 failures.append("wrong_procedure_label")

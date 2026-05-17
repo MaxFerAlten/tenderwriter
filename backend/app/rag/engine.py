@@ -2535,6 +2535,7 @@ class HybridRAGEngine:
                 procedure_label=fact_sheet.procedure_label,
             )
 
+        active_profiles = self._active_profiles_for_query(rag_query.text)
         result = validate_guarded_answer(
             answer=answer,
             fact_sheet=fact_sheet,
@@ -2542,6 +2543,7 @@ class HybridRAGEngine:
             query=rag_query.text,
             config=rag_query.guardrail_config,
             allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+            active_profiles=active_profiles,
         )
         if result.status in {"AUDIT", "BLOCK"}:
             logger.warning(
@@ -2560,6 +2562,7 @@ class HybridRAGEngine:
                     query=rag_query.text,
                     config=rag_query.guardrail_config,
                     allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+                    active_profiles=active_profiles,
                 )
                 if repaired_result.status != "BLOCK":
                     logger.warning(
