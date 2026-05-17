@@ -103,5 +103,30 @@ class RagCriticalCoverageTests(unittest.TestCase):
                 self.assertEqual(engine._retrieval_queries_for(query), (query,))
 
 
+def test_generic_tender_overview_expands_only_base_variants() -> None:
+    from app.rag.engine import HybridRAGEngine
+
+    engine = HybridRAGEngine()
+    queries = engine._retrieval_queries_for("Analizza questa gara e dimmi i punti critici")
+    joined = " ".join(queries)
+    assert "identificativo procedura" in joined
+    assert "importo base" in joined
+    assert "OSCAT" not in joined and "CCTT" not in joined and "RTPC" not in joined
+
+
+def test_oscat_profile_adds_oscat_variants_when_requested() -> None:
+    from app.rag.engine import HybridRAGEngine
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    engine = HybridRAGEngine()
+    queries = engine._retrieval_queries_for(
+        "Descrivi in modo completo la gara OSCAT",
+        active_profiles=(OSCAT_SCT_TOSCANA_PROFILE,),
+    )
+    joined = " ".join(queries)
+    assert "OSCAT CIG" in joined
+    assert "OSCAT durata" in joined or "OSCAT duration" in joined
+
+
 if __name__ == "__main__":
     unittest.main()
