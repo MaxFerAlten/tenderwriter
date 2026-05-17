@@ -9,4 +9,5 @@
 - criteri di valutazione punteggio tecnico economico qualità prezzo
 - certificazioni qualificazioni requisiti obbligatori
 - SLA penali livelli servizio risoluzione garanzie
+- risoluzione espressa art. 1456 penali garanzie livelli servizio
 - documentazione amministrativa DGUE garanzia cauzione subappalto RTI avvalimento

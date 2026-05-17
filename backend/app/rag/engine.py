@@ -2527,7 +2527,10 @@ class HybridRAGEngine:
         if fact_sheet is None:
             return answer
 
-        missing_slots = fact_sheet_missing_critical_slots(fact_sheet)
+        active_profiles = self._active_profiles_for_query(rag_query.text)
+        missing_slots = fact_sheet_missing_critical_slots(
+            fact_sheet, active_profiles=active_profiles
+        )
         if missing_slots:
             logger.warning(
                 "RAG fact sheet missing critical slots",
@@ -2535,7 +2538,6 @@ class HybridRAGEngine:
                 procedure_label=fact_sheet.procedure_label,
             )
 
-        active_profiles = self._active_profiles_for_query(rag_query.text)
         result = validate_guarded_answer(
             answer=answer,
             fact_sheet=fact_sheet,
@@ -2553,7 +2555,9 @@ class HybridRAGEngine:
                 procedure_label=fact_sheet.procedure_label,
             )
         if result.status == "BLOCK":
-            repaired_answer = repair_unsupported_protected_facts(answer, fact_sheet)
+            repaired_answer = repair_unsupported_protected_facts(
+                answer, fact_sheet, active_profiles=active_profiles
+            )
             if repaired_answer != answer:
                 repaired_result = validate_guarded_answer(
                     answer=repaired_answer,

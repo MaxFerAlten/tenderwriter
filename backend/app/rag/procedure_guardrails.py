@@ -381,6 +381,11 @@ def build_fact_sheet(
     query: str,
     active_profiles: tuple[ProcedureProfile, ...] | None = None,
 ) -> FactSheet:
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    known_labels: set[ProcedureLabel] = set(PROCEDURE_ANCHORS)
+    if active_profiles:
+        known_labels |= set(active_procedure_anchors(active_profiles))
     unattributed = _engine_messages().procedure_label_unattributed
     labels = [
         label
@@ -408,7 +413,7 @@ def build_fact_sheet(
 
     extraction_items: list[tuple[int, Mapping[str, Any]]] = []
     procedure_link_values: set[tuple[str, str]] = set()
-    if procedure_label in PROCEDURE_ANCHORS:
+    if procedure_label in known_labels:
         for item in context_items:
             if (
                 classify_chunk_procedure(
@@ -424,7 +429,7 @@ def build_fact_sheet(
             continue
         item_label = classify_chunk_procedure(text, active_profiles=active_profiles)
         if (
-            procedure_label in PROCEDURE_ANCHORS
+            procedure_label in known_labels
             and item_label != procedure_label
             and not (
                 item_label == unattributed
@@ -491,11 +496,21 @@ def build_fact_sheet(
     )
 
 
-def _answer_procedure_labels(answer: str) -> set[ProcedureLabel]:
+def _answer_procedure_labels(
+    answer: str,
+    *,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
+) -> set[ProcedureLabel]:
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    anchors_by_label: dict[ProcedureLabel, tuple[str, ...]] = dict(PROCEDURE_ANCHORS)
+    if active_profiles:
+        for label, anchors in active_procedure_anchors(active_profiles).items():
+            anchors_by_label[label] = (*anchors_by_label.get(label, ()), *anchors)
     normalized = _normalize(answer)
     return {
         label
-        for label, anchors in PROCEDURE_ANCHORS.items()
+        for label, anchors in anchors_by_label.items()
         if any(anchor in normalized for anchor in anchors)
     }
 
@@ -964,18 +979,32 @@ def _replace_inline_unverified_cig(answer: str, fact_sheet: FactSheet) -> str:
     return _INLINE_UNVERIFIED_CIG_RE.sub(f"{label} {verified}", answer)
 
 
-def _strip_contamination_sentences(answer: str) -> str:
+def _strip_contamination_sentences(
+    answer: str,
+    *,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
+) -> str:
     text = str(answer or "")
     if not text.strip():
         return text
+    contamination_re = (
+        contamination_re_for(active_profiles)
+        if active_profiles
+        else OSCAT_SCT_CONTAMINATION_RE
+    )
+    identity_re = (
+        identity_re_for(active_profiles)
+        if active_profiles
+        else OSCAT_IDENTITY_KEYWORD_RE
+    )
     paragraphs = text.split("\n\n")
     cleaned_paragraphs: list[str] = []
     for paragraph in paragraphs:
         sentences = _CONTAMINATION_SENTENCE_SPLIT_RE.split(paragraph)
         kept: list[str] = []
         for sentence in sentences:
-            contamination_hits = len(OSCAT_SCT_CONTAMINATION_RE.findall(sentence))
-            identity_hits = len(OSCAT_IDENTITY_KEYWORD_RE.findall(sentence))
+            contamination_hits = len(contamination_re.findall(sentence))
+            identity_hits = len(identity_re.findall(sentence))
             if contamination_hits >= 2 and identity_hits == 0:
                 continue
             kept.append(sentence)
@@ -1099,11 +1128,18 @@ def _repair_duration_range_claims(answer: str, fact_sheet: FactSheet) -> str:
     return _DURATION_RANGE_RE.sub(replacement, answer)
 
 
-def repair_unsupported_protected_facts(answer: str, fact_sheet: FactSheet) -> str:
+def repair_unsupported_protected_facts(
+    answer: str,
+    fact_sheet: FactSheet,
+    *,
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
+) -> str:
     """Mask unsupported protected facts while preserving the rest of the answer."""
 
     repaired = str(answer or "")
-    repaired = _strip_contamination_sentences(repaired)
+    repaired = _strip_contamination_sentences(
+        repaired, active_profiles=active_profiles
+    )
     repaired = _drop_semantically_duplicate_paragraphs(repaired)
     repaired = _strip_corrupt_money_artifacts(repaired)
     repaired = _normalize_civil_article_thousand_separator(repaired)
@@ -1300,16 +1336,25 @@ def fact_sheet_missing_critical_slots(
     fact_sheet: FactSheet,
     *,
     minimum_amount_eur: Decimal = Decimal("100000"),
+    active_profiles: tuple[ProcedureProfile, ...] | None = None,
 ) -> tuple[str, ...]:
-    """Return critical OSCAT/SCT slots missing from the fact sheet.
+    """Return critical procedure slots missing from the fact sheet.
 
     Used for observability: long-form tender overviews should at minimum
     surface a procedure id, a duration, and a non-trivial amount. When any
     of these is absent the guardrails will likely block a faithful answer,
     so callers can downgrade the guardrail mode or boost retrieval.
+
+    Procedure labels live in the base lexicon plus any active profile
+    overlay; with no active profile only the generic base labels apply.
     """
 
-    if fact_sheet.procedure_label not in PROCEDURE_ANCHORS:
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    known_labels: set[ProcedureLabel] = set(PROCEDURE_ANCHORS)
+    if active_profiles:
+        known_labels |= set(active_procedure_anchors(active_profiles))
+    if fact_sheet.procedure_label not in known_labels:
         return ()
     missing: list[str] = []
     if not fact_sheet.procedure_ids:
@@ -1375,12 +1420,17 @@ def validate_guarded_answer(
     if cfg["blockOnUnverifiedNumbers"]:
         failures.extend(_unverified_protected_fact_failures(answer, fact_sheet))
 
-    labels = _answer_procedure_labels(answer)
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    known_labels: set[ProcedureLabel] = set(PROCEDURE_ANCHORS)
+    if active_profiles:
+        known_labels |= set(active_procedure_anchors(active_profiles))
+    labels = _answer_procedure_labels(answer, active_profiles=active_profiles)
     comparison_allowed = _allows_comparison(answer) or _allows_comparison(query)
     allowed_labels = {
         label
         for label in (*tuple(allowed_procedure_labels or ()), fact_sheet.procedure_label)
-        if label in PROCEDURE_ANCHORS
+        if label in known_labels
     }
     if cfg["blockOnCrossProcedureMixing"]:
         unsupported_labels = labels - allowed_labels

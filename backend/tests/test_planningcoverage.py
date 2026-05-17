@@ -233,7 +233,48 @@ class PlanningCoverageTests(unittest.IsolatedAsyncioTestCase):
                 planning_coverage_config=DEFAULT_PLANNING_COVERAGE_CONFIG,
             )
         )
-        self.assertEqual(disabled.sources, [])
+        # The PLANNING-COVERAGE injector is config-gated and must NOT run when
+        # disabled: no source may carry a planning-coverage slot provenance
+        # (`coverage_slot`/`coverage_slot_label`/`planning_coverage`).
+        #
+        # Critical-coverage broad-summary retrieval variants are a SEPARATE,
+        # independently-gated feature. Post-decontamination the generic base
+        # variant "identificativo procedura CIG RUP stazione appaltante"
+        # legitimately matches the test corpus and is tagged with
+        # `retrieval_variant` (NOT a planning-coverage slot). Tolerating those
+        # while still proving the planning-coverage feature stayed off keeps
+        # this a real regression guard.
+        planning_slot_sources = [
+            source
+            for source in disabled.sources
+            if any(
+                key in (source.get("metadata") or {})
+                for key in (
+                    "coverage_slot",
+                    "coverage_slot_label",
+                    "planning_coverage",
+                )
+            )
+        ]
+        self.assertEqual(
+            planning_slot_sources,
+            [],
+            msg=(
+                "planning-coverage injection ran while the config was "
+                "disabled (sources carry planning-coverage slot provenance)"
+            ),
+        )
+        # Every disabled-config source that DID surface must be a
+        # critical-coverage retrieval variant, never a planning-coverage slot.
+        for source in disabled.sources:
+            self.assertIn(
+                "retrieval_variant",
+                source.get("metadata") or {},
+                msg=(
+                    "unexpected non-retrieval-variant source surfaced with "
+                    f"planning-coverage disabled: {source!r}"
+                ),
+            )
 
         enabled = await engine._retrieve_context_and_sources(
             RAGQuery(
