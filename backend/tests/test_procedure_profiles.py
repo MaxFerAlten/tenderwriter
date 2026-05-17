@@ -134,3 +134,22 @@ def test_profile_overlay_restores_toscana_contamination_regex() -> None:
     assert overlaid.oscat_sct_contamination.search("riferimento CCTT") is not None
     assert base.oscat_sct_contamination.search("riferimento CCTT") is None
     assert overlaid.address.search("via san piero a quaracchi 12") is not None
+
+
+def test_base_graph_tecnico_terms_exclude_oscat_sct_acn() -> None:
+    from app.rag.localization import get_graph_retriever_messages
+
+    msgs = get_graph_retriever_messages("it")
+    tecnico = " ".join(msgs.query_terms["tecnico"]).casefold()
+    for forbidden in ("oscat", "sct", "acn"):
+        assert forbidden not in tecnico
+
+
+def test_profile_graph_terms_added_when_active() -> None:
+    from app.rag.procedure_profiles import (
+        OSCAT_SCT_TOSCANA_PROFILE,
+        active_graph_query_terms,
+    )
+
+    terms = active_graph_query_terms((OSCAT_SCT_TOSCANA_PROFILE,))
+    assert "oscat" in terms and "sct" in terms and "acn" in terms

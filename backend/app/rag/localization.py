@@ -942,9 +942,6 @@ def _load_ontology_domain_mapping(language: str) -> dict[str, set[str]]:
             raw["query_term_manager"],
         },
         "tecnico": {
-            raw["query_term_acn"],
-            raw["query_term_oscat"],
-            raw["query_term_sct"],
             raw["query_term_sla"],
             raw["query_term_integration"],
             raw["query_term_infrastructure"],
@@ -1021,9 +1018,6 @@ def _load_query_terms(language: str) -> dict[str, tuple[str, ...]]:
             raw["query_term_manager"],
         ),
         "tecnico": (
-            raw["query_term_acn"],
-            raw["query_term_oscat"],
-            raw["query_term_sct"],
             raw["query_term_sla"],
             raw["query_term_integration"],
             raw["query_term_infrastructure"],
