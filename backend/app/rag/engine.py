@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
@@ -46,17 +46,17 @@ from app.rag.localization import (
 from app.rag.planningcoverage import normalize_planning_coverage_config, run_planning_coverage
 from app.rag.procedure_guardrails import (
     BLOCKED_OUTPUT_MESSAGE,
-    OSCAT_IDENTITY_KEYWORD_RE,
-    OSCAT_SCT_CONTAMINATION_RE,
     PROCEDURE_ANCHORS,
     FactSheet,
     build_fact_sheet,
     classify_chunk_procedure,
     classify_guardrail_failures,
+    contamination_re_for,
     fact_sheet_from_guarded_context,
     fact_sheet_missing_critical_slots,
     filter_long_form_amounts,
     guardrail_issue_snippets,
+    identity_re_for,
     normalize_guardrail_config,
     repair_unsupported_protected_facts,
     source_procedure_labels_from_guarded_context,
@@ -64,6 +64,9 @@ from app.rag.procedure_guardrails import (
 )
 from app.rag.reranker import Reranker
 from app.rag.sparse_retriever import SparseRetriever
+
+if TYPE_CHECKING:
+    from app.rag.procedure_profiles import ProcedureProfile
 
 logger = structlog.get_logger()
 
@@ -246,6 +249,10 @@ class RAGQuery:
     # Per-request localization override. ``None`` falls back to the
     # process-wide default (``settings.default_locale`` or ``"it"``).
     language: str | None = None
+    # Active procedure profile ids resolved by the API layer from
+    # tenders.profile_id (persistent) with heuristic fallback. Empty tuple =
+    # base profile only (universal procurement RAG).
+    active_profile_ids: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -540,6 +547,7 @@ class HybridRAGEngine:
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_graph,
                     filters=graph_filters,
+                    active_profiles=self._active_profiles_for_query(rag_query.text),
                 )
                 graph_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata} for r in raw_graph
@@ -678,11 +686,18 @@ class HybridRAGEngine:
             )
 
         if self._query_uses_procedure_guardrails(rag_query):
-            fact_sheet = build_fact_sheet(fact_sheet_context_items, query=rag_query.text)
+            _profiles = self._active_profiles_for_query(rag_query.text)
+            fact_sheet = build_fact_sheet(
+                fact_sheet_context_items,
+                query=rag_query.text,
+                active_profiles=_profiles,
+            )
             if self._query_requests_longform_tender_synthesis(rag_query):
                 fact_sheet = filter_long_form_amounts(fact_sheet)
             for source, context_text in zip(sources, context_texts, strict=False):
-                source_procedure = classify_chunk_procedure(context_text)
+                source_procedure = classify_chunk_procedure(
+                    context_text, active_profiles=_profiles
+                )
                 source["metadata"] = {
                     **source.get("metadata", {}),
                     "procedure_label": source_procedure,
@@ -871,11 +886,24 @@ class HybridRAGEngine:
         )
         return config
 
+    def _active_profiles_for_query(
+        self, query_text: str
+    ) -> tuple[ProcedureProfile, ...]:
+        from app.rag.procedure_profiles import resolve_active_profiles
+
+        return resolve_active_profiles(
+            query_text,
+            chunk_texts=(),
+            explicit_profile_ids=tuple(getattr(self, "_pending_profile_ids", ())),
+        )
+
     def _query_primary_procedure_label(self, query_text: str) -> str:
         requested = self._requested_procedure_labels_for_retrieval(query_text)
         if len(requested) == 1:
             return next(iter(requested))
-        return classify_chunk_procedure(query_text)
+        return classify_chunk_procedure(
+            query_text, active_profiles=self._active_profiles_for_query(query_text)
+        )
 
     def _query_explicitly_requests_integrity_pact(self, query_text: str) -> bool:
         return bool(INTEGRITY_PACT_QUERY_RE.search(query_text or ""))
@@ -898,18 +926,26 @@ class HybridRAGEngine:
         ):
             return True
 
-        if self._query_primary_procedure_label(rag_query.text) != "OSCAT":
+        profiles = self._active_profiles_for_query(rag_query.text)
+        instance = next((p for p in profiles if p.kind == "tender_instance"), None)
+        if instance is None:
+            return False
+        main_label = instance.main_label
+        referenced_label = instance.referenced_label
+        if self._query_primary_procedure_label(rag_query.text) != main_label:
             return False
 
         normalized = text.casefold()
-        contamination_hits = len(OSCAT_SCT_CONTAMINATION_RE.findall(text))
-        identity_hits = len(OSCAT_IDENTITY_KEYWORD_RE.findall(text))
+        contamination_re = contamination_re_for(profiles)
+        identity_re = identity_re_for(profiles)
+        contamination_hits = len(contamination_re.findall(text))
+        identity_hits = len(identity_re.findall(text))
         if contamination_hits >= 2 and identity_hits < 2:
             return True
         return (
-            classify_chunk_procedure(text) == "SCT"
-            and "oscat" not in normalized
-            and bool(OSCAT_SCT_CONTAMINATION_RE.search(text))
+            classify_chunk_procedure(text, active_profiles=profiles) == referenced_label
+            and main_label.casefold() not in normalized
+            and bool(contamination_re.search(text))
         )
 
     def _build_rank_fusion_for_query(self, rag_query: RAGQuery) -> RankFusion:
@@ -1015,6 +1051,7 @@ class HybridRAGEngine:
             mode=rag_query.mode.value,
             query_len=len(rag_query.text),
         )
+        self._pending_profile_ids = tuple(rag_query.active_profile_ids)
         retrieved = await self._retrieve_context_and_sources(rag_query)
         context = retrieved.context
         sources = retrieved.sources
@@ -1221,6 +1258,7 @@ class HybridRAGEngine:
             return
 
         await self.ensure_initialized()
+        self._pending_profile_ids = tuple(rag_query.active_profile_ids)
         retrieved = await self._retrieve_context_and_sources(rag_query)
         context = retrieved.context
         length_target = self._extract_requested_length_target(rag_query.text)
@@ -2489,7 +2527,10 @@ class HybridRAGEngine:
         if fact_sheet is None:
             return answer
 
-        missing_slots = fact_sheet_missing_critical_slots(fact_sheet)
+        active_profiles = self._active_profiles_for_query(rag_query.text)
+        missing_slots = fact_sheet_missing_critical_slots(
+            fact_sheet, active_profiles=active_profiles
+        )
         if missing_slots:
             logger.warning(
                 "RAG fact sheet missing critical slots",
@@ -2504,6 +2545,7 @@ class HybridRAGEngine:
             query=rag_query.text,
             config=rag_query.guardrail_config,
             allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+            active_profiles=active_profiles,
         )
         if result.status in {"AUDIT", "BLOCK"}:
             logger.warning(
@@ -2513,7 +2555,9 @@ class HybridRAGEngine:
                 procedure_label=fact_sheet.procedure_label,
             )
         if result.status == "BLOCK":
-            repaired_answer = repair_unsupported_protected_facts(answer, fact_sheet)
+            repaired_answer = repair_unsupported_protected_facts(
+                answer, fact_sheet, active_profiles=active_profiles
+            )
             if repaired_answer != answer:
                 repaired_result = validate_guarded_answer(
                     answer=repaired_answer,
@@ -2522,6 +2566,7 @@ class HybridRAGEngine:
                     query=rag_query.text,
                     config=rag_query.guardrail_config,
                     allowed_procedure_labels=source_procedure_labels_from_guarded_context(context),
+                    active_profiles=active_profiles,
                 )
                 if repaired_result.status != "BLOCK":
                     logger.warning(
@@ -2715,6 +2760,7 @@ class HybridRAGEngine:
         query_text: str,
         *,
         primary_query: str | None = None,
+        active_profiles: tuple[ProcedureProfile, ...] | None = None,
     ) -> tuple[str, ...]:
         primary = primary_query or self._query_text_for_retrieval(query_text)
         queries = [primary]
@@ -2723,22 +2769,32 @@ class HybridRAGEngine:
         if not self._query_requests_broad_summary(query_text):
             return tuple(queries)
 
+        language = self._retrieval_variant_language_for(query_text)
         try:
-            variants = load_retrieval_query_variants(
-                "retrieval-critical-coverage",
-                language=self._retrieval_variant_language_for(query_text),
+            variants = list(
+                load_retrieval_query_variants(
+                    "retrieval-critical-coverage", language=language
+                )
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — asset optional
             logger.warning("Critical retrieval prompt asset unavailable", error=str(e))
-            return tuple(queries)
+            variants = []
 
-        requested_procedure_labels = self._requested_procedure_labels_for_retrieval(query_text)
+        from app.rag.procedure_profiles import (
+            active_critical_coverage_queries,
+            resolve_active_profiles,
+        )
+
+        profiles = active_profiles
+        if profiles is None:
+            profiles = resolve_active_profiles(
+                query_text,
+                chunk_texts=(),
+                explicit_profile_ids=tuple(getattr(self, "_pending_profile_ids", ())),
+            )
+        variants.extend(active_critical_coverage_queries(profiles, language=language))
+
         for variant in variants:
-            variant_procedure_labels = self._retrieval_variant_procedure_labels(variant)
-            if variant_procedure_labels and not (
-                variant_procedure_labels & requested_procedure_labels
-            ):
-                continue
             normalized = variant.casefold()
             if normalized in seen:
                 continue

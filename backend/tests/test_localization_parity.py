@@ -59,8 +59,11 @@ class AssetCoverageSmokeTests(unittest.TestCase):
         ("prompt-leakage", "User Query Verbs"),
         ("prompt-leakage", "Instruction Lines"),
         ("retrieval-critical-coverage", "Query Variants"),
-        ("guardrail-lexicon", "Procedure Anchors OSCAT"),
-        ("guardrail-lexicon", "Procedure Anchors SCT"),
+        # NOTE: "Procedure Anchors OSCAT"/"Procedure Anchors SCT" were removed
+        # from the generic base guardrail-lexicon asset by the procedure
+        # decontamination. That OSCAT/SCT anchor lexicon now lives in the
+        # OSCAT_SCT_TOSCANA_PROFILE overlay; its relocation (not deletion) is
+        # asserted in test_oscat_sct_anchors_relocated_to_profile below.
         ("guardrail-lexicon", "Semantic Theme garanzie"),
         ("guardrail-lexicon", "Comparison Markers"),
         ("guardrail-patterns", "Day Word"),
@@ -107,6 +110,35 @@ class AssetCoverageSmokeTests(unittest.TestCase):
                     0,
                     msg=f"empty group: {asset}/{group} ({language})",
                 )
+
+    def test_oscat_sct_anchors_relocated_to_profile(self) -> None:
+        # The OSCAT/SCT procedure-anchor lexicon was decontaminated out of the
+        # generic base guardrail-lexicon asset; it now lives in the procedure
+        # profile overlay. Prove the knowledge MOVED (not deleted) and that the
+        # localization helper surfaces it for both supported languages.
+        from app.rag.localization import procedure_anchors_for_profiles
+        from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+        anchors = OSCAT_SCT_TOSCANA_PROFILE.procedure_anchors
+        self.assertIn("OSCAT", anchors)
+        self.assertIn("SCT", anchors)
+        self.assertGreater(len(anchors["OSCAT"]), 0)
+        self.assertGreater(len(anchors["SCT"]), 0)
+
+        for language in ("it", "en"):
+            resolved = procedure_anchors_for_profiles(
+                (OSCAT_SCT_TOSCANA_PROFILE,), language=language
+            )
+            self.assertIn("OSCAT", resolved)
+            self.assertIn("SCT", resolved)
+            self.assertTrue(
+                set(anchors["OSCAT"]).issubset(set(resolved["OSCAT"])),
+                msg=f"OSCAT anchor members missing for {language}",
+            )
+            self.assertTrue(
+                set(anchors["SCT"]).issubset(set(resolved["SCT"])),
+                msg=f"SCT anchor members missing for {language}",
+            )
 
 
 class IntentRegexSemanticParityTests(unittest.TestCase):
@@ -747,14 +779,28 @@ class GuardrailLexiconAssetsTests(unittest.TestCase):
     """R12 — externalized guardrail anchor/keyword lexicon."""
 
     def test_lexicon_loads_for_both_languages_with_canonical_members(self) -> None:
-        from app.rag.localization import GuardrailLexicon, get_guardrail_lexicon
+        from app.rag.localization import (
+            GuardrailLexicon,
+            get_guardrail_lexicon,
+            procedure_anchors_for_profiles,
+        )
+        from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
 
         for language in ("it", "en"):
             lex = get_guardrail_lexicon(language)
             self.assertIsInstance(lex, GuardrailLexicon)
-            self.assertEqual(set(lex.procedure_anchors), {"OSCAT", "SCT"})
-            self.assertIn("oscat", lex.procedure_anchors["OSCAT"])
-            self.assertIn("sct", lex.procedure_anchors["SCT"])
+            # Procedure decontamination: the generic BASE lexicon no longer
+            # ships OSCAT/SCT anchors — that knowledge moved to the procedure
+            # profile overlay (not deleted). Assert it is RESTORED via the
+            # profile, while the language-invariant theme/comparison lexicon
+            # parity below still holds.
+            self.assertEqual(set(lex.procedure_anchors), set())
+            resolved = procedure_anchors_for_profiles(
+                (OSCAT_SCT_TOSCANA_PROFILE,), language=language
+            )
+            self.assertEqual(set(resolved), {"OSCAT", "SCT"})
+            self.assertIn("oscat", resolved["OSCAT"])
+            self.assertIn("sct", resolved["SCT"])
             self.assertEqual(
                 set(lex.semantic_theme_keywords),
                 {"garanzie", "manleva", "integrita"},
@@ -783,12 +829,35 @@ class GuardrailLexiconAssetsTests(unittest.TestCase):
 
     def test_classify_chunk_procedure_still_resolves_anchors(self) -> None:
         from app.rag.procedure_guardrails import classify_chunk_procedure
+        from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
 
+        profile = (OSCAT_SCT_TOSCANA_PROFILE,)
         self.assertEqual(
-            classify_chunk_procedure("Servizi GitLab, Sonar, Nexus, DevSecOps."),
+            classify_chunk_procedure(
+                "Servizi GitLab, Sonar, Nexus, DevSecOps.",
+                active_profiles=profile,
+            ),
             "OSCAT",
         )
         self.assertEqual(
+            classify_chunk_procedure(
+                "RTPC, CCTT, fase transitoria, Via San Piero a Quaracchi.",
+                active_profiles=profile,
+            ),
+            "SCT",
+        )
+
+    def test_classify_chunk_procedure_unattributed_without_profile(self) -> None:
+        # The anchor lexicon is profile-gated post-decontamination: with no
+        # active profile the generic base classifier must NOT attribute these
+        # chunks to OSCAT/SCT (the knowledge is no longer in the base lexicon).
+        from app.rag.procedure_guardrails import classify_chunk_procedure
+
+        self.assertNotEqual(
+            classify_chunk_procedure("Servizi GitLab, Sonar, Nexus, DevSecOps."),
+            "OSCAT",
+        )
+        self.assertNotEqual(
             classify_chunk_procedure(
                 "RTPC, CCTT, fase transitoria, Via San Piero a Quaracchi."
             ),
@@ -857,8 +926,36 @@ class GuardrailPatternsAssetsTests(unittest.TestCase):
         )
 
     def test_contamination_identity_article_and_false_missing(self) -> None:
-        self.assertIsNotNone(self.pat.oscat_sct_contamination.search("PNRR missione 1"))
-        self.assertIsNotNone(self.pat.oscat_identity_keyword.search("pipeline CI/CD"))
+        from app.rag.localization import get_guardrail_patterns
+        from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+        # Post-decontamination the GENERIC base regex matches generic
+        # linked-procedure phrases (procedure-agnostic), NOT the Toscana
+        # specifics, which were moved into the profile overlay.
+        self.assertIsNotNone(
+            self.pat.oscat_sct_contamination.search("vedi la gara collegata")
+        )
+        self.assertIsNotNone(
+            self.pat.oscat_identity_keyword.search(
+                "la procedura principale di riferimento"
+            )
+        )
+        # The base regex must NO LONGER match the decontaminated Toscana terms.
+        self.assertIsNone(self.pat.oscat_sct_contamination.search("PNRR missione 1"))
+        self.assertIsNone(self.pat.oscat_identity_keyword.search("pipeline CI/CD"))
+
+        # The profile overlay RESTORES the Toscana-specific markers so the
+        # guardrail's protective intent is preserved when a profile is active.
+        profiled = get_guardrail_patterns(
+            "it", profiles=(OSCAT_SCT_TOSCANA_PROFILE,)
+        )
+        self.assertIsNotNone(
+            profiled.oscat_sct_contamination.search("PNRR missione 1")
+        )
+        self.assertIsNotNone(
+            profiled.oscat_identity_keyword.search("pipeline CI/CD")
+        )
+
         self.assertIsNotNone(
             self.pat.malformed_article.search("ai sensi dell'art. 14C56 c.c.")
         )

@@ -240,6 +240,66 @@ class RagQueryScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sources[0]["retriever_sources"], ["dense"])
         self.assertEqual(getattr(history, "retrieval_version", None), "v1")
 
+    async def test_rag_query_sets_active_profile_ids_from_tender_profile_id(self) -> None:
+        request = _make_request_engine()
+        current_user = SimpleNamespace(id=7, role="user")
+        db = _FakeDb()
+        # _FakeDb.execute() returns the same result for every select() in the
+        # handler (AppSettings loaders + the Tender lookup). The shared row must
+        # therefore satisfy both: profile_id for the Tender path, and data=None
+        # so the AppSettings loaders fall back to defaults (isinstance check).
+        fake_tender = SimpleNamespace(id=99, profile_id="oscat_sct_toscana", data=None)
+        db.execute_result = SimpleNamespace(scalar_one_or_none=lambda: fake_tender)
+        with (
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
+        ):
+            await rag_query(
+                data=RAGQueryRequest(
+                    query="q",
+                    mode="qa",
+                    route_key="tender",
+                    tender_id=99,
+                ),
+                request=request,
+                current_user=current_user,
+                db=db,
+            )
+        forwarded = request.app.state.rag_engine.query.await_args.args[0]
+        self.assertEqual(forwarded.active_profile_ids, ("oscat_sct_toscana",))
+
+    async def test_rag_query_without_tender_profile_id_keeps_empty_active_profiles(self) -> None:
+        request = _make_request_engine()
+        current_user = SimpleNamespace(id=7, role="user")
+        db = _FakeDb()
+        fake_tender = SimpleNamespace(id=99, profile_id=None, data=None)
+        db.execute_result = SimpleNamespace(scalar_one_or_none=lambda: fake_tender)
+        with (
+            patch.object(
+                _RAG_MODULE,
+                "_resolve_runtime_privacy_policy",
+                AsyncMock(return_value=_FakePolicy()),
+            ),
+            patch.object(_RAG_MODULE, "_audit_rag_result", AsyncMock()),
+        ):
+            await rag_query(
+                data=RAGQueryRequest(
+                    query="q",
+                    mode="qa",
+                    route_key="tender",
+                    tender_id=99,
+                ),
+                request=request,
+                current_user=current_user,
+                db=db,
+            )
+        forwarded = request.app.state.rag_engine.query.await_args.args[0]
+        self.assertEqual(forwarded.active_profile_ids, ())
+
 
 if __name__ == "__main__":
     unittest.main()

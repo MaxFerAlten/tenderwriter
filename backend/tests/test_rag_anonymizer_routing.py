@@ -609,12 +609,29 @@ class HybridRAGAnonymizerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Non aprire obbligatoriamente con", template)
         self.assertNotIn('Apri SEMPRE con la sezione "Fatti verificati"', template)
 
-    def test_tender_longform_prompt_limits_oscat_sct_relationship(self) -> None:
+    def test_tender_longform_prompt_limits_cross_procedure_leakage(self) -> None:
+        # Protective intent retained: the long-form synthesis prompt must
+        # forbid transferring data from a linked procedure onto the main
+        # one. The rule was generalized (decontamination): it no longer
+        # names specific procedures (OSCAT/SCT) but instead states the
+        # generic cross-procedure leakage constraint.
         template = PROMPT_TEMPLATES["tender_longform_synthesis"]
 
-        self.assertIn("dipendenza contrattuale o operativa", template)
-        self.assertIn("dettagli economici o tecnici propri di SCT", template)
+        # Generic relationship-limiting rule is present.
+        self.assertIn("la procedura principale richiama", template)
+        self.assertIn("descrivi solo la relazione supportata dalle fonti", template)
+        self.assertIn(
+            "Non trasferire importi, CIG, durate, sedi, SLA o obblighi", template
+        )
+        self.assertIn("dalla procedura collegata alla procedura principale", template)
         self.assertIn("senza evidenza puntuale", template)
+
+        # Decontamination: no tender-specific procedure literals remain,
+        # and the old OSCAT/SCT-specific phrasing is gone.
+        self.assertNotIn("OSCAT", template)
+        self.assertNotIn("SCT", template)
+        self.assertNotIn("dipendenza contrattuale o operativa", template)
+        self.assertNotIn("dettagli economici o tecnici propri", template)
 
     def test_tender_longform_prompt_forbids_missing_claims_for_fact_sheet_values(self) -> None:
         template = PROMPT_TEMPLATES["tender_longform_synthesis"]

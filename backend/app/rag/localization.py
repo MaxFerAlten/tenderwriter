@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from app.rag.internal_prompting import (
     default_language,
@@ -18,6 +19,9 @@ from app.rag.internal_prompting import (
     load_localized_messages,
     load_prompt_template,
 )
+
+if TYPE_CHECKING:
+    from app.rag.procedure_profiles import ProcedureProfile
 
 _INTENT_ASSET = "query-intent"
 _PROMPT_LEAKAGE_ASSET = "prompt-leakage"
@@ -217,7 +221,9 @@ class GuardrailRepairMessages:
     conjunction_and: str
 
 
-_GUARDRAIL_PROCEDURE_LABELS: tuple[str, ...] = ("OSCAT", "SCT")
+# Base RAG knows no tender-specific procedure labels. Labels are supplied by
+# the active profile layer (app.rag.procedure_profiles).
+_GUARDRAIL_PROCEDURE_LABELS: tuple[str, ...] = ()
 _GUARDRAIL_SEMANTIC_THEMES: tuple[str, ...] = ("garanzie", "manleva", "integrita")
 
 
@@ -567,13 +573,31 @@ def get_guardrail_lexicon(language: str | None = None) -> GuardrailLexicon:
     )
 
 
+def procedure_anchors_for_profiles(
+    profiles: tuple[ProcedureProfile, ...],
+    *,
+    language: str | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Base anchors (currently empty) merged with the active profiles' anchors."""
+    from app.rag.procedure_profiles import active_procedure_anchors
+
+    base = dict(get_guardrail_lexicon(_resolve_language(language)).procedure_anchors)
+    for label, anchors in active_procedure_anchors(profiles).items():
+        base[label] = (*base.get(label, ()), *anchors)
+    return base
+
+
 @lru_cache(maxsize=4)
-def get_guardrail_patterns(language: str | None = None) -> GuardrailPatterns:
+def _get_guardrail_patterns_base(language: str | None = None) -> GuardrailPatterns:
     """Return cached compiled guardrail regex bundle for ``language``.
 
     Structural skeletons live here verbatim; only the Italian token
     alternations are sourced from the ``guardrail-patterns`` asset so the
     rebuilt pattern strings stay equivalent to the pre-extraction literals.
+
+    This is the profile-agnostic cached base. ``ProcedureProfile`` instances
+    are unhashable, so the active-profile overlay is applied OUTSIDE this
+    cached layer by the public ``get_guardrail_patterns`` wrapper.
     """
 
     lang = _resolve_language(language)
@@ -715,6 +739,56 @@ def get_guardrail_patterns(language: str | None = None) -> GuardrailPatterns:
             ("amounts", re.compile(rf"\b(?:{field_amount})\b", flags)),
             ("locations", re.compile(rf"\b(?:{field_location})\b", flags)),
         ),
+    )
+
+
+def get_guardrail_patterns(
+    language: str | None = None,
+    *,
+    profiles: tuple[ProcedureProfile, ...] = (),
+) -> GuardrailPatterns:
+    """Return the compiled guardrail regex bundle for ``language``.
+
+    With no active profiles this returns the cached, profile-agnostic base
+    bundle (byte-behavior-equivalent to the pre-decontamination function).
+    When profiles are active their contamination/identity/address regex
+    fragments are overlaid on top of the generic base markers. Profiles are
+    unhashable, so the overlay is computed here, OUTSIDE the cached base.
+    """
+
+    base = _get_guardrail_patterns_base(language)
+    if not profiles:
+        return base
+
+    from dataclasses import replace
+
+    from app.rag.procedure_profiles import (
+        active_address_patterns,
+        active_contamination_markers,
+        active_identity_markers,
+    )
+
+    lang = _resolve_language(language)
+    flags = re.IGNORECASE  # same flags _get_guardrail_patterns_base compiles these 3 with
+
+    contam = list(
+        load_keyword_group(_GUARDRAIL_PATTERNS_ASSET, "Contamination Markers", language=lang)
+    )
+    contam += list(active_contamination_markers(profiles))
+    ident = list(
+        load_keyword_group(_GUARDRAIL_PATTERNS_ASSET, "Identity Markers", language=lang)
+    )
+    ident += list(active_identity_markers(profiles))
+    addr = list(
+        load_keyword_group(_GUARDRAIL_PATTERNS_ASSET, "Address Pattern", language=lang)
+    )
+    addr += list(active_address_patterns(profiles))
+
+    return replace(
+        base,
+        oscat_sct_contamination=re.compile(rf"\b(?:{_alt(tuple(contam))})\b", flags),
+        oscat_identity_keyword=re.compile(rf"\b(?:{_alt(tuple(ident))})\b", flags),
+        address=re.compile(rf"\b(?:{_alt(tuple(addr))})\b", flags),
     )
 
 
@@ -868,9 +942,6 @@ def _load_ontology_domain_mapping(language: str) -> dict[str, set[str]]:
             raw["query_term_manager"],
         },
         "tecnico": {
-            raw["query_term_acn"],
-            raw["query_term_oscat"],
-            raw["query_term_sct"],
             raw["query_term_sla"],
             raw["query_term_integration"],
             raw["query_term_infrastructure"],
@@ -947,9 +1018,6 @@ def _load_query_terms(language: str) -> dict[str, tuple[str, ...]]:
             raw["query_term_manager"],
         ),
         "tecnico": (
-            raw["query_term_acn"],
-            raw["query_term_oscat"],
-            raw["query_term_sct"],
             raw["query_term_sla"],
             raw["query_term_integration"],
             raw["query_term_infrastructure"],

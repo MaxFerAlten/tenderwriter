@@ -1,0 +1,180 @@
+from app.rag.procedure_profiles import (
+    BASE_PROCUREMENT_PROFILE,
+    OSCAT_SCT_TOSCANA_PROFILE,
+    active_critical_coverage_queries,
+    active_procedure_anchors,
+    resolve_active_profiles,
+)
+
+
+def test_base_profile_is_always_active_and_oscat_is_not_default() -> None:
+    profiles = resolve_active_profiles("Analizza questa gara", chunk_texts=(), explicit_profile_ids=())
+    ids = {p.profile_id for p in profiles}
+    assert "base_procurement_it" in ids
+    assert "oscat_sct_toscana" not in ids
+
+
+def test_explicit_profile_id_activates_oscat() -> None:
+    profiles = resolve_active_profiles(
+        "Analizza questa gara", chunk_texts=(), explicit_profile_ids=("oscat_sct_toscana",)
+    )
+    assert any(p.profile_id == "oscat_sct_toscana" for p in profiles)
+
+
+def test_query_text_anchor_activates_oscat() -> None:
+    profiles = resolve_active_profiles(
+        "Descrivi la gara OSCAT", chunk_texts=(), explicit_profile_ids=()
+    )
+    assert any(p.profile_id == "oscat_sct_toscana" for p in profiles)
+
+
+def test_chunk_anchor_activates_oscat() -> None:
+    profiles = resolve_active_profiles(
+        "Descrivi questa gara",
+        chunk_texts=("Servizi GitLab, Sonar, Nexus, Vulnerability Assessment per OSCAT",),
+        explicit_profile_ids=(),
+    )
+    assert any(p.profile_id == "oscat_sct_toscana" for p in profiles)
+
+
+def test_base_anchors_have_no_toscana_terms() -> None:
+    anchors = active_procedure_anchors(())  # empty profile tuple (base has no anchors)
+    flat = " ".join(t for v in anchors.values() for t in v).casefold()
+    for forbidden in ("oscat", "sct", "cctt", "rtpc", "toscana", "san piero", "co-lo-kw"):
+        assert forbidden not in flat
+
+
+def test_oscat_profile_exposes_expected_labels_and_queries() -> None:
+    assert OSCAT_SCT_TOSCANA_PROFILE.main_label == "OSCAT"
+    assert OSCAT_SCT_TOSCANA_PROFILE.referenced_label == "SCT"
+    anchors = active_procedure_anchors((OSCAT_SCT_TOSCANA_PROFILE,))
+    assert "oscat" in {a.casefold() for a in anchors["OSCAT"]}
+    assert "cctt" in {a.casefold() for a in anchors["SCT"]}
+    it_q = active_critical_coverage_queries((OSCAT_SCT_TOSCANA_PROFILE,), language="it")
+    assert any("OSCAT CIG" in q for q in it_q)
+    en_q = active_critical_coverage_queries((OSCAT_SCT_TOSCANA_PROFILE,), language="en")
+    assert any("OSCAT CIG" in q for q in en_q)
+
+
+def test_base_profile_default_flag() -> None:
+    assert BASE_PROCUREMENT_PROFILE.enabled_by_default is True
+    assert OSCAT_SCT_TOSCANA_PROFILE.enabled_by_default is False
+
+
+def test_base_guardrail_lexicon_has_empty_procedure_anchors() -> None:
+    from app.rag.localization import get_guardrail_lexicon
+
+    lex = get_guardrail_lexicon("it")
+    assert lex.procedure_anchors == {}
+
+
+def test_localization_overlay_merges_profile_anchors() -> None:
+    from app.rag.localization import procedure_anchors_for_profiles
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    anchors = procedure_anchors_for_profiles((OSCAT_SCT_TOSCANA_PROFILE,), language="it")
+    assert "oscat" in {a.casefold() for a in anchors["OSCAT"]}
+    assert "cctt" in {a.casefold() for a in anchors["SCT"]}
+
+
+def test_classify_chunk_is_unattributed_without_profile() -> None:
+    from app.rag.procedure_guardrails import classify_chunk_procedure
+
+    label = classify_chunk_procedure("Servizi GitLab, Sonar, Nexus, Vulnerability Assessment")
+    # No profile -> engine 'unattributed' sentinel, never "OSCAT".
+    assert label != "OSCAT"
+
+
+def test_classify_chunk_uses_profile_when_active() -> None:
+    from app.rag.procedure_guardrails import classify_chunk_procedure
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    profiles = (OSCAT_SCT_TOSCANA_PROFILE,)
+    assert (
+        classify_chunk_procedure(
+            "Servizi GitLab, Sonar, Nexus, Vulnerability Assessment",
+            active_profiles=profiles,
+        )
+        == "OSCAT"
+    )
+    assert (
+        classify_chunk_procedure(
+            "RTPC, CCTT, qualificazione ACN, Sistema Cloud Toscana",
+            active_profiles=profiles,
+        )
+        == "SCT"
+    )
+
+
+def test_tender_model_has_profile_id_column() -> None:
+    from app.models import Tender
+
+    assert "profile_id" in Tender.__table__.columns
+    assert Tender.__table__.columns["profile_id"].nullable is True
+
+
+def test_base_contamination_markers_have_no_toscana_terms() -> None:
+    from app.rag.internal_prompting import load_keyword_group
+
+    for lang in ("it", "en"):
+        markers = load_keyword_group("guardrail-patterns", "Contamination Markers", language=lang)
+        flat = " ".join(markers).casefold()
+        for forbidden in ("cctt", "estar", "sistema cloud toscana", "pnrr", "csirt"):
+            assert forbidden not in flat
+        addr = load_keyword_group("guardrail-patterns", "Address Pattern", language=lang)
+        assert not any("san piero" in a.casefold() for a in addr)
+
+
+def test_profile_overlay_restores_toscana_contamination_regex() -> None:
+    from app.rag.localization import get_guardrail_patterns
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    base = get_guardrail_patterns("it", profiles=())
+    overlaid = get_guardrail_patterns("it", profiles=(OSCAT_SCT_TOSCANA_PROFILE,))
+    assert overlaid.oscat_sct_contamination.search("riferimento CCTT") is not None
+    assert base.oscat_sct_contamination.search("riferimento CCTT") is None
+    assert overlaid.address.search("via san piero a quaracchi 12") is not None
+
+
+def test_base_graph_tecnico_terms_exclude_oscat_sct_acn() -> None:
+    from app.rag.localization import get_graph_retriever_messages
+
+    msgs = get_graph_retriever_messages("it")
+    tecnico = " ".join(msgs.query_terms["tecnico"]).casefold()
+    for forbidden in ("oscat", "sct", "acn"):
+        assert forbidden not in tecnico
+
+
+def test_profile_graph_terms_added_when_active() -> None:
+    from app.rag.procedure_profiles import (
+        OSCAT_SCT_TOSCANA_PROFILE,
+        active_graph_query_terms,
+    )
+
+    terms = active_graph_query_terms((OSCAT_SCT_TOSCANA_PROFILE,))
+    assert "oscat" in terms and "sct" in terms and "acn" in terms
+
+
+def test_graph_retriever_includes_profile_terms_only_when_active() -> None:
+    from app.rag.graph_retriever import GraphRetriever
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    gr = GraphRetriever()
+    base = gr._query_keywords(
+        "requisiti tecnici della gara",
+        ontology_domains={"tecnico"},
+    )
+    overlaid = gr._query_keywords(
+        "requisiti tecnici della gara",
+        ontology_domains={"tecnico"},
+        active_profiles=(OSCAT_SCT_TOSCANA_PROFILE,),
+    )
+
+    base_flat = " ".join(base).casefold()
+    over_flat = " ".join(overlaid).casefold()
+
+    for forbidden in ("oscat", "sct", "acn"):
+        assert forbidden not in base_flat
+    assert "oscat" in over_flat
+    assert "sct" in over_flat
+    assert "acn" in over_flat

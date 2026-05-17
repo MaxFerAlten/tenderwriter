@@ -19,7 +19,7 @@ from app.api.auth import UserResponse, get_current_user
 from app.api.tenders import check_tender_access
 from app.config import settings
 from app.db.database import get_db
-from app.models import AppSettings, SearchHistory
+from app.models import AppSettings, SearchHistory, Tender
 from app.privacy_audit import persist_privacy_audit
 from app.privacy_policy import EffectivePrivacyPolicy, resolve_effective_privacy_policy
 from app.rag.engine import QueryMode, RAGQuery
@@ -144,6 +144,25 @@ class GuardrailConfigPayload(BaseModel):
     blockOnConflict: bool | None = None
     blockOnUnverifiedNumbers: bool | None = None
     blockOnCrossProcedureMixing: bool | None = None
+
+
+async def _resolve_active_profile_ids(
+    db: AsyncSession, tender_id: int | None
+) -> tuple[str, ...]:
+    """Resolve persistent procedure profile ids from ``tenders.profile_id``.
+
+    Returns the tender's configured profile id as a single-element tuple, or an
+    empty tuple when there is no tender or no profile assigned (base profile).
+    """
+    if tender_id is None:
+        return ()
+    result = await db.execute(select(Tender).where(Tender.id == tender_id))
+    if result is None:
+        return ()
+    tender = result.scalar_one_or_none()
+    if tender is not None and tender.profile_id:
+        return (tender.profile_id,)
+    return ()
 
 
 def _should_save_search_history(data: RAGQueryRequest) -> bool:
@@ -369,6 +388,8 @@ async def rag_query(
         "tender_id": data.tender_id,
     }
 
+    active_profile_ids = await _resolve_active_profile_ids(db, data.tender_id)
+
     rag_query = RAGQuery(
         text=data.query,
         mode=mode,
@@ -390,6 +411,7 @@ async def rag_query(
         sampler_overrides=await _load_llm_settings(db),
         planning_coverage_config=await _load_planning_coverage_config(db),
         guardrail_config=await _load_guardrail_config(db),
+        active_profile_ids=active_profile_ids,
     )
 
     if data.stream:
@@ -565,6 +587,8 @@ async def generate_section(
         tender_id=data.tender_id,
     )
 
+    active_profile_ids = await _resolve_active_profile_ids(db, data.tender_id)
+
     rag_query = RAGQuery(
         text=data.query,
         mode=QueryMode.WRITE_SECTION,
@@ -583,6 +607,7 @@ async def generate_section(
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
         sampler_overrides=await _load_llm_settings(db),
+        active_profile_ids=active_profile_ids,
     )
 
     result = await engine.query(rag_query)
@@ -635,6 +660,8 @@ async def compliance_check(
         tender_id=data.tender_id,
     )
 
+    active_profile_ids = await _resolve_active_profile_ids(db, data.tender_id)
+
     rag_query = RAGQuery(
         text=data.requirement,
         mode=QueryMode.COMPLIANCE,
@@ -652,6 +679,7 @@ async def compliance_check(
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
         sampler_overrides=await _load_llm_settings(db),
+        active_profile_ids=active_profile_ids,
     )
 
     result = await engine.query(rag_query)
@@ -705,6 +733,8 @@ async def analyze_requirements(
         tender_id=data.tender_id,
     )
 
+    active_profile_ids = await _resolve_active_profile_ids(db, data.tender_id)
+
     rag_query = RAGQuery(
         text="Extract requirements from the tender document",
         mode=QueryMode.ANALYZE_REQS,
@@ -720,6 +750,7 @@ async def analyze_requirements(
         external_target_id=policy.target_id,
         external_target_timeout_ms=policy.target_timeout_ms,
         sampler_overrides=await _load_llm_settings(db),
+        active_profile_ids=active_profile_ids,
     )
 
     result = await engine.query(rag_query)

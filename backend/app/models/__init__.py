@@ -178,6 +178,7 @@ class Tender(Base):
     category = Column(String(100), index=True)
     tags = Column(ARRAY(String), default=list)
     metadata_json = Column(JSONB, default=dict)
+    profile_id = Column(String(64), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

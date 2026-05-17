@@ -78,9 +78,6 @@ query_term_resources: risorse
 query_term_team: team
 query_term_profiles: profili
 query_term_manager: responsabile
-query_term_acn: acn
-query_term_oscat: oscat
-query_term_sct: sct
 query_term_sla: sla
 query_term_integration: integrazione
 query_term_infrastructure: infrastruttura

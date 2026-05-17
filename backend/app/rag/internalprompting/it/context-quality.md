@@ -53,9 +53,7 @@ indipendentemente dalla lingua della UI.
 
 ## Tender Overview Terms
 
-- acn
 - capitolato
-- cctt
 - cloud
 - contratto
 - durata

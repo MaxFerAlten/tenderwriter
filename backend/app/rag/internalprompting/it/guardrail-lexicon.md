@@ -8,37 +8,9 @@ e riconoscere richieste di confronto (`_allows_comparison`).
 Questi elenchi vengono confrontati con testo di gara italiano e con la
 risposta generata, quindi sono intrinsecamente lessicali e i corpi delle
 sezioni restano identici tra `it/` ed `en/` (cambia solo la prosa di
-intestazione). Le etichette di procedura (OSCAT/SCT) e le chiavi di tema
-(garanzie/manleva/integrita) restano canoniche nel codice: qui si
-esternalizzano solo i membri.
-
-## Procedure Anchors OSCAT
-
-- gitlab
-- sonar
-- nexus
-- vulnerability assessment
-- dpa
-- gpa
-- gva
-- sme
-- mam
-- sts
-- devsecops
-- oscat
-
-## Procedure Anchors SCT
-
-- cctt
-- rtpc
-- presa in carico
-- fase transitoria
-- qualificazione acn
-- tix
-- via san piero a quaracchi
-- sistema cloud toscana
-- sistema cloud toscano
-- sct
+intestazione). Le etichette di procedura canoniche e le chiavi di tema
+restano definite nel codice (tramite i profili di procedura attivi); qui
+si esternalizzano solo i membri lessicali.
 
 ## Semantic Theme garanzie
 

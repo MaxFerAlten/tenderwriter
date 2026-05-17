@@ -35,17 +35,39 @@ from app.rag.procedure_guardrails import (
     source_procedure_labels_from_guarded_context,
     validate_guarded_answer,
 )
+from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+OSCAT_PROFILE = (OSCAT_SCT_TOSCANA_PROFILE,)
 
 
 class RagProcedureGuardrailsTests(unittest.TestCase):
     def test_classifies_oscat_and_sct_chunks_by_anchors(self) -> None:
         self.assertEqual(
             classify_chunk_procedure(
-                "Servizi GitLab, Sonar, Nexus, Vulnerability Assessment, SME, MAM e STS."
+                "Servizi GitLab, Sonar, Nexus, Vulnerability Assessment, SME, MAM e STS.",
+                active_profiles=OSCAT_PROFILE,
             ),
             "OSCAT",
         )
         self.assertEqual(
+            classify_chunk_procedure(
+                "RTPC, CCTT, fase transitoria, qualificazione ACN e Via San Piero a Quaracchi.",
+                active_profiles=OSCAT_PROFILE,
+            ),
+            "SCT",
+        )
+
+    def test_oscat_sct_anchors_are_unattributed_without_active_profile(self) -> None:
+        # Post-decontamination: the OSCAT/SCT anchor lexicon lives in the
+        # profile overlay, so with no active profile these chunks must NOT be
+        # attributed to a procedure (knowledge is profile-gated, not in base).
+        self.assertNotEqual(
+            classify_chunk_procedure(
+                "Servizi GitLab, Sonar, Nexus, Vulnerability Assessment, SME, MAM e STS."
+            ),
+            "OSCAT",
+        )
+        self.assertNotEqual(
             classify_chunk_procedure(
                 "RTPC, CCTT, fase transitoria, qualificazione ACN e Via San Piero a Quaracchi."
             ),
@@ -63,7 +85,9 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             }
         ]
 
-        sheet = build_fact_sheet(items, query="descrivimi la gara OSCAT")
+        sheet = build_fact_sheet(
+            items, query="descrivimi la gara OSCAT", active_profiles=OSCAT_PROFILE
+        )
 
         self.assertEqual(sheet.procedure_label, "OSCAT")
         self.assertIn("012942/2025", sheet.procedure_ids)
@@ -102,7 +126,9 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             },
         ]
 
-        sheet = build_fact_sheet(items, query="descrivimi la gara OSCAT")
+        sheet = build_fact_sheet(
+            items, query="descrivimi la gara OSCAT", active_profiles=OSCAT_PROFILE
+        )
 
         self.assertEqual(sheet.procedure_label, "OSCAT")
         self.assertIn("012942/2025", sheet.procedure_ids)
@@ -127,7 +153,9 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             },
         ]
 
-        sheet = build_fact_sheet(items, query="descrivimi la gara OSCAT")
+        sheet = build_fact_sheet(
+            items, query="descrivimi la gara OSCAT", active_profiles=OSCAT_PROFILE
+        )
 
         self.assertEqual(sheet.procedure_label, "OSCAT")
         self.assertEqual(sheet.procedure_ids, ("012942/2025",))
@@ -168,6 +196,7 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
                 },
             ],
             query="descrivimi la gara SCT",
+            active_profiles=OSCAT_PROFILE,
         )
 
         self.assertEqual(sheet.procedure_label, "SCT")
@@ -219,6 +248,7 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
                 },
             ],
             query="descrivimi la gara OSCAT",
+            active_profiles=OSCAT_PROFILE,
         )
 
         self.assertEqual(sheet.procedure_label, "OSCAT")
@@ -376,6 +406,31 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
                 }
             ],
             query="descrivimi la gara OSCAT",
+            active_profiles=OSCAT_PROFILE,
+        )
+
+        result = validate_guarded_answer(
+            answer="OSCAT usa GitLab. SCT richiede RTPC e qualificazione ACN.",
+            fact_sheet=sheet,
+            guarded=True,
+            active_profiles=OSCAT_PROFILE,
+        )
+
+        self.assertEqual(result.status, "BLOCK")
+        self.assertIn("cross_procedure_mixing", result.failures)
+
+    def test_answer_mixing_oscat_and_sct_is_inert_without_active_profile(self) -> None:
+        # Post-decontamination the OSCAT/SCT anchor lexicon is profile-gated:
+        # with no active profile the base classifier cannot attribute either
+        # label, so cross-procedure mixing must not be (falsely) detected.
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab, Sonar, Nexus e Vulnerability Assessment.",
+                    "metadata": {},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
         )
 
         result = validate_guarded_answer(
@@ -384,8 +439,7 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             guarded=True,
         )
 
-        self.assertEqual(result.status, "BLOCK")
-        self.assertIn("cross_procedure_mixing", result.failures)
+        self.assertNotIn("cross_procedure_mixing", result.failures)
 
     def test_answer_mixing_procedures_supported_by_sources_is_allowed(self) -> None:
         guarded_context = (
@@ -496,9 +550,12 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
                 }
             ],
             query="descrivimi la gara OSCAT",
+            active_profiles=OSCAT_PROFILE,
         )
 
-        missing = fact_sheet_missing_critical_slots(sheet)
+        missing = fact_sheet_missing_critical_slots(
+            sheet, active_profiles=OSCAT_PROFILE
+        )
 
         self.assertIn("duration", missing)
         self.assertIn("major_amount", missing)
@@ -679,7 +736,10 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
         self.assertIn("fideiussoria", deduped)
 
     def test_oscat_sct_contamination_regex_catches_extended_keywords(self) -> None:
-        from app.rag.engine import OSCAT_SCT_CONTAMINATION_RE
+        from app.rag.procedure_guardrails import (
+            OSCAT_SCT_CONTAMINATION_RE,
+            contamination_re_for,
+        )
 
         positives = [
             "Adeguamento data center TIX-SCT alla determina ACN n. 21",
@@ -688,16 +748,22 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             "PNRR Missione 1 Componente 1",
             "Coordinamento con ESTAR",
         ]
+        profile_re = contamination_re_for(OSCAT_PROFILE)
         for text in positives:
+            # The profile overlay restores the Toscana contamination markers.
             self.assertIsNotNone(
+                profile_re.search(text),
+                msg=f"profile contamination regex missed: {text!r}",
+            )
+            # Post-decontamination these Toscana terms are NOT in the generic
+            # base regex; they live exclusively in the profile overlay.
+            self.assertIsNone(
                 OSCAT_SCT_CONTAMINATION_RE.search(text),
-                msg=f"contamination regex missed: {text!r}",
+                msg=f"base regex unexpectedly matched Toscana term: {text!r}",
             )
 
         self.assertIsNone(
-            OSCAT_SCT_CONTAMINATION_RE.search(
-                "OSCAT usa GitLab, Sonar, Nexus per CI/CD."
-            )
+            profile_re.search("OSCAT usa GitLab, Sonar, Nexus per CI/CD.")
         )
 
     def test_longform_template_forbids_civil_code_article_hallucination(self) -> None:
@@ -958,6 +1024,7 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
                 }
             ],
             query="descrivimi la gara OSCAT",
+            active_profiles=OSCAT_PROFILE,
         )
 
         answer = (
@@ -968,13 +1035,40 @@ class RagProcedureGuardrailsTests(unittest.TestCase):
             "e gestita dal Soggetto Aggregatore."
         )
 
-        repaired = repair_unsupported_protected_facts(answer, sheet)
+        repaired = repair_unsupported_protected_facts(
+            answer, sheet, active_profiles=OSCAT_PROFILE
+        )
 
         self.assertIn("GitLab", repaired)
         self.assertIn("Soggetto Aggregatore", repaired)
         self.assertNotIn("CSIRT Regionale", repaired)
         self.assertNotIn("PNRR Missione 1", repaired)
         self.assertNotIn("data center TIX-SCT", repaired)
+
+    def test_repair_leaves_toscana_sentences_inert_without_active_profile(self) -> None:
+        # The Toscana contamination lexicon moved into the profile overlay.
+        # With no active profile the generic base regex must NOT strip the
+        # profile-specific sentence (behaviour-safe fallback to base).
+        sheet = build_fact_sheet(
+            [
+                {
+                    "text": "OSCAT usa GitLab. Procedura 012942/2025.",
+                    "metadata": {"chunk_index": 11},
+                }
+            ],
+            query="descrivimi la gara OSCAT",
+        )
+
+        answer = (
+            "L'adeguamento del data center TIX-SCT alla determina ACN n. 21 "
+            "nell'ambito del PNRR Missione 1 prevede istituzione del CSIRT "
+            "Regionale ed ESTAR."
+        )
+
+        repaired = repair_unsupported_protected_facts(answer, sheet)
+
+        self.assertIn("CSIRT Regionale", repaired)
+        self.assertIn("PNRR Missione 1", repaired)
 
     def test_oscat_contamination_dominance_filter_excludes_non_oscat_chunks(self) -> None:
         from app.rag.engine import HybridRAGEngine
@@ -1708,6 +1802,7 @@ class RagEngineLiveValidationTests(unittest.IsolatedAsyncioTestCase):
             RAGQuery(
                 text="descrivimi la gara OSCAT evidenzia punti critici",
                 mode=QueryMode.QA,
+                active_profile_ids=("oscat_sct_toscana",),
             )
         )
         self.assertIn(BLOCKED_OUTPUT_MESSAGE, response.answer)

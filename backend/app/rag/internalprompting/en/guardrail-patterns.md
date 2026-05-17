@@ -70,7 +70,7 @@ regardless of the UI language.
 
 ## Address Pattern
 
-- via\s+san\s+piero\s+a\s+quaracchi\s+\d+
+- via\s+[a-zàèéìòù'\.\s]+\s+\d+
 
 ## Service Location Lead
 
@@ -140,32 +140,22 @@ regardless of the UI language.
 
 ## Contamination Markers
 
-- sct[-\s]*tix
-- tix[-\s]*sct
-- cctt
-- estar
-- impianti\s+industriali
-- sistema\s+cloud\s+toscana
-- determin[ae]\s+acn
-- acn\s+n\.?\s*\d+
-- csirt\s+regional[ei]?
-- sanit[aà]\s+digitale
-- missione\s+1
-- pnrr
+- gara\s+collegata
+- procedura\s+collegata
+- accordo\s+quadro\s+richiamato
+- contratto\s+collegato
+- sistema\s+esterno
+- piattaforma\s+esterna
+- allegato\s+tecnico
+- appendice
+- riferimento\s+ad\s+altra\s+procedura
 
 ## Identity Markers
 
-- gitlab
-- sonar
-- nexus
-- devsecops
-- continuous\s+integration
-- continuous\s+delivery
-- continuous\s+deployment
-- ci\s*/\s*cd
-- vulnerability\s+assessment
-- analisi\s+(?:statica\s+|del\s+)?(?:codice|codice\s+sorgente)
-- pipeline\s+(?:ci|cd|di\s+rilascio)
+- procedura\s+principale
+- procedura\s+di\s+riferimento
+- sistema\s+collegato
+- piattaforma\s+collegata
 
 ## False Missing Markers
 

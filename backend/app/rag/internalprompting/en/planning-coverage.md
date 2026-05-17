@@ -39,25 +39,25 @@ slot_amounts_trigger: importo|base d'asta|base asta|valore|euro|oneri|massimale
 slot_amounts_queries: base d'asta|IVA esclusa|importo|€|massimale|accordo quadro|quinto d'obbligo|20%|oneri sicurezza|importo|euro
 slot_amounts_evidence: base d'asta|base asta|iva esclusa|importo|euro|€|massimale|oneri|quinto
 
-slot_duration_trigger: durata|mesi|giorni|proroga|decorrenza|stipula
-slot_duration_queries: "durata" "36 mesi" "mesi dalla stipula" "proroga"|"decorrenza" "contratti attuativi" "mesi"
-slot_duration_evidence: durata|mesi|giorni|proroga|decorrenza|stipula
+slot_duration_trigger: duration|months|days|extension|renewal|start date|signing
+slot_duration_queries: "duration" "months from signing" "days" "extension"|"renewal" "start date" "\d+ months" "\d+ days"
+slot_duration_evidence: duration|months from signing|days|extension|renewal|start date|\d+ months|\d+ days
 
 slot_deadlines_trigger: scadenza|termine|presentazione|offerte|ore|deadline
 slot_deadlines_queries: "termine" "presentazione" "offerte" "ore"|"scadenza" "presentazione offerte" "data"
 slot_deadlines_evidence: termine|presentazione|offerte|ore|scadenza|deadline
 
-slot_platform_trigger: piattaforma|sardegnacat|start|sintel|mepa|spid|cie|cns|url
-slot_platform_queries: "https://" "sardegnacat" "URL" "piattaforma"|"SPID" "CIE" "CNS" "eIDAS" "autenticazione"|"portale" "piattaforma telematica" "gara"
-slot_platform_evidence: https://|piattaforma|sardegnacat|start|sintel|mepa|spid|cie|cns|eidas
+slot_platform_trigger: e-procurement platform|portal|authentication|spid|cie|cns|eidas|url
+slot_platform_queries: "e-procurement platform" "portal" "URL" "authentication"|"SPID" "CIE" "CNS" "eIDAS" "authentication"|"portal" "e-procurement platform" "tender"
+slot_platform_evidence: e-procurement platform|portal|url|authentication|spid|cie|cns|eidas
 
-slot_scoring_trigger: punteggio|offerta tecnica|offerta economica|criterio|valutazione
-slot_scoring_queries: "punteggio" "offerta tecnica" "offerta economica" "70" "80"|"criteri di valutazione" "punteggio tecnico" "punteggio economico"
-slot_scoring_evidence: punteggio|offerta tecnica|offerta economica|criteri|valutazione
+slot_scoring_trigger: score|technical bid|economic bid|criterion|evaluation|quality/price
+slot_scoring_queries: "score" "technical bid" "economic bid" "evaluation criteria"|"technical score" "economic score" "quality/price"
+slot_scoring_evidence: score|technical bid|economic bid|evaluation criteria|technical score|economic score|quality/price
 
-slot_certifications_trigger: certificazione|certificazioni|iso|acn|qualificazione|uni/pdr
-slot_certifications_queries: "ISO/IEC 27001" "ISO/IEC 27017" "ISO/IEC 27018" "punti"|"UNI/PdR 125:2022" "SA 8000" "ISO 26000"|"qualificazione ACN" "certificazione" "obbligatoria"
-slot_certifications_evidence: iso/iec|iso |uni/pdr|sa 8000|acn|certificazione|qualificazione
+slot_certifications_trigger: certification|certifications|iso|uni|qualification|attestation
+slot_certifications_queries: "certification" "certifications" "ISO" "UNI"|"qualification" "attestation" "mandatory requirement"
+slot_certifications_evidence: certification|certifications|iso|uni|qualification|attestation|mandatory requirement
 
 slot_sla_penalties_trigger: sla|penale|penali|livello di servizio|disponibilita|disponibilità
 slot_sla_penalties_queries: "penale" "%" "livello di servizio" "SLA" "disponibilità"|"penali" "livelli di servizio" "risoluzione"
