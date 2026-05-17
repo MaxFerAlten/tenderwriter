@@ -365,5 +365,98 @@ class PlanningCoverageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Patto di Integrità", retrieved.context)
 
 
+# NOTE on structure: planning-coverage.md has a single `## Messages` section
+# parsed as `key: value` pairs (load_localized_messages), NOT `## Header` + `- item`
+# bullet groups. So load_keyword_group does not apply here; the decontamination
+# guard binds to the parsed slot tuples via get_planning_coverage_messages. The
+# "conceptual groups" in the plan map to slot keys: duration, scoring, platform,
+# certifications.
+class PlanningCoverageDecontaminationTests(unittest.TestCase):
+    # Real slot keys (from app/rag/localization._SLOT_KEYS) whose query/trigger/
+    # evidence tuples previously pinned Toscana/benchmark-specific literals.
+    REAL_SLOTS = ("duration", "scoring", "platform", "certifications")
+
+    FORBIDDEN = (
+        "36 mesi",
+        '"70"',
+        '"80"',
+        "sardegnacat",
+        "iso/iec 27001",
+        "iso/iec 27017",
+        "iso/iec 27018",
+        "uni/pdr 125",
+        "sa 8000",
+        "iso 26000",
+        "qualificazione acn",
+    )
+
+    def test_planning_coverage_base_queries_do_not_force_specific_values(self) -> None:
+        from app.rag.localization import get_planning_coverage_messages
+
+        for lang in ("it", "en"):
+            get_planning_coverage_messages.cache_clear()
+            msgs = get_planning_coverage_messages(lang)
+            for slot in self.REAL_SLOTS:
+                flat = " ".join(
+                    (
+                        *msgs.slot_triggers.get(slot, ()),
+                        *msgs.slot_queries.get(slot, ()),
+                        *msgs.slot_evidence.get(slot, ()),
+                    )
+                ).casefold()
+                for forbidden in self.FORBIDDEN:
+                    self.assertNotIn(
+                        forbidden,
+                        flat,
+                        msg=f"{lang}/{slot} still has {forbidden!r}",
+                    )
+
+    def test_planning_coverage_still_triggers_duration_scoring_platform_certs(
+        self,
+    ) -> None:
+        # Decontamination must keep the slots meaningful: each genericized slot
+        # still fires on its concept and still emits generic tokens.
+        from app.rag.localization import get_planning_coverage_messages
+
+        expected_generic = {
+            "it": {
+                "duration": ("durata", "mesi", "giorni"),
+                "scoring": ("punteggio", "offerta tecnica", "criteri"),
+                "platform": ("piattaforma", "portale", "spid"),
+                "certifications": ("certificazione", "iso", "qualificazione"),
+            },
+            "en": {
+                "duration": ("duration", "months", "days"),
+                "scoring": ("score", "technical bid", "criteria"),
+                "platform": ("platform", "portal", "spid"),
+                "certifications": ("certification", "iso", "qualification"),
+            },
+        }
+        for lang in ("it", "en"):
+            get_planning_coverage_messages.cache_clear()
+            msgs = get_planning_coverage_messages(lang)
+            for slot, tokens in expected_generic[lang].items():
+                self.assertTrue(
+                    msgs.slot_triggers.get(slot),
+                    msg=f"{lang}/{slot} lost its trigger terms",
+                )
+                self.assertTrue(
+                    msgs.slot_queries.get(slot),
+                    msg=f"{lang}/{slot} lost its generated queries",
+                )
+                flat = " ".join(
+                    (
+                        *msgs.slot_triggers[slot],
+                        *msgs.slot_queries[slot],
+                        *msgs.slot_evidence.get(slot, ()),
+                    )
+                ).casefold()
+                self.assertTrue(
+                    any(tok in flat for tok in tokens),
+                    msg=f"{lang}/{slot} dropped all generic tokens {tokens!r}",
+                )
+        get_planning_coverage_messages.cache_clear()
+
+
 if __name__ == "__main__":
     unittest.main()
