@@ -547,6 +547,7 @@ class HybridRAGEngine:
                     query=retrieval_query,
                     top_k=retrieval_top_k or settings.rag_top_k_graph,
                     filters=graph_filters,
+                    active_profiles=self._active_profiles_for_query(rag_query.text),
                 )
                 graph_results = [
                     {"text": r.text, "score": r.score, "metadata": r.metadata} for r in raw_graph

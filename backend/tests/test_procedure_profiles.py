@@ -153,3 +153,28 @@ def test_profile_graph_terms_added_when_active() -> None:
 
     terms = active_graph_query_terms((OSCAT_SCT_TOSCANA_PROFILE,))
     assert "oscat" in terms and "sct" in terms and "acn" in terms
+
+
+def test_graph_retriever_includes_profile_terms_only_when_active() -> None:
+    from app.rag.graph_retriever import GraphRetriever
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    gr = GraphRetriever()
+    base = gr._query_keywords(
+        "requisiti tecnici della gara",
+        ontology_domains={"tecnico"},
+    )
+    overlaid = gr._query_keywords(
+        "requisiti tecnici della gara",
+        ontology_domains={"tecnico"},
+        active_profiles=(OSCAT_SCT_TOSCANA_PROFILE,),
+    )
+
+    base_flat = " ".join(base).casefold()
+    over_flat = " ".join(overlaid).casefold()
+
+    for forbidden in ("oscat", "sct", "acn"):
+        assert forbidden not in base_flat
+    assert "oscat" in over_flat
+    assert "sct" in over_flat
+    assert "acn" in over_flat

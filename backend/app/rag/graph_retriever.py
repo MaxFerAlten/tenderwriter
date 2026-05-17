@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
 from neo4j import AsyncGraphDatabase
@@ -18,6 +19,10 @@ from app.config import settings
 from app.intelligence.ontology import TenderOntologyService
 from app.rag.internal_prompting import default_language
 from app.rag.localization import get_graph_retriever_messages
+from app.rag.procedure_profiles import active_graph_query_terms
+
+if TYPE_CHECKING:
+    from app.rag.procedure_profiles import ProcedureProfile
 
 logger = structlog.get_logger()
 
@@ -475,6 +480,7 @@ class GraphRetriever:
         query: str,
         top_k: int | None = None,
         filters: dict | None = None,
+        active_profiles: tuple[ProcedureProfile, ...] = (),
     ) -> list[GraphSearchResult]:
         """
         Search the knowledge graph for relevant entities and relationships.
@@ -488,7 +494,9 @@ class GraphRetriever:
         ontology_domains = self._ontology_filter_domains(filters)
 
         if tender_id_filter is not None or ontology_domains:
-            evidence_results = await self._search_evidence_chunks(query, top_k, filters)
+            evidence_results = await self._search_evidence_chunks(
+                query, top_k, filters, active_profiles=active_profiles
+            )
             results.extend(evidence_results)
 
         if tender_id_filter is not None:
@@ -502,7 +510,9 @@ class GraphRetriever:
             results.extend(member_results)
 
         if tender_id_filter is not None or ontology_domains:
-            requirement_results = await self._search_requirements(query, top_k, filters)
+            requirement_results = await self._search_requirements(
+                query, top_k, filters, active_profiles=active_profiles
+            )
             results.extend(requirement_results)
 
         # Sort by score and take top_k
@@ -529,11 +539,14 @@ class GraphRetriever:
         query: str,
         top_k: int,
         filters: dict | None,
+        active_profiles: tuple[ProcedureProfile, ...] = (),
     ) -> list[GraphSearchResult]:
         """Search ontology-tagged retrieval chunks stored in the graph."""
         tender_id_filter = self._extract_tender_id_filter(filters)
         ontology_domains = self._ontology_filter_domains(filters)
-        keywords = self._query_keywords(query, ontology_domains)
+        keywords = self._query_keywords(
+            query, ontology_domains, active_profiles=active_profiles
+        )
 
         cypher = """
         MATCH (c:EvidenceChunk)
@@ -618,7 +631,12 @@ class GraphRetriever:
         except (TypeError, ValueError):
             return None
 
-    def _query_keywords(self, query: str, ontology_domains: set[str]) -> list[str]:
+    def _query_keywords(
+        self,
+        query: str,
+        ontology_domains: set[str],
+        active_profiles: tuple[ProcedureProfile, ...] = (),
+    ) -> list[str]:
         keywords: list[str] = []
         for token in GRAPH_QUERY_TOKEN_RE.findall(str(query or "").casefold()):
             normalized = token.strip(".,;:!?()[]{}")
@@ -631,6 +649,10 @@ class GraphRetriever:
             for term in self._msgs.query_terms.get(domain, ()):
                 if term not in keywords:
                     keywords.append(term)
+
+        for term in active_graph_query_terms(active_profiles or ()):
+            if term not in keywords:
+                keywords.append(term)
 
         if not keywords and query:
             keywords.append(str(query).casefold())
@@ -967,11 +989,14 @@ class GraphRetriever:
         query: str,
         top_k: int,
         filters: dict | None,
+        active_profiles: tuple[ProcedureProfile, ...] = (),
     ) -> list[GraphSearchResult]:
         """Search for tender requirements matching the query."""
         tender_id_filter = self._extract_tender_id_filter(filters)
         ontology_domains = self._ontology_filter_domains(filters)
-        keywords = self._query_keywords(query, ontology_domains)
+        keywords = self._query_keywords(
+            query, ontology_domains, active_profiles=active_profiles
+        )
 
         cypher = """
         MATCH (r:Requirement)
