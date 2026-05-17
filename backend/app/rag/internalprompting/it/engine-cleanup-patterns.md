@@ -13,7 +13,6 @@ Pattern raw regex, applicato case-insensitive.
 - \bulter\s+ulteriore\b || ulteriore
 - \bMigliore\s+\(MAM\) || Migliorativa (MAM)
 - \bInfrastruttura\s+Digitali\b || Infrastrutture Digitali
-- \bCIG\s*:?\s*B33988ECF[A-Z0-9]?\b || CIG B33988ECF2
 
 ## Continuation Skip Prefixes
 

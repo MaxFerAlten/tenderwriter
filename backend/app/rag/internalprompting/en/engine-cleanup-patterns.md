@@ -12,7 +12,6 @@ raw regex applied case-insensitive.
 - \bfurth\s+further\b || further
 - \bBetter\s+\(MAM\) || Better Offer (MAM)
 - \bInfrastructure\s+Digital\b || Digital Infrastructures
-- \bCIG\s*:?\s*B33988ECF[A-Z0-9]?\b || CIG B33988ECF2
 
 ## Continuation Skip Prefixes
 
