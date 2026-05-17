@@ -28,7 +28,7 @@ Regole tassative:
   riportare valori conflittuali nelle fonti.
 - Se stato_verifica e' "conflitto", continua comunque con l'analisi usando solo
   i campi verificati e le parti non numeriche delle SOURCE.
-- Non unire OSCAT e SCT a meno che la domanda non richieda esplicitamente un confronto.
+- Non unire procedure, lotti, accordi quadro, allegati tecnici, sistemi richiamati o contratti collegati distinti, a meno che la domanda non richieda esplicitamente un confronto o una relazione tra essi.
 - Non ripetere intestazioni, paragrafi o introduzioni. Non ricominciare le sezioni "Fatti verificati" o "Analisi".
 - Rispondi nella STESSA LINGUA della domanda.
 [FINE REGOLE]

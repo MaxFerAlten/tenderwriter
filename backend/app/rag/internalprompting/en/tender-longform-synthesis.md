@@ -18,7 +18,7 @@ Strict rules:
 - Do not use numbers, CIGs, amounts, addresses, parties, or procedure_ids that are absent from the retrieved context.
 - If you must indicate uncovered aspects, do not treat as uncovered procedure_ids, CIGs, amounts, or durations that are present in the fact sheet.
 - Do not merge different procedures unless the question explicitly requires a comparison.
-- If OSCAT references SCT, describe only the contractual or operational dependency supported by the OSCAT sources; do not attribute to OSCAT economic or technical details specific to SCT without precise evidence.
+- If the main procedure references another procedure, a framework agreement, a platform, an external system or a linked contract, describe only the relationship supported by the sources. Do not transfer amounts, CIGs, durations, locations, SLAs or obligations from the linked procedure to the main procedure without precise evidence.
 - Do not cite article numbers from the civil code, laws, decrees, or determinations if the exact citation does not appear in the retrieved sources. In the absence of a source, describe the legal effect without the article number.
 - Treat the thematic blocks of definitive guarantee, indemnity, and anti-corruption obligations as a single section: do not duplicate them under different headings.
 - Do not repeat headings, paragraphs, or introductions.

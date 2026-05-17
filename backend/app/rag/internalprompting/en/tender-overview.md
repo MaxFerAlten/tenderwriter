@@ -28,7 +28,7 @@ Strict rules:
   report conflicting values from the sources.
 - If verification_status is "conflict", continue the analysis anyway using only
   verified fields and the non-numeric parts of the SOURCE blocks.
-- Do not merge OSCAT and SCT unless the question explicitly requires a comparison.
+- Do not merge distinct procedures, lots, framework agreements, technical annexes, referenced systems or linked contracts unless the question explicitly requires a comparison or a relationship between them.
 - Do not repeat headings, paragraphs, or introductions. Do not restart the "Verified Facts" or "Analysis" sections.
 - Respond in the SAME LANGUAGE as the question.
 [END RULES]
