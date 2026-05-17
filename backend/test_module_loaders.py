@@ -489,6 +489,7 @@ def load_rag_api_test_modules():
         sampler_overrides: dict | None = None
         planning_coverage_config: dict | None = None
         guardrail_config: dict | None = None
+        active_profile_ids: tuple[str, ...] = field(default_factory=tuple)
 
     fake_rag_engine.QueryMode = _QueryMode
     fake_rag_engine.RAGQuery = _RAGQuery

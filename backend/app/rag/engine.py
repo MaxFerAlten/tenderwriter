@@ -1255,6 +1255,7 @@ class HybridRAGEngine:
             return
 
         await self.ensure_initialized()
+        self._pending_profile_ids = tuple(rag_query.active_profile_ids)
         retrieved = await self._retrieve_context_and_sources(rag_query)
         context = retrieved.context
         length_target = self._extract_requested_length_target(rag_query.text)
