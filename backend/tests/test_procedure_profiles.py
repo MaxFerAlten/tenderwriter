@@ -104,3 +104,10 @@ def test_classify_chunk_uses_profile_when_active() -> None:
         )
         == "SCT"
     )
+
+
+def test_tender_model_has_profile_id_column() -> None:
+    from app.models import Tender
+
+    assert "profile_id" in Tender.__table__.columns
+    assert Tender.__table__.columns["profile_id"].nullable is True
