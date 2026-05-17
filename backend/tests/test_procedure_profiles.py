@@ -111,3 +111,26 @@ def test_tender_model_has_profile_id_column() -> None:
 
     assert "profile_id" in Tender.__table__.columns
     assert Tender.__table__.columns["profile_id"].nullable is True
+
+
+def test_base_contamination_markers_have_no_toscana_terms() -> None:
+    from app.rag.internal_prompting import load_keyword_group
+
+    for lang in ("it", "en"):
+        markers = load_keyword_group("guardrail-patterns", "Contamination Markers", language=lang)
+        flat = " ".join(markers).casefold()
+        for forbidden in ("cctt", "estar", "sistema cloud toscana", "pnrr", "csirt"):
+            assert forbidden not in flat
+        addr = load_keyword_group("guardrail-patterns", "Address Pattern", language=lang)
+        assert not any("san piero" in a.casefold() for a in addr)
+
+
+def test_profile_overlay_restores_toscana_contamination_regex() -> None:
+    from app.rag.localization import get_guardrail_patterns
+    from app.rag.procedure_profiles import OSCAT_SCT_TOSCANA_PROFILE
+
+    base = get_guardrail_patterns("it", profiles=())
+    overlaid = get_guardrail_patterns("it", profiles=(OSCAT_SCT_TOSCANA_PROFILE,))
+    assert overlaid.oscat_sct_contamination.search("riferimento CCTT") is not None
+    assert base.oscat_sct_contamination.search("riferimento CCTT") is None
+    assert overlaid.address.search("via san piero a quaracchi 12") is not None

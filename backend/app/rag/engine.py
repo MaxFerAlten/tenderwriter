@@ -46,17 +46,17 @@ from app.rag.localization import (
 from app.rag.planningcoverage import normalize_planning_coverage_config, run_planning_coverage
 from app.rag.procedure_guardrails import (
     BLOCKED_OUTPUT_MESSAGE,
-    OSCAT_IDENTITY_KEYWORD_RE,
-    OSCAT_SCT_CONTAMINATION_RE,
     PROCEDURE_ANCHORS,
     FactSheet,
     build_fact_sheet,
     classify_chunk_procedure,
     classify_guardrail_failures,
+    contamination_re_for,
     fact_sheet_from_guarded_context,
     fact_sheet_missing_critical_slots,
     filter_long_form_amounts,
     guardrail_issue_snippets,
+    identity_re_for,
     normalize_guardrail_config,
     repair_unsupported_protected_facts,
     source_procedure_labels_from_guarded_context,
@@ -935,14 +935,16 @@ class HybridRAGEngine:
             return False
 
         normalized = text.casefold()
-        contamination_hits = len(OSCAT_SCT_CONTAMINATION_RE.findall(text))
-        identity_hits = len(OSCAT_IDENTITY_KEYWORD_RE.findall(text))
+        contamination_re = contamination_re_for(profiles)
+        identity_re = identity_re_for(profiles)
+        contamination_hits = len(contamination_re.findall(text))
+        identity_hits = len(identity_re.findall(text))
         if contamination_hits >= 2 and identity_hits < 2:
             return True
         return (
             classify_chunk_procedure(text, active_profiles=profiles) == referenced_label
             and main_label.casefold() not in normalized
-            and bool(OSCAT_SCT_CONTAMINATION_RE.search(text))
+            and bool(contamination_re.search(text))
         )
 
     def _build_rank_fusion_for_query(self, rag_query: RAGQuery) -> RankFusion:

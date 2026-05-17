@@ -118,6 +118,28 @@ _FALSE_MISSING_FIELD_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+def contamination_re_for(
+    profiles: tuple[ProcedureProfile, ...] | None,
+) -> re.Pattern[str]:
+    """Contamination regex with the active profiles' markers overlaid on base."""
+    from app.rag.localization import get_guardrail_patterns
+
+    return get_guardrail_patterns(
+        default_language(), profiles=tuple(profiles or ())
+    ).oscat_sct_contamination
+
+
+def identity_re_for(
+    profiles: tuple[ProcedureProfile, ...] | None,
+) -> re.Pattern[str]:
+    """Identity-marker regex with the active profiles overlaid on base."""
+    from app.rag.localization import get_guardrail_patterns
+
+    return get_guardrail_patterns(
+        default_language(), profiles=tuple(profiles or ())
+    ).oscat_identity_keyword
+
+
 @dataclass(frozen=True)
 class FactSheet:
     procedure_label: ProcedureLabel
